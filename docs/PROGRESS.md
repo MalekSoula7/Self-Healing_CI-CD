@@ -290,3 +290,34 @@ Newest entry at the bottom. One entry per task. Format:
 - Tests:
   - DB: a non-admin installer isn't bound; a personal account binds only to its own user; the cross-org case uses admin evidence for the other org.
   - Web: a non-admin isn't bound; a personal account needs no membership call; on Postgres, both GitHub calls carry the user's decrypted token.
+
+## 2026-09-27 · CHECKPOINT 1a · Done
+- Malek registered the dev GitHub App on a sandbox organization and filled every `.env` value (`GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `SMEE_URL`), following `docs/SETUP-GITHUB-APP.md`. `BETTER_AUTH_SECRET` was also fixed locally (it was empty while the GitHub sign-in vars were set, which fails the web env's all-or-none check for those three; a fresh secret was generated the same way the guide directs).
+- Verified locally (Windows, native): `pnpm dev` starts clean, `/api/health` and `/health` both 200.
+- Continuing with P1.6 (webhook route) via `/next-task`.
+
+## 2026-09-27 · P1.6 · Webhook route
+- Done:
+  - **`apps/web`: `POST /api/webhooks/github`.** Verifies `X-Hub-Signature-256` over the raw request body (`verifyWebhookSignature`, P1.4) with the real secret; answers 503 (never touching the signature, DB or queue) when `GITHUB_WEBHOOK_SECRET` isn't set, matching the sign-in "not configured" fallback. Records the delivery (`packages/db`'s new `webhook-deliveries.ts`: `recordWebhookDelivery`, idempotent under a race via the unique-constraint retry path), enqueues a `webhooks` BullMQ job only when the delivery is new, and answers fast. A light, non-strict peek at `action`/`installation.id` feeds `WebhookDelivery`'s own columns; the worker does the full, event-specific validation.
+  - **`apps/web` gets a Redis connection and a queue producer** (`lib/redis.ts`, `lib/queue.ts`): `ioredis`/`bullmq`, pinned to the same versions the worker already uses. `REDIS_URL` and `GITHUB_WEBHOOK_SECRET` added to the web env schema (both optional in development; required, TLS/32+ chars, in production).
+  - **`apps/worker`: `queues/webhooks.ts`.** Routes by event:
+    - `installation` `created` → `installations.upsert` (installer = sender, SPEC §5.2's OWNER candidate; P1.3's follow-up honored: no other action passes `installerGithubId`), then fetches the installation's repositories from GitHub itself (`listRepositories()`; the webhook's own `repositories` field lacks `default_branch`, so it's never trusted for that), `syncInstalled`s them (archived repos skipped: nothing to watch, and our schema has no field for it), then `listWorkflows()` per repo and upserts `RepoWorkflow` rows (`selected: false`; pre-selection and the picker are P1.7).
+    - `installation` `deleted` → org `UNINSTALLED`, and every one of its repositories marked removed (no GitHub call needed).
+    - `installation` `suspend`/`unsuspend` → org status.
+    - `installation_repositories` `added` → re-fetches the authoritative repo list (reuses the `created` path); `removed` → `markRemoved` from the webhook's own repo IDs alone (no GitHub call).
+    - Anything else (`ping`, `workflow_run`, `pull_request`, future actions) → acknowledged, no processor yet.
+    - On success: `markWebhookDeliveryProcessed` (clears any earlier error). On failure: a redacted error is recorded and the error is rethrown, so BullMQ retries with its own backoff; the delivery stays unprocessed for the P2.2 reconciler to find.
+  - **`packages/db`:** `webhook-deliveries.ts` (record/mark-processed/mark-failed; not tenant-scoped, matching `WebhookDelivery`'s own design). `scope.ts` gets `workflows.syncInstalled` (system-only, same shape as `repositories.syncInstalled`), with its own cross-org case (the `scope.int.test.ts` meta-test requires one per helper).
+  - **`packages/github`:** `webhook-payloads.ts`, zod schemas for the `installation` and `installation_repositories` payloads (only the fields used; a plain `z.object()` ignores the rest, so a new GitHub field can't break parsing). New light `./credentials` package export, so `apps/web/src/env.ts` (loaded by `instrumentation.ts`) can validate `GITHUB_WEBHOOK_SECRET` without pulling `octokit` into the same bundling path that made `@pipeheal/db/url` necessary in P1.3.
+  - **`packages/shared`:** `webhook-job.ts`, the `WebhookJobData` schema both `apps/web` (producer) and `apps/worker` (consumer) validate against.
+  - Both apps' envs gained a full production schema for the fields P1.6 needed (`apps/web`: `REDIS_URL`; `apps/worker`: `DATABASE_URL`, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`), closing the P1.1/P1.2 follow-up about apps validating `DATABASE_URL` themselves.
+- Tests: 41 unit + integration across the new files (13 worker integration tests against real Postgres and msw's GitHub, including idempotent double-processing, the archived-repo skip, the "removed never calls GitHub" case via `onUnhandledRequest: "error"`, and a redacted-error-on-failure case; 12 payload-schema tests; 10 route unit tests with a real computed HMAC signature, not a mocked verifier; plus the `webhook-deliveries` and `workflows.syncInstalled` DB tests).
+- Verified live, on the real dev server (Windows, real Postgres/Redis): a genuinely signed `ping` delivery was accepted (200) and its `WebhookDelivery` row was marked `processedAt` by the real worker within ~120 ms.
+- Not verified: e2e (`pnpm test:e2e`) — Playwright's Chromium download timed out from this machine (network, not code); unrelated to this task's specs regardless. `pnpm dev:webhooks` against the real App/sandbox wasn't re-run for this task (P1.5 already covers the relay itself); a real `installation.created` delivery from installing the App on the sandbox is the natural check at P1.7 (onboarding), not before.
+- Decisions:
+  - `RepoWorkflow` rows are registered here (id/path/name); pre-selection and the enable/disable picker stay in P1.7, per the P1.2 note.
+  - Repository details always come from `GET /installation/repositories`, never from the webhook's own (minimal) repo lists — simpler than adding a per-repo GitHub lookup, and authoritative.
+  - Archived repositories are skipped rather than synced-then-hidden: our schema has no `archived` column, and there's nothing to heal on an archived repo.
+- Follow-ups:
+  - P2.1: per-installation pacing for the GitHub calls this file makes (already flagged in the P1.4 review).
+  - A repo that's archived after being synced keeps its existing row as-is; no webhook fires for archiving alone. Not a problem yet; worth a look whenever repo state UI lands.

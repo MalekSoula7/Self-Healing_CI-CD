@@ -28,6 +28,29 @@ export const installedRepositorySchema = z.strictObject({
 });
 export type InstalledRepository = z.infer<typeof installedRepositorySchema>;
 
+export const installedWorkflowSchema = z.strictObject({
+  githubWorkflowId: githubIdSchema,
+  // Repo-relative POSIX path, e.g. ".github/workflows/ci.yml".
+  path: z.string().min(1).max(500),
+  name: z.string().min(1).max(255),
+});
+export type InstalledWorkflow = z.infer<typeof installedWorkflowSchema>;
+
+/**
+ * X-GitHub-Delivery header value. GitHub-shaped (UUID-looking), but the column is a plain
+ * String (not Postgres `uuid`), so this stays a loose length check rather than `z.uuid()`.
+ */
+export const deliveryIdSchema = z.string().min(1).max(100);
+
+export const webhookDeliverySchema = z.strictObject({
+  /** X-GitHub-Delivery header. Redeliveries reuse it. */
+  deliveryId: deliveryIdSchema,
+  event: z.string().min(1).max(100),
+  action: z.string().max(100).optional(),
+  installationId: githubIdSchema.optional(),
+});
+export type WebhookDeliveryInput = z.infer<typeof webhookDeliverySchema>;
+
 export const auditPageSchema = z.strictObject({
   take: z.int().min(1).max(200).default(50),
   /**

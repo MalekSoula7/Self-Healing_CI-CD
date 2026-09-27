@@ -38,4 +38,12 @@ export type {
   WorkflowRun,
 } from "./repo";
 export { listUserAdminOrgIds, listUserInstallationIds } from "./user";
+export {
+  installationEventSchema,
+  installationRepositoriesEventSchema,
+  toAccountType,
+  type InstallationEvent,
+  type InstallationRepositoriesEvent,
+  type WebhookRepoRef,
+} from "./webhook-payloads";
 export { verifyWebhookSignature } from "./webhooks";

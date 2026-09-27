@@ -4,7 +4,13 @@
 export type { Actor } from "./audit";
 export { createDb, type Db } from "./client";
 export { ConflictError, ForbiddenError, NotFoundError } from "./errors";
-export type { AuditPage, InstallationInput, InstalledRepository } from "./inputs";
+export type {
+  AuditPage,
+  InstallationInput,
+  InstalledRepository,
+  InstalledWorkflow,
+  WebhookDeliveryInput,
+} from "./inputs";
 export {
   installations,
   type Installations,
@@ -23,6 +29,12 @@ export {
 } from "./scope";
 export { DEV_DATABASE_URL, databaseUrlSchema, tlsUnlessLoopback } from "./url";
 export { GITHUB_PROVIDER_ID, githubIdentity, type GitHubIdentity } from "./users";
+export {
+  markWebhookDeliveryFailed,
+  markWebhookDeliveryProcessed,
+  recordWebhookDelivery,
+  type RecordedDelivery,
+} from "./webhook-deliveries";
 export * from "./generated/prisma/enums";
 export {
   Prisma,

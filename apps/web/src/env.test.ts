@@ -13,6 +13,8 @@ const production = {
   NODE_ENV: "production",
   APP_URL: "https://pipeheal.example",
   DATABASE_URL: "postgresql://app:pw@db.internal:5432/pipeheal?sslmode=verify-full",
+  REDIS_URL: "rediss://cache.internal:6380",
+  GITHUB_WEBHOOK_SECRET: "w".repeat(32),
   ...signIn,
 };
 
@@ -27,13 +29,14 @@ function problemKeys(run: () => unknown): string[] {
 }
 
 describe("web env", () => {
-  it("starts with local-dev defaults when nothing is set, sign-in off", () => {
+  it("starts with local-dev defaults when nothing is set, sign-in and webhooks off", () => {
     const env = loadWebEnv({});
     expect(env).toEqual({
       NODE_ENV: "development",
       LOG_LEVEL: "info",
       APP_URL: "http://localhost:3000",
       DATABASE_URL: "postgresql://pipeheal:pipeheal@localhost:5432/pipeheal",
+      REDIS_URL: "redis://localhost:6379",
     });
     expect(githubSignInConfig(env)).toBeNull();
   });
@@ -70,6 +73,8 @@ describe("web env", () => {
       "DATABASE_URL",
       "GITHUB_CLIENT_ID",
       "GITHUB_CLIENT_SECRET",
+      "GITHUB_WEBHOOK_SECRET",
+      "REDIS_URL",
     ]);
   });
 
@@ -88,6 +93,17 @@ describe("web env", () => {
       DATABASE_URL: "postgresql://pipeheal:pipeheal@localhost:5432/pipeheal",
     });
     expect(loopback.APP_URL).toBe("http://127.0.0.1:3100");
+  });
+
+  it("requires rediss:// and a real webhook secret in production (loopback excepted)", () => {
+    expect(
+      problemKeys(() => loadWebEnv({ ...production, REDIS_URL: "redis://cache.internal:6379" })),
+    ).toEqual(["REDIS_URL"]);
+    expect(
+      problemKeys(() => loadWebEnv({ ...production, GITHUB_WEBHOOK_SECRET: "short" })),
+    ).toEqual(["GITHUB_WEBHOOK_SECRET"]);
+    const loopback = loadWebEnv({ ...production, REDIS_URL: "redis://localhost:6379" });
+    expect(loopback.REDIS_URL).toBe("redis://localhost:6379");
   });
 
   it("never echoes a secret value in its errors", () => {

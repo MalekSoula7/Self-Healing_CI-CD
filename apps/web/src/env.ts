@@ -3,6 +3,8 @@
 import "server-only";
 // The light entry point: env is imported by instrumentation, which must not load Prisma.
 import { DEV_DATABASE_URL, databaseUrlSchema, tlsUnlessLoopback } from "@pipeheal/db/url";
+// The light entry point: webhookSecretSchema is a plain zod schema, no octokit import.
+import { webhookSecretSchema } from "@pipeheal/github/credentials";
 import {
   EnvValidationError,
   envHttpUrl,
@@ -17,6 +19,7 @@ const nodeEnv = z.enum(["development", "test", "production"]).default("developme
 const logLevel = z.enum(["debug", "info", "warn", "error"]).default("info");
 const authSecret = z.string().min(32, "must be at least 32 characters");
 const nonEmpty = z.string().min(1);
+const redisUrl = z.url({ protocol: /^rediss?$/, error: "must be a redis:// or rediss:// URL" });
 
 // GitHub sign-in needs all three; in development they are optional together, so the app still
 // runs before the GitHub App is registered (sign-in then says it isn't configured).
@@ -28,9 +31,13 @@ export const webEnvSchema = z
     LOG_LEVEL: logLevel,
     APP_URL: envHttpUrl.default("http://localhost:3000"),
     DATABASE_URL: databaseUrlSchema.default(DEV_DATABASE_URL),
+    REDIS_URL: redisUrl.default("redis://localhost:6379"),
     BETTER_AUTH_SECRET: authSecret.optional(),
     GITHUB_CLIENT_ID: nonEmpty.optional(),
     GITHUB_CLIENT_SECRET: nonEmpty.optional(),
+    // Independent of sign-in: the webhook route (P1.6) works whether or not sign-in is
+    // configured. Unset in development, it answers 503 instead of failing to start.
+    GITHUB_WEBHOOK_SECRET: webhookSecretSchema.optional(),
   })
   .superRefine((env, ctx) => {
     const missing = SIGN_IN_KEYS.filter((key) => env[key] === undefined);
@@ -57,9 +64,14 @@ const productionSchema = z.object({
     tlsUnlessLoopback,
     "must set sslmode=require (or verify-ca / verify-full) in production (loopback hosts excepted)",
   ),
+  REDIS_URL: redisUrl.refine(
+    (url) => secureUnlessLoopback(url, "rediss:"),
+    "must use rediss:// in production (loopback hosts excepted)",
+  ),
   BETTER_AUTH_SECRET: authSecret,
   GITHUB_CLIENT_ID: nonEmpty,
   GITHUB_CLIENT_SECRET: nonEmpty,
+  GITHUB_WEBHOOK_SECRET: webhookSecretSchema,
 });
 
 export type WebEnv = z.output<typeof webEnvSchema>;

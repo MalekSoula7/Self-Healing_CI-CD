@@ -15,8 +15,10 @@ import {
   githubIdSchema,
   idSchema,
   installedRepositorySchema,
+  installedWorkflowSchema,
   type AuditPage,
   type InstalledRepository,
+  type InstalledWorkflow,
 } from "./inputs";
 
 export interface OrgSummary {
@@ -262,6 +264,62 @@ function buildSystemScope(ctx: ScopeContext) {
             });
           }
           return repos.length;
+        });
+      },
+    },
+
+    workflows: {
+      ...base.workflows,
+
+      /**
+       * Upserts the workflows GitHub reports for one repository of this org (at most
+       * SYNC_BATCH_LIMIT). New ones start unselected; onboarding (P1.7) chooses which to watch.
+       */
+      async syncInstalled(repoId: string, workflows: readonly InstalledWorkflow[]) {
+        const id = requireId(repoId, "repository");
+        const items = z.array(installedWorkflowSchema).max(SYNC_BATCH_LIMIT).parse(workflows);
+        return db.$transaction(async (tx) => {
+          const repo = await tx.repository.findFirst({ where: { id, orgId } });
+          if (repo === null) throw new NotFoundError("repository not found");
+          const results = [];
+          for (const workflow of items) {
+            const existing = await tx.repoWorkflow.findUnique({
+              where: {
+                repoId_githubWorkflowId: {
+                  repoId: id,
+                  githubWorkflowId: workflow.githubWorkflowId,
+                },
+              },
+            });
+            if (existing === null) {
+              const created = await tx.repoWorkflow.create({
+                data: { orgId, repoId: id, ...workflow },
+              });
+              await writeAudit(tx, orgId, actor, {
+                action: "workflow.discovered",
+                target: auditTarget("workflow", created.id),
+                metadata: { repoId: id, path: created.path },
+              });
+              results.push(created);
+              continue;
+            }
+            const changed = existing.path !== workflow.path || existing.name !== workflow.name;
+            if (!changed) {
+              results.push(existing);
+              continue;
+            }
+            const updated = await tx.repoWorkflow.update({
+              where: { id: existing.id },
+              data: { path: workflow.path, name: workflow.name },
+            });
+            await writeAudit(tx, orgId, actor, {
+              action: "workflow.updated",
+              target: auditTarget("workflow", existing.id),
+              metadata: { repoId: id, path: updated.path },
+            });
+            results.push(updated);
+          }
+          return results;
         });
       },
     },

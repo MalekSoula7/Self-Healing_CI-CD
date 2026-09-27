@@ -87,7 +87,8 @@ async function createTenant(): Promise<Tenant> {
   const [repo] = await system.repositories.syncInstalled([
     { githubRepoId: githubId(), fullName: `${login}/app`, defaultBranch: "main" },
   ]);
-  // Workflow discovery gets its helper with onboarding (P1.7).
+  // `workflows.syncInstalled` (P1.6) discovers rows; pre-selection and the picker are P1.7, so
+  // test setup still creates one directly.
   const workflow = await db.repoWorkflow.create({
     data: {
       orgId: org.id,
@@ -176,6 +177,13 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
     await expect(a.system.workflows.setSelected(b.workflow.id, selected)).rejects.toThrow(
       NotFoundError,
     );
+  },
+  "workflows.syncInstalled": async () => {
+    await expect(
+      a.system.workflows.syncInstalled(b.repo.id, [
+        { githubWorkflowId: githubId(), path: ".github/workflows/x.yml", name: "X" },
+      ]),
+    ).rejects.toThrow(NotFoundError);
   },
   "members.list": async () => {
     const members = await a.asAdmin.members.list();

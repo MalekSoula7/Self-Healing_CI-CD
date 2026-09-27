@@ -39,8 +39,8 @@ Acceptance: fresh clone → `docker compose up -d && pnpm i && pnpm dev` works; 
 - [x] **P1.3** Better Auth with GitHub provider; session carries `userId`; `proxy.ts` redirects signed-out users on `/[org]/**`; org membership check in every org layout, route handler and data helper (never the proxy alone). Verified-installer OWNER binding on sign-in (SPEC §5.2).
 - [x] **P1.4** `packages/github`: App JWT, installation token cache, typed wrappers for the endpoints we use (list failed jobs, download job logs, compare commits, get file contents at ref, re-run failed jobs, dispatch workflow, Git Data API, create PR, comment, request reviewers). msw-based tests.
 - [x] **P1.5** `docs/SETUP-GITHUB-APP.md`: exact permissions and events from SPEC §5.1, callback/webhook URLs, smee forwarding for local dev, which `.env` values come from where.
-- [ ] **CHECKPOINT 1a [HUMAN]**: Malek creates a GitHub sandbox organization, registers the dev GitHub App, fills `.env`.
-- [ ] **P1.6** Webhook route: HMAC verification, delivery-ID idempotency, enqueue, fast 2xx. Processors for `installation` and `installation_repositories` → upsert `Organization` (org or personal account), `Repository`, `RepoWorkflow`; the installing user becomes the OWNER candidate, confirmed on sign-in (SPEC §5.2).
+- [x] **CHECKPOINT 1a [HUMAN]**: Malek creates a GitHub sandbox organization, registers the dev GitHub App, fills `.env`.
+- [x] **P1.6** Webhook route: HMAC verification, delivery-ID idempotency, enqueue, fast 2xx. Processors for `installation` and `installation_repositories` → upsert `Organization` (org or personal account), `Repository`, `RepoWorkflow`; the installing user becomes the OWNER candidate, confirmed on sign-in (SPEC §5.2).
 - [ ] **P1.7** Onboarding UI: "Install GitHub App" → post-install callback → repo list with enable toggles → per-repo workflow selection with CI-looking workflows pre-selected (SPEC §11).
 - [ ] **P1.8** Audit log entries for every mutation (who, what, when).
 

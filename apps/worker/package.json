@@ -8,6 +8,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@pipeheal/db": "workspace:*",
+    "@pipeheal/github": "workspace:*",
     "@pipeheal/shared": "workspace:*",
     "bullmq": "^6.3.9",
     "fastify": "^5.12.5",
@@ -16,6 +18,7 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "msw": "^2.15.0",
     "tsx": "^4.23.15",
     "typescript": "catalog:"
   }
