@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 // Two projects:
@@ -16,12 +17,17 @@ const blankSecrets = {
   SMEE_URL: "",
   SENTRY_DSN: "",
 };
+// "server-only" throws unless bundled by Next.js for the server; tests run outside that bundler.
+const resolve = {
+  alias: { "server-only": fileURLToPath(new URL("./tests/stubs/server-only.ts", import.meta.url)) },
+};
 const strictCoverage = { lines: 95, functions: 95, branches: 95, statements: 95 };
 
 export default defineConfig({
   test: {
     projects: [
       {
+        resolve,
         test: {
           name: "unit",
           environment: "node",
@@ -33,12 +39,14 @@ export default defineConfig({
         },
       },
       {
+        resolve,
         test: {
           name: "integration",
           environment: "node",
           allowOnly: false,
           include: ["{apps,packages}/*/src/**/*.int.test.ts"],
           exclude: ignored,
+          setupFiles: ["./vitest.integration.setup.ts"],
           env: blankSecrets,
         },
       },

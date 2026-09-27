@@ -1,6 +1,6 @@
 import { loadWorkerEnv } from "./env";
 import { buildGateway } from "./gateway/server";
-import { createLogger } from "./logger";
+import { createLogger } from "@pipeheal/shared/logger";
 import { createMaintenanceQueue, createMaintenanceWorker } from "./queues/maintenance";
 import { createRedis, pingRedis } from "./redis";
 import { createShutdown } from "./shutdown";

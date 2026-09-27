@@ -63,3 +63,23 @@ export function parseEnv<S extends z.ZodObject>(
     .sort((a, b) => a.key.localeCompare(b.key));
   throw new EnvValidationError(issues);
 }
+
+// Names that must never be exposed through NEXT_PUBLIC_ (Next inlines those into browser bundles).
+const SECRET_NAME =
+  /(SECRET|PRIVATE_KEY|API_KEY|TOKEN|PASSWORD|DSN|CREDENTIAL|SMEE_URL|DATABASE_URL|REDIS_URL)/;
+
+/** NEXT_PUBLIC_* variable names that look like secrets. Checked at build and at server start. */
+export function publicSecretNames(source: EnvSource): string[] {
+  return Object.keys(source).filter(
+    (name) =>
+      name.startsWith("NEXT_PUBLIC_") && SECRET_NAME.test(name.slice("NEXT_PUBLIC_".length)),
+  );
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/** True when `url` uses the secure protocol, or points at a loopback host (local dev, e2e). */
+export function secureUnlessLoopback(url: string, secureProtocol: "https:" | "rediss:"): boolean {
+  const parsed = new URL(url);
+  return parsed.protocol === secureProtocol || LOOPBACK_HOSTS.has(parsed.hostname);
+}

@@ -56,6 +56,29 @@ export default defineConfig(
     },
   },
   {
+    // Test helpers (msw, the network guard) never ship in runtime code.
+    files: ["**/*.{ts,tsx}"],
+    ignores: [
+      "**/*.test.{ts,tsx}",
+      "vitest.setup.ts",
+      "vitest.integration.setup.ts",
+      "packages/shared/src/testing/**",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@pipeheal/shared/testing",
+              message: "Test-only helpers: import them from tests only.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // packages/policy is pure: no I/O, no network, no process access.
     files: ["packages/policy/src/**/*.ts"],
     rules: {
@@ -79,6 +102,12 @@ export default defineConfig(
                 "worker_threads",
               ],
               message: "packages/policy must stay pure: no I/O, network or process access.",
+            },
+          ],
+          paths: [
+            {
+              name: "@pipeheal/shared/testing",
+              message: "Test-only helpers: import them from tests only.",
             },
           ],
         },

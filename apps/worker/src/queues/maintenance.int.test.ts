@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { QueueEvents, type Worker } from "bullmq";
 import type { Redis } from "ioredis";
-import { pino } from "pino";
+import { createLogger } from "@pipeheal/shared/logger";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildGateway } from "../gateway/server";
 import { createRedis, pingRedis } from "../redis";
@@ -14,7 +14,7 @@ import {
 } from "./maintenance";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
-const logger = pino({ level: "silent" });
+const logger = createLogger({ level: "silent", service: "test" });
 
 function ready<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("test setup did not complete");

@@ -19,6 +19,20 @@ describe("worker env", () => {
     expect(() => loadWorkerEnv({ REDIS_URL: url })).toThrow(EnvValidationError);
   });
 
+  it("requires a TLS REDIS_URL in production (loopback excepted)", () => {
+    expect(() => loadWorkerEnv({ NODE_ENV: "production" })).toThrow(EnvValidationError);
+    expect(() =>
+      loadWorkerEnv({ NODE_ENV: "production", REDIS_URL: "redis://cache.internal:6379" }),
+    ).toThrow(EnvValidationError);
+    expect(
+      loadWorkerEnv({ NODE_ENV: "production", REDIS_URL: "rediss://cache.internal:6380" })
+        .REDIS_URL,
+    ).toBe("rediss://cache.internal:6380");
+    expect(
+      loadWorkerEnv({ NODE_ENV: "production", REDIS_URL: "redis://127.0.0.1:6379" }).REDIS_URL,
+    ).toBe("redis://127.0.0.1:6379");
+  });
+
   it("accepts TLS Redis URLs", () => {
     expect(loadWorkerEnv({ REDIS_URL: "rediss://cache.internal:6380" }).REDIS_URL).toBe(
       "rediss://cache.internal:6380",

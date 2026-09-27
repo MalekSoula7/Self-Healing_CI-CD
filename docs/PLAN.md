@@ -29,7 +29,7 @@ Acceptance: fresh clone → `docker compose up -d && pnpm i && pnpm dev` works; 
 
 ## Phase 1: Tenancy, auth, GitHub App
 
-- [ ] **P1.0** Phase 0 security review follow-ups (before anything logs webhooks or holds secrets):
+- [x] **P1.0** Phase 0 security review follow-ups (before anything logs webhooks or holds secrets):
   - Move `createLogger` to `packages/shared` for web and worker. Redact keys case-insensitively at any depth (`authorization`, `cookie`, `x-api-key`, `*token*`, `*secret*`, `password`, `private_key`, `access_token`, `client_secret`, ...). Scrub string values too, including `msg` and error messages: GitHub tokens, `sk-ant-`, PEM blocks, JWTs, credentials in URLs, pre-signed query params.
   - Fastify `req` serializer without the query string and `err` serializer keeping type/message/code/stack only. Test through `app.inject` with `?token=`, an `authorization` header and a throwing route.
   - `import "server-only"` in `apps/web/src/env.ts`, plus a startup check and test that no `NEXT_PUBLIC_*` name looks like a secret. Required (not defaulted) URLs in production, https / rediss for non-loopback hosts.

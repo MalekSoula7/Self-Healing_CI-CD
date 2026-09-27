@@ -1,5 +1,5 @@
 import { Redis } from "ioredis";
-import type { Logger } from "pino";
+import type { Logger } from "@pipeheal/shared/logger";
 
 export function createRedis(url: string, logger: Logger): Redis {
   // BullMQ workers need maxRetriesPerRequest: null (blocking commands must not time out).

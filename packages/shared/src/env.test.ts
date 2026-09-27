@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { EnvValidationError, envBoolean, envHttpUrl, envPort, parseEnv } from "./env";
+import {
+  EnvValidationError,
+  envBoolean,
+  envHttpUrl,
+  envPort,
+  parseEnv,
+  publicSecretNames,
+  secureUnlessLoopback,
+} from "./env";
 
 const schema = z.object({
   DATABASE_URL: z.url(),
@@ -106,5 +114,48 @@ describe("envBoolean", () => {
 
   it.each(["yes", "TRUE ", "on", ""])("rejects %j", (raw) => {
     expect(envBoolean.safeParse(raw).success).toBe(false);
+  });
+});
+
+describe("publicSecretNames", () => {
+  it("flags NEXT_PUBLIC_ variables whose names look like secrets", () => {
+    expect(
+      publicSecretNames({
+        NEXT_PUBLIC_APP_NAME: "PipeHeal",
+        NEXT_PUBLIC_GITHUB_CLIENT_SECRET: "x",
+        NEXT_PUBLIC_ANTHROPIC_API_KEY: "y",
+        NEXT_PUBLIC_SENTRY_DSN: "z",
+        GITHUB_CLIENT_SECRET: "server-side is fine",
+      }).sort(),
+    ).toEqual([
+      "NEXT_PUBLIC_ANTHROPIC_API_KEY",
+      "NEXT_PUBLIC_GITHUB_CLIENT_SECRET",
+      "NEXT_PUBLIC_SENTRY_DSN",
+    ]);
+  });
+
+  it("returns nothing when no public variable looks secret", () => {
+    expect(publicSecretNames({ NEXT_PUBLIC_APP_NAME: "PipeHeal", PATH: "/bin" })).toEqual([]);
+  });
+});
+
+describe("secureUnlessLoopback", () => {
+  it.each([
+    ["https://pipeheal.example", "https:"],
+    ["http://localhost:3000", "https:"],
+    ["http://127.0.0.1:3100", "https:"],
+    ["http://[::1]:3000", "https:"],
+    ["rediss://cache.internal:6380", "rediss:"],
+    ["redis://localhost:6379", "rediss:"],
+  ] as const)("accepts %s", (url, secure) => {
+    expect(secureUnlessLoopback(url, secure)).toBe(true);
+  });
+
+  it.each([
+    ["http://pipeheal.example", "https:"],
+    ["redis://cache.internal:6379", "rediss:"],
+    ["http://localhost.evil.example", "https:"],
+  ] as const)("rejects %s", (url, secure) => {
+    expect(secureUnlessLoopback(url, secure)).toBe(false);
   });
 });

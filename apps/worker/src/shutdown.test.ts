@@ -1,8 +1,8 @@
-import { pino } from "pino";
+import { createLogger } from "@pipeheal/shared/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createShutdown } from "./shutdown";
 
-const logger = pino({ level: "silent" });
+const logger = createLogger({ level: "silent", service: "test" });
 
 afterEach(() => {
   vi.useRealTimers();

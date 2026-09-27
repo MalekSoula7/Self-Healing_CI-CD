@@ -28,6 +28,8 @@ export default defineConfig({
     command: `pnpm run build && pnpm exec next start --port ${String(port)}`,
     url: `${baseURL}/api/health`,
     reuseExistingServer: false,
+    // `next start` runs in production mode, which requires APP_URL (loopback may use http).
+    env: { APP_URL: baseURL },
     timeout: 180_000,
   },
 });
