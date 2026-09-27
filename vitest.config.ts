@@ -4,7 +4,8 @@ import { defineConfig } from "vitest/config";
 // Two projects:
 // - unit: no infrastructure needed (`pnpm test:unit`, also run on Windows CI). Every HTTP request
 //   goes through msw and unmocked requests fail (vitest.setup.ts), so unit tests never hit the network.
-// - integration: `*.int.test.ts`, needs `docker compose up -d` (Postgres, Redis).
+// - integration: `*.int.test.ts`, needs `docker compose up -d` (Postgres, Redis). Runs against a
+//   separate `pipeheal_test` database, recreated on every run.
 // `pnpm test` runs both with coverage.
 const ignored = ["**/node_modules/**", "**/dist/**", "**/.next/**"];
 // Secrets from the developer's shell or .env never reach tests (empty counts as unset in parseEnv).
@@ -47,6 +48,8 @@ export default defineConfig({
           include: ["{apps,packages}/*/src/**/*.int.test.ts"],
           exclude: ignored,
           setupFiles: ["./vitest.integration.setup.ts"],
+          // Recreates and migrates the pipeheal_test database once per run.
+          globalSetup: ["./vitest.integration.globalSetup.ts"],
           env: blankSecrets,
         },
       },

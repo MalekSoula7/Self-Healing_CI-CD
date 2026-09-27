@@ -5,6 +5,7 @@ import {
   envBoolean,
   envHttpUrl,
   envPort,
+  isLoopbackUrl,
   parseEnv,
   publicSecretNames,
   secureUnlessLoopback,
@@ -157,5 +158,23 @@ describe("secureUnlessLoopback", () => {
     ["http://localhost.evil.example", "https:"],
   ] as const)("rejects %s", (url, secure) => {
     expect(secureUnlessLoopback(url, secure)).toBe(false);
+  });
+});
+
+describe("isLoopbackUrl", () => {
+  it.each([
+    "postgresql://pipeheal:pipeheal@localhost:5432/pipeheal",
+    "http://127.0.0.1:3100",
+    "redis://[::1]:6379",
+  ])("accepts %s", (url) => {
+    expect(isLoopbackUrl(url)).toBe(true);
+  });
+
+  it.each([
+    "postgresql://db.internal:5432/pipeheal",
+    "http://localhost.evil.example",
+    "http://127.0.0.2.evil.example",
+  ])("rejects %s", (url) => {
+    expect(isLoopbackUrl(url)).toBe(false);
   });
 });

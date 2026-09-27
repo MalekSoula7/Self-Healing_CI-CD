@@ -7,6 +7,8 @@ playwright-report/
 test-results/
 *.tsbuildinfo
 next-env.d.ts
+# Prisma Client, regenerated on install and by `pnpm db:generate` / `pnpm db:migrate`
+packages/db/src/generated/
 
 .env
 .env.*

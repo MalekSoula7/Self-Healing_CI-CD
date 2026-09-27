@@ -1,0 +1,258 @@
+// PipeHeal data model (SPEC §10). Phase 1 tables only; later phases add theirs with a migration.
+//
+// Conventions:
+// - Every tenant-owned table carries `orgId` and is only queried through the org-scoped helpers
+//   in packages/db (CLAUDE.md). Child tables reference their parent through (orgId, parentId), so
+//   the database itself refuses a row whose orgId differs from its parent's.
+// - GitHub numeric IDs are BigInt: repository and job IDs already exceed 2^31.
+// - Our own IDs are UUIDv7 (time-ordered). Better Auth generates the IDs of its four tables.
+// - Rows are never moved between tenants. A repository transferred to another installed account
+//   gets a new row there; the old one keeps its history and is marked removed.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+  // Extensionless imports resolve under TypeScript's bundler resolution, Vite/Vitest, tsx and Next.js.
+  importFileExtension = ""
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------------------------
+// Better Auth (P1.3). Field names and types follow Better Auth's Prisma schema; do not rename.
+// The user's GitHub ID is Account.accountId where providerId = "github" (not duplicated here).
+
+model User {
+  id            String   @id
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  // GitHub login at last sign-in (display only; logins can be renamed and reused).
+  login         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  sessions    Session[]
+  accounts    Account[]
+  memberships Membership[]
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Encrypted by Better Auth (account.encryptOAuthTokens, D8). Never read these columns directly.
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // One GitHub identity belongs to exactly one user.
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
+
+  @@index([identifier])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tenancy
+
+enum AccountType {
+  ORG
+  USER
+}
+
+enum OrgStatus {
+  ACTIVE
+  // The installation was suspended on GitHub: no processing until unsuspended.
+  SUSPENDED
+  UNINSTALLED
+}
+
+enum Plan {
+  FREE
+}
+
+/// One tenant = one GitHub account (organization or personal) with an installation of the App.
+model Organization {
+  id                String      @id @default(uuid(7)) @db.Uuid
+  githubAccountId   BigInt      @unique
+  /// GitHub login as GitHub spells it.
+  login             String
+  /// Lowercased login: the `[org]` URL segment (GitHub logins are case-insensitive).
+  slug              String      @unique
+  accountType       AccountType
+  installationId    BigInt      @unique
+  /// The `installation` webhook's sender: OWNER candidate until a verified sign-in (SPEC §5.2).
+  installerGithubId BigInt?
+  status            OrgStatus   @default(ACTIVE)
+  plan              Plan        @default(FREE)
+  monthlyBudgetUsd  Decimal?    @db.Decimal(10, 2)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  memberships  Membership[]
+  repositories Repository[]
+  workflows    RepoWorkflow[]
+  auditLogs    AuditLog[]
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model Membership {
+  id        String       @id @default(uuid(7)) @db.Uuid
+  orgId     String       @db.Uuid
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@unique([orgId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Repositories and workflows
+
+enum HealerStatus {
+  /// `.github/workflows/pipeheal.yml` not found on the default branch.
+  MISSING
+  OK
+  ERROR
+}
+
+model Repository {
+  id                        String       @id @default(uuid(7)) @db.Uuid
+  orgId                     String       @db.Uuid
+  org                       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  githubRepoId              BigInt
+  /// owner/name as GitHub spells it.
+  fullName                  String
+  defaultBranch             String
+  /// Off until an admin enables it during onboarding (SPEC §11).
+  enabled                   Boolean      @default(false)
+  /// Set when the repo leaves the installation; the repo is also disabled then.
+  removedFromInstallationAt DateTime?
+  healerStatus              HealerStatus @default(MISSING)
+  /// { install, build, lint, typecheck, test, testFile }, validated with zod in packages/db.
+  commands                  Json?
+  junitGlob                 String?
+  language                  String?
+  createdAt                 DateTime     @default(now())
+  updatedAt                 DateTime     @updatedAt
+
+  workflows RepoWorkflow[]
+
+  // Webhook lookups go installation → org → (orgId, githubRepoId), never by repo ID alone.
+  @@unique([orgId, githubRepoId])
+  // Target of the composite foreign keys that pin children to the same org.
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
+}
+
+/// A workflow discovered in the repo; `selected` workflows are the ones PipeHeal watches (SPEC §2.1).
+model RepoWorkflow {
+  id               String       @id @default(uuid(7)) @db.Uuid
+  orgId            String       @db.Uuid
+  org              Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  repoId           String       @db.Uuid
+  repo             Repository   @relation(fields: [orgId, repoId], references: [orgId, id], onDelete: Cascade)
+  githubWorkflowId BigInt
+  /// Repo-relative POSIX path, e.g. `.github/workflows/ci.yml`.
+  path             String
+  name             String
+  selected         Boolean      @default(false)
+  /// A job in the workflow uses `environment:` (never re-run or dispatched by us).
+  usesEnvironment  Boolean      @default(false)
+  /// Trigger event names from `on:` (push, pull_request, ...).
+  triggers         String[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([repoId, githubWorkflowId])
+  @@index([orgId, createdAt])
+  @@index([repoId, path])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Audit and webhooks
+
+enum ActorType {
+  USER
+  SYSTEM
+}
+
+/// Append-only record of every mutation (P1.8): who, what, when.
+model AuditLog {
+  id        String       @id @default(uuid(7)) @db.Uuid
+  orgId     String       @db.Uuid
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  actorType ActorType
+  /// User.id for USER actors, a component name (e.g. "webhook") for SYSTEM actors.
+  actorId   String?
+  /// Dotted verb, e.g. "repository.enabled".
+  action    String
+  /// What was acted on, e.g. "repository:<id>".
+  target    String
+  /// IDs and redacted values only, never secrets or raw customer content.
+  metadata  Json?
+  createdAt DateTime     @default(now())
+
+  @@index([orgId, createdAt])
+}
+
+/// GitHub webhook deliveries, for idempotency by delivery ID (P1.6). Not tenant-owned: a delivery
+/// is recorded before it is attributed to an org.
+model WebhookDelivery {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  /// X-GitHub-Delivery header (a GUID). Redeliveries reuse it.
+  deliveryId     String    @unique
+  event          String
+  action         String?
+  installationId BigInt?
+  receivedAt     DateTime  @default(now())
+  processedAt    DateTime?
+  /// Redacted error summary of the last failed processing attempt.
+  error          String?
+
+  @@index([receivedAt])
+}

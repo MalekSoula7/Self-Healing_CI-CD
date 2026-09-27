@@ -14,12 +14,16 @@ catalog:
 # A new package with an install script produces a warning and is NOT run until listed here.
 # (strictDepBuilds would make that an error, but pnpm 10.34 then also rejects ignored packages.)
 onlyBuiltDependencies:
+  # downloads the Prisma schema engine (migrations) at install instead of on first CLI use
+  - "@prisma/engines"
   - esbuild
 ignoredBuiltDependencies:
   # optional native speed-up for BullMQ's serializer; the pure-JS fallback is used instead
   - msgpackr-extract
   # postinstall copies the browser service worker; we only use msw in Node
   - msw
+  # preinstall only checks the Node version, which engine-strict already enforces
+  - prisma
 
 # Don't install versions published less than a day ago (time for malicious releases to be pulled).
 minimumReleaseAge: 1440

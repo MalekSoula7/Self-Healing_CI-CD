@@ -33,10 +33,15 @@ Created in Phase 0. Keep this section accurate whenever scripts change.
 - `pnpm test:unit` - unit tests only, no infrastructure (what the Windows CI job runs)
 - `pnpm test:e2e` - Playwright against a production build on :3100 (once per machine: `pnpm --filter @pipeheal/web exec playwright install chromium`)
 - `pnpm typecheck` / `pnpm lint` / `pnpm format` / `pnpm format:check`
-- Not created yet: `pnpm db:migrate` / `pnpm db:studio` / `pnpm db:seed` (Phase 1), `pnpm heal:local` (Phase 4), `pnpm eval` (Phase 8)
+- `pnpm db:migrate [--name <name>]` - `prisma migrate dev` on the dev database, then regenerates the client (Prisma 7's `migrate dev` no longer does)
+- `pnpm db:generate` - regenerate the Prisma client (also runs on `pnpm install`; output in `packages/db/src/generated`, gitignored)
+- `pnpm db:seed` - idempotent demo data (org `pipeheal-demo`); refuses production and non-local databases
+- `pnpm db:studio` - Prisma Studio on the dev database
+- Not created yet: `pnpm heal:local` (Phase 4), `pnpm eval` (Phase 8)
 
 ## Testing conventions
 - Unit tests: `*.test.ts` next to the code. Integration tests (real Postgres/Redis): `*.int.test.ts`.
+- Integration tests run against a `pipeheal_test` database that is dropped, recreated and migrated once per run (local servers only). Get a client with `createTestDb()` from `@pipeheal/db/testing`, and use random IDs so test files stay independent.
 - Unit tests cannot reach the network: every request goes through msw and unmocked ones fail. Mock with `mockServer.use(...)` from `@pipeheal/shared/testing`.
 - Coverage thresholds (95%) apply to `packages/policy` and `packages/agent-core`; `pnpm test` fails below them.
 

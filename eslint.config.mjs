@@ -10,6 +10,11 @@ import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
+const testingImports = {
+  group: ["@pipeheal/*/testing"],
+  message: "Test-only helpers: import them from tests only.",
+};
+
 export default defineConfig(
   globalIgnores([
     "**/node_modules/**",
@@ -56,26 +61,11 @@ export default defineConfig(
     },
   },
   {
-    // Test helpers (msw, the network guard) never ship in runtime code.
+    // Test helpers (msw, the network guard, the test database) never ship in runtime code.
     files: ["**/*.{ts,tsx}"],
-    ignores: [
-      "**/*.test.{ts,tsx}",
-      "vitest.setup.ts",
-      "vitest.integration.setup.ts",
-      "packages/shared/src/testing/**",
-    ],
+    ignores: ["**/*.test.{ts,tsx}", "vitest.*.ts", "packages/*/src/testing/**"],
     rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: [
-            {
-              name: "@pipeheal/shared/testing",
-              message: "Test-only helpers: import them from tests only.",
-            },
-          ],
-        },
-      ],
+      "no-restricted-imports": ["error", { patterns: [testingImports] }],
     },
   },
   {
@@ -103,12 +93,7 @@ export default defineConfig(
               ],
               message: "packages/policy must stay pure: no I/O, network or process access.",
             },
-          ],
-          paths: [
-            {
-              name: "@pipeheal/shared/testing",
-              message: "Test-only helpers: import them from tests only.",
-            },
+            testingImports,
           ],
         },
       ],

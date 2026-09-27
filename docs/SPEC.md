@@ -467,10 +467,10 @@ Iterations: <n> · Model: <id> · Cost: $<x> · [Full timeline](<dashboard link>
 
 ## 10. Data model (Prisma, simplified)
 
-- `User` (githubId, login, email, avatarUrl). Better Auth's own tables (`Session`, `Account`, `Verification`) follow its Prisma schema.
+- `User` (login, email, image as avatar URL). Better Auth's own tables (`Session`, `Account`, `Verification`) follow its Prisma schema. The GitHub user ID is not duplicated on `User`: it is `Account.accountId` where `providerId = "github"`, unique per provider.
 - `Organization` = one tenant = one GitHub account with an installation (githubAccountId, login, accountType: ORG | USER, installationId unique, installerGithubId (OWNER candidate until verified sign-in, §5.2), status, plan, monthlyBudgetUsd)
 - `Membership` (userId, orgId, role: OWNER | ADMIN | MEMBER)
-- `Repository` (orgId, githubRepoId, fullName, defaultBranch, enabled, healerStatus: MISSING | OK | ERROR, commands JSON {install, build, lint, typecheck, test, testFile}, junitGlob, language)
+- `Repository` (orgId, githubRepoId, fullName, defaultBranch, enabled, removedFromInstallationAt, healerStatus: MISSING | OK | ERROR, commands JSON {install, build, lint, typecheck, test, testFile}, junitGlob, language). Unique on (orgId, githubRepoId): rows never move between tenants, so a repository transferred to another installed account gets a new row there.
 - `RepoWorkflow` (orgId, repoId, githubWorkflowId, path, name, selected, usesEnvironment, triggers). Discovered from the repo; `selected` is set at onboarding (§2.1, §11).
 - `Policy` (orgId, repoId nullable for org default, version, rules JSON, createdById) with history
 - `PipelineFailure` (orgId, repoId, headSha, headBranch, category, confidence, summary, status, skipReason, windowClosesAt, createdAt). Unique on (repoId, headSha) (§2.1).
@@ -483,7 +483,7 @@ Iterations: <n> · Model: <id> · Cost: $<x> · [Full timeline](<dashboard link>
 - `UsageRecord` (orgId, period, attempts, inputTokens, outputTokens, costUsd)
 - `WebhookDelivery` (deliveryId unique, event, receivedAt, processedAt, error)
 
-Every tenant table carries `orgId`. Indexes on (orgId, createdAt) and lookup keys.
+Every tenant table carries `orgId`. Indexes on (orgId, createdAt) and lookup keys. Child rows reference their parent through (orgId, parentId), so the database rejects a child whose org differs from its parent's. GitHub numeric IDs are `BigInt`.
 
 ---
 

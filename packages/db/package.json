@@ -5,13 +5,27 @@
   "description": "Prisma + PostgreSQL, plus org-scoped data helpers.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/index.ts"
   },
   "scripts": {
+    "postinstall": "prisma generate",
+    "generate": "prisma generate",
+    "migrate": "tsx scripts/migrate.ts",
+    "seed": "prisma db seed",
+    "studio": "prisma studio",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "prisma": "7.10.0",
+    "tsx": "^4.23.15",
     "typescript": "catalog:"
+  },
+  "dependencies": {
+    "@pipeheal/shared": "workspace:*",
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "zod": "catalog:"
   }
 }

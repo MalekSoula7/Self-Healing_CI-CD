@@ -78,8 +78,12 @@ export function publicSecretNames(source: EnvSource): string[] {
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
+/** True when `url` points at this machine (local dev, e2e, docker compose services). */
+export function isLoopbackUrl(url: string): boolean {
+  return LOOPBACK_HOSTS.has(new URL(url).hostname);
+}
+
 /** True when `url` uses the secure protocol, or points at a loopback host (local dev, e2e). */
 export function secureUnlessLoopback(url: string, secureProtocol: "https:" | "rediss:"): boolean {
-  const parsed = new URL(url);
-  return parsed.protocol === secureProtocol || LOOPBACK_HOSTS.has(parsed.hostname);
+  return new URL(url).protocol === secureProtocol || isLoopbackUrl(url);
 }
