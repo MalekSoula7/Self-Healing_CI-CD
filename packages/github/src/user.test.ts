@@ -1,5 +1,5 @@
 import { mockServer } from "@pipeheal/shared/testing";
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { ZodError } from "zod";
 import { listUserInstallationIds } from "./user";
@@ -84,5 +84,21 @@ describe("listUserInstallationIds", () => {
 
     await expect(listUserInstallationIds(TOKEN, { retries: 1 })).resolves.toEqual([7n]);
     expect(calls).toBe(2);
+  });
+
+  it("gives up after timeoutMs, retries included (GitHub is on the sign-in path)", async () => {
+    let calls = 0;
+    mockServer.use(
+      http.get(`${API}/user/installations`, async () => {
+        calls += 1;
+        await delay(2_000);
+        return HttpResponse.json({ total_count: 0, installations: [] });
+      }),
+    );
+
+    const started = Date.now();
+    await expect(listUserInstallationIds(TOKEN, { retries: 1, timeoutMs: 100 })).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(1_500);
+    expect(calls).toBeLessThanOrEqual(2);
   });
 });

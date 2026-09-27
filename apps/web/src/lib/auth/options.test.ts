@@ -5,7 +5,7 @@ import { mockServer } from "@pipeheal/shared/testing";
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { http, HttpResponse } from "msw";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ACCESS_TOKEN,
   BASE_URL,
@@ -17,7 +17,7 @@ import {
   type GitHubEmail,
   type GitHubUser,
 } from "@/testing/github-oauth";
-import { COOKIE_PREFIX, createAuthOptions } from "./options";
+import { COOKIE_PREFIX, DISABLED_PATHS, createAuthOptions } from "./options";
 
 let store: Record<string, Record<string, unknown>[]>;
 let logLines: string[];
@@ -46,6 +46,10 @@ const octo: GitHubUser = { id: 4242, login: "Octo-Dev", name: "Octo Dev", email:
 beforeEach(() => {
   store = { user: [], session: [], account: [], verification: [] };
   logLines = [];
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("GitHub sign-in", () => {
@@ -132,6 +136,68 @@ describe("GitHub sign-in", () => {
     expect(store.user).toMatchObject([{ login: "Octo-Dev", name: "Octo Dev" }]);
   });
 
+  it.each(DISABLED_PATHS)(
+    "serves %s to nobody over HTTP (decrypted tokens and profile edits stay server-side)",
+    async (path) => {
+      mockGitHub(octo);
+      const auth = createTestAuth();
+      const { callback } = await signIn(auth);
+      const cookie = cookieHeader(callback);
+      const [account] = store.account ?? [];
+
+      for (const method of ["GET", "POST"]) {
+        const response = await auth.handler(
+          new Request(`${BASE_URL}/api/auth${path}`, {
+            method,
+            headers: { "content-type": "application/json", origin: BASE_URL, cookie },
+            ...(method === "POST"
+              ? { body: JSON.stringify({ accountId: account?.id, providerId: "github" }) }
+              : {}),
+          }),
+        );
+        expect(response.status).toBe(404);
+        expect(await response.text()).not.toContain(ACCESS_TOKEN);
+      }
+    },
+  );
+
+  // Better Auth checks the Origin of requests that carry cookies (the CSRF case).
+  it("rejects a request from another site that rides on the session cookie (CSRF)", async () => {
+    mockGitHub(octo);
+    const auth = createTestAuth();
+    const { callback } = await signIn(auth);
+
+    const response = await auth.handler(
+      new Request(`${BASE_URL}/api/auth/sign-out`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "https://evil.example",
+          cookie: cookieHeader(callback),
+        },
+        body: "{}",
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(store.session).toHaveLength(1);
+  });
+
+  it.each(["https://evil.example/steal", "//evil.example"])(
+    "rejects the foreign callback URL %s",
+    async (callbackURL) => {
+      const response = await createTestAuth().handler(
+        new Request(`${BASE_URL}/api/auth/sign-in/social`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: BASE_URL },
+          body: JSON.stringify({ provider: "github", callbackURL }),
+        }),
+      );
+
+      expect(response.status).toBe(403);
+    },
+  );
+
   it("never attaches a GitHub identity to an existing user with the same email", async () => {
     store.user = [
       {
@@ -159,7 +225,15 @@ describe("GitHub sign-in", () => {
     expect(store.user).toEqual([]);
   });
 
-  it("logs no token, secret or code", async () => {
+  it("logs no token or secret, through our logger or straight to the console", async () => {
+    const consoleLines: string[] = [];
+    for (const method of ["log", "info", "warn", "error", "debug"] as const) {
+      vi.spyOn(console, method).mockImplementation((...args: unknown[]) => {
+        consoleLines.push(
+          args.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" "),
+        );
+      });
+    }
     mockGitHub(octo);
     mockServer.use(
       http.post("https://github.com/login/oauth/access_token", () =>
@@ -168,8 +242,9 @@ describe("GitHub sign-in", () => {
     );
     await signIn(createTestAuth());
 
-    const logged = logLines.join("\n");
-    expect(logLines.length).toBeGreaterThan(0);
+    // The failure is logged, and only through our (redacting) logger.
+    const logged = [...logLines, ...consoleLines].join("\n");
+    expect(logLines.join("\n")).toMatch(/token exchange failed/);
     expect(logged).not.toContain(ACCESS_TOKEN);
     expect(logged).not.toContain("test-client-secret");
   });

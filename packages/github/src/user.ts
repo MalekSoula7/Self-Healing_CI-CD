@@ -8,6 +8,8 @@ export interface GitHubClientOptions {
   baseUrl?: string;
   /** Retries after 5xx and rate limits (octokit's retry plugin). Default 3. */
   retries?: number;
+  /** Aborts the whole call (all pages and retries) after this many milliseconds. */
+  timeoutMs?: number;
   /** Where octokit reports rate limiting and retries. Defaults to silence. */
   log?: {
     debug: (message: string) => unknown;
@@ -32,6 +34,9 @@ function userClient(accessToken: string, options: GitHubClientOptions): Octokit 
     userAgent: USER_AGENT,
     ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
     retry: { retries: options.retries ?? 3 },
+    ...(options.timeoutMs === undefined
+      ? {}
+      : { request: { signal: AbortSignal.timeout(options.timeoutMs) } }),
     log: options.log ?? silent,
   });
 }

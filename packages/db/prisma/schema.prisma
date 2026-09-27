@@ -116,7 +116,8 @@ model Organization {
   slug              String      @unique
   accountType       AccountType
   installationId    BigInt      @unique
-  /// The `installation` webhook's sender: OWNER candidate until a verified sign-in (SPEC §5.2).
+  /// The `installation` webhook's sender: OWNER candidate until a verified sign-in binds them,
+  /// then cleared (SPEC §5.2).
   installerGithubId BigInt?
   status            OrgStatus   @default(ACTIVE)
   plan              Plan        @default(FREE)

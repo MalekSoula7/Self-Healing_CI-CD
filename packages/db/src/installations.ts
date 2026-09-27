@@ -119,6 +119,9 @@ export function installations(db: Db, component: string) {
         });
         for (const { id } of orgs) {
           await tx.membership.create({ data: { orgId: id, userId, role: "OWNER" } });
+          // The candidate is used up: removing this owner later must not let them back in at
+          // their next sign-in. A reinstall names a new candidate.
+          await tx.organization.update({ where: { id }, data: { installerGithubId: null } });
           await writeAudit(tx, id, actor, {
             action: "member.owner_verified",
             target: auditTarget("user", userId),

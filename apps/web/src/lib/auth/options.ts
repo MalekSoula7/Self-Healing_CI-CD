@@ -6,6 +6,15 @@ import { z } from "zod";
 
 export const COOKIE_PREFIX = "pipeheal";
 
+export const DISABLED_PATHS = [
+  "/update-user",
+  "/get-access-token",
+  "/refresh-token",
+  "/account-info",
+  "/link-social",
+  "/unlink-account",
+] as const;
+
 export interface AuthConfig {
   /** Public base URL of the web app (APP_URL). */
   baseURL: string;
@@ -56,17 +65,24 @@ export function createAuthOptions(config: AuthConfig) {
       // Set from the GitHub profile at each sign-in (`input: false` would drop it there too).
       additionalFields: { login: { type: "string", required: false } },
     },
-    // Profile fields come from GitHub only: no endpoint lets a user edit them (and so spoof the
-    // login other members see).
-    disabledPaths: ["/update-user"],
+    // Over HTTP, these endpoints would hand decrypted GitHub tokens (usable on GitHub long after
+    // sign-out) to anyone holding a session, or let users edit the profile fields other members
+    // see. The server keeps using them through `auth.api`, which this list doesn't affect.
+    disabledPaths: [...DISABLED_PATHS],
     account: {
       // D8: GitHub user tokens are kept for the OWNER check and onboarding, encrypted at rest
-      // (AES-256-GCM keyed from the secret). Rotating the secret signs everyone out.
+      // (XChaCha20-Poly1305, key = SHA-256 of the secret). Rotating the secret signs everyone out
+      // and makes stored tokens unreadable.
       encryptOAuthTokens: true,
       // One sign-in method (GitHub): never attach a GitHub identity to an existing user by email.
       accountLinking: { enabled: false },
     },
-    advanced: { cookiePrefix: COOKIE_PREFIX },
+    advanced: {
+      cookiePrefix: COOKIE_PREFIX,
+      // Better Auth skips its Origin and callback-URL checks by default when NODE_ENV=test or
+      // TEST is set. Keep them on everywhere, tests included.
+      disableOriginCheck: false,
+    },
     plugins: config.plugins ?? [],
   } satisfies BetterAuthOptions;
 }

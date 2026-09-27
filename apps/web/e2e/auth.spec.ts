@@ -11,11 +11,15 @@ test("a signed-out visitor of an org page is sent to sign-in, and back afterward
   await expect(page.locator('input[name="next"]')).toHaveValue("/acme/repos?tab=all");
 });
 
-test("sign-in never sends the user to another site afterwards", async ({ page }) => {
-  await page.goto("/login?next=//evil.example/steal");
+for (const next of ["//evil.example/steal", "/.//evil.example", "/%2e%2e//evil.example"]) {
+  test(`sign-in never sends the user to another site afterwards (next=${next})`, async ({
+    page,
+  }) => {
+    await page.goto(`/login?next=${encodeURIComponent(next)}`);
 
-  await expect(page.locator('input[name="next"]')).toHaveValue("/");
-});
+    await expect(page.locator('input[name="next"]')).toHaveValue("/");
+  });
+}
 
 test("a forged session cookie gets past the proxy but not the org layout", async ({
   page,

@@ -284,6 +284,38 @@ describe("OWNER binding (SPEC §5.2)", () => {
     });
   });
 
+  it("uses up the candidate: a removed owner isn't bound again at their next sign-in", async () => {
+    const user = await createUser();
+    const claim = { userId: user.id, githubUserId: a.installerGithubId };
+    await installs.bindVerifiedOwner(claim, [a.org.installationId]);
+
+    await expect(db.organization.findUnique({ where: { id: a.org.id } })).resolves.toMatchObject({
+      installerGithubId: null,
+    });
+    await db.membership.deleteMany({ where: { orgId: a.org.id, userId: user.id } });
+    await expect(installs.ownerCandidates(claim)).resolves.toEqual([]);
+    await expect(installs.bindVerifiedOwner(claim, [a.org.installationId])).resolves.toEqual([]);
+  });
+
+  it("binds one owner when two sign-ins race", async () => {
+    const user = await createUser();
+    const claim = { userId: user.id, githubUserId: a.installerGithubId };
+
+    const results = await Promise.allSettled([
+      installs.bindVerifiedOwner(claim, [a.org.installationId]),
+      installs.bindVerifiedOwner(claim, [a.org.installationId]),
+    ]);
+
+    const bound = results.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+    expect(bound).toEqual([a.org.id]);
+    await expect(
+      db.membership.count({ where: { orgId: a.org.id, userId: user.id, role: "OWNER" } }),
+    ).resolves.toBe(1);
+    await expect(
+      db.auditLog.count({ where: { orgId: a.org.id, action: "member.owner_verified" } }),
+    ).resolves.toBe(1);
+  });
+
   it("binds nothing when GitHub doesn't list the installation, or the org isn't active", async () => {
     const user = await createUser();
     const claim = { userId: user.id, githubUserId: a.installerGithubId };
