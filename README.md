@@ -29,6 +29,8 @@ pnpm db:seed                  # optional: demo org "pipeheal-demo"
 pnpm dev                      # web + worker
 ```
 
+GitHub sign-in and webhooks need the development GitHub App: [`docs/SETUP-GITHUB-APP.md`](docs/SETUP-GITHUB-APP.md) walks through creating it and filling `.env`. Run `pnpm dev:webhooks` next to `pnpm dev` to receive webhooks.
+
 Then open:
 
 - http://localhost:3000, the web app

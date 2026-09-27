@@ -40,7 +40,11 @@ export default defineConfig({
           name: "unit",
           environment: "node",
           allowOnly: false,
-          include: ["tests/**/*.test.ts", "{apps,packages}/*/src/**/*.test.{ts,tsx}"],
+          include: [
+            "tests/**/*.test.ts",
+            "scripts/**/*.test.ts",
+            "{apps,packages}/*/src/**/*.test.{ts,tsx}",
+          ],
           exclude: [...ignored, "**/*.int.test.ts"],
           setupFiles: ["./vitest.setup.ts"],
           env: blankSecrets,

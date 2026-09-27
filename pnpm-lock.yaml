@@ -56,9 +56,15 @@ importers:
       globals:
         specifier: ^16.4.0
         version: 16.5.0
+      msw:
+        specifier: ^2.15.0
+        version: 2.15.0(@types/node@24.19.0)(typescript@6.0.3)
       prettier:
         specifier: ^3.9.9
         version: 3.9.9
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
       turbo:
         specifier: ^2.11.4
         version: 2.11.4

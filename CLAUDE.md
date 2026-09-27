@@ -28,6 +28,7 @@ Before any work, read `docs/SPEC.md` (what and why) and `docs/PLAN.md` (in what 
 Created in Phase 0. Keep this section accurate whenever scripts change.
 - `docker compose up -d` - Postgres + Redis (needed by `pnpm dev` and `pnpm test`)
 - `pnpm dev` - web (:3000) + worker/gateway (:4000) via Turborepo; both read the root `.env`
+- `pnpm dev:webhooks` - relays GitHub webhooks from `SMEE_URL` to the local web app (setup: `docs/SETUP-GITHUB-APP.md`)
 - `pnpm build` - production builds
 - `pnpm test` - unit + integration tests with coverage (needs `docker compose up -d`)
 - `pnpm test:unit` - unit tests only, no infrastructure (what the Windows CI job runs)

@@ -11,6 +11,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "dev:webhooks": "tsx --env-file-if-exists=.env scripts/dev-webhooks.ts",
     "typecheck": "tsc -p tsconfig.json && turbo run typecheck",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
@@ -35,7 +36,9 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^16.4.0",
+    "msw": "^2.15.0",
     "prettier": "^3.9.9",
+    "tsx": "^4.23.15",
     "turbo": "^2.11.4",
     "typescript": "catalog:",
     "typescript-eslint": "^8.70.1",

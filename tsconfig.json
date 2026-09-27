@@ -5,6 +5,7 @@
   },
   "include": [
     "tests",
+    "scripts",
     "vitest.config.ts",
     "vitest.setup.ts",
     "vitest.integration.setup.ts",
