@@ -17,11 +17,14 @@ function githubId(): bigint {
   return BigInt(randomInt(1, 2 ** 47));
 }
 
-async function createOrg(installerGithubId?: bigint): Promise<Organization> {
+async function createOrg(
+  installerGithubId?: bigint,
+  account: { accountType: "ORG" | "USER"; githubAccountId?: bigint } = { accountType: "ORG" },
+): Promise<Organization> {
   return installs.upsert({
-    githubAccountId: githubId(),
+    githubAccountId: account.githubAccountId ?? githubId(),
     login: `T${randomUUID().replaceAll("-", "").slice(0, 20)}`,
-    accountType: "ORG",
+    accountType: account.accountType,
     installationId: githubId(),
     ...(installerGithubId === undefined ? {} : { installerGithubId }),
   });
@@ -70,8 +73,8 @@ describe("resolveOrgAccess", () => {
 });
 
 describe("bindVerifiedOwnerships", () => {
-  function fakeGitHub(accessible: bigint[]) {
-    const calls = { tokens: [] as string[], lists: [] as string[] };
+  function fakeGitHub(installationIds: bigint[], adminOrgIds: bigint[] = []) {
+    const calls = { tokens: [] as string[], installations: [] as string[], admin: [] as string[] };
     const deps: OwnerBindingDeps = {
       db,
       getAccessToken: (accountRowId) => {
@@ -79,23 +82,51 @@ describe("bindVerifiedOwnerships", () => {
         return Promise.resolve("ghu_fake");
       },
       listInstallationIds: (accessToken) => {
-        calls.lists.push(accessToken);
-        return Promise.resolve(accessible);
+        calls.installations.push(accessToken);
+        return Promise.resolve(installationIds);
+      },
+      listAdminOrgIds: (accessToken) => {
+        calls.admin.push(accessToken);
+        return Promise.resolve(adminOrgIds);
       },
     };
     return { deps, calls };
   }
 
-  it("makes the installer OWNER when GitHub confirms, with their own token", async () => {
+  it("makes an org admin who installed the App OWNER, asking GitHub with their own token", async () => {
     const installer = githubId();
     const org = await createOrg(installer);
     const userId = await createUser(installer);
-    const { deps, calls } = fakeGitHub([org.installationId]);
+    const { deps, calls } = fakeGitHub([org.installationId], [org.githubAccountId]);
 
     await expect(bindVerifiedOwnerships(deps, userId)).resolves.toEqual([org.id]);
     expect((await resolveOrgAccess(db, userId, org.slug, "OWNER"))?.role).toBe("OWNER");
-    expect(calls.tokens).toHaveLength(1);
-    expect(calls.lists).toEqual(["ghu_fake"]);
+    expect(calls).toEqual({
+      tokens: [expect.any(String)],
+      installations: ["ghu_fake"],
+      admin: ["ghu_fake"],
+    });
+  });
+
+  // D10: a repository admin can install the App on an org's repositories.
+  it("doesn't bind an installer who isn't an org admin", async () => {
+    const installer = githubId();
+    const org = await createOrg(installer);
+    const userId = await createUser(installer);
+    const { deps } = fakeGitHub([org.installationId], []);
+
+    await expect(bindVerifiedOwnerships(deps, userId)).resolves.toEqual([]);
+    await expect(resolveOrgAccess(db, userId, org.slug)).resolves.toBeNull();
+  });
+
+  it("binds a personal account's owner without asking about org memberships", async () => {
+    const owner = githubId();
+    const account = await createOrg(owner, { accountType: "USER", githubAccountId: owner });
+    const userId = await createUser(owner);
+    const { deps, calls } = fakeGitHub([account.installationId]);
+
+    await expect(bindVerifiedOwnerships(deps, userId)).resolves.toEqual([account.id]);
+    expect(calls.admin).toEqual([]);
   });
 
   it("doesn't call GitHub when the user installed nothing (almost every sign-in)", async () => {
@@ -104,14 +135,14 @@ describe("bindVerifiedOwnerships", () => {
     const { deps, calls } = fakeGitHub([]);
 
     await expect(bindVerifiedOwnerships(deps, userId)).resolves.toEqual([]);
-    expect(calls).toEqual({ tokens: [], lists: [] });
+    expect(calls).toEqual({ tokens: [], installations: [], admin: [] });
   });
 
   it("binds nothing when GitHub doesn't list the installation", async () => {
     const installer = githubId();
     const org = await createOrg(installer);
     const userId = await createUser(installer);
-    const { deps } = fakeGitHub([githubId()]);
+    const { deps } = fakeGitHub([githubId()], [org.githubAccountId]);
 
     await expect(bindVerifiedOwnerships(deps, userId)).resolves.toEqual([]);
     await expect(resolveOrgAccess(db, userId, org.slug)).resolves.toBeNull();
@@ -132,6 +163,7 @@ describe("bindVerifiedOwnerships", () => {
       db,
       getAccessToken: () => Promise.resolve("ghu_fake"),
       listInstallationIds: () => Promise.reject(new Error("GitHub is down")),
+      listAdminOrgIds: () => Promise.resolve([]),
     };
 
     await expect(bindVerifiedOwnerships(deps, userId)).rejects.toThrow("GitHub is down");

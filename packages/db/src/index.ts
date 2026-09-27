@@ -5,7 +5,12 @@ export type { Actor } from "./audit";
 export { createDb, type Db } from "./client";
 export { ConflictError, ForbiddenError, NotFoundError } from "./errors";
 export type { AuditPage, InstallationInput, InstalledRepository } from "./inputs";
-export { installations, type Installations, type OwnerClaim } from "./installations";
+export {
+  installations,
+  type Installations,
+  type OwnerClaim,
+  type OwnerEvidence,
+} from "./installations";
 export {
   SYNC_BATCH_LIMIT,
   forMember,

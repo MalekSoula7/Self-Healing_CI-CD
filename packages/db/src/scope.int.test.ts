@@ -59,6 +59,14 @@ interface Tenant {
   asMember: OrgScope;
 }
 
+/** What GitHub confirms for an org admin who can access `tenant`'s installation. */
+function adminOf(...tenants: Tenant[]) {
+  return {
+    installationIds: tenants.map((tenant) => tenant.org.installationId),
+    adminOrgIds: tenants.map((tenant) => tenant.org.githubAccountId),
+  };
+}
+
 function present<T>(value: T | null | undefined, what: string): T {
   if (value === null || value === undefined) throw new Error(`test setup: no ${what}`);
   return value;
@@ -203,12 +211,12 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
     });
     expect(candidates.map((org) => org.id)).toEqual([a.org.id]);
   },
-  // A's installer who can also access B's installation on GitHub (e.g. as a B member) must not
-  // become B's owner: only B's installer can.
+  // A's installer, even as an admin who can access B's installation on GitHub, must not become
+  // B's owner: only B's installer can.
   "installations.bindVerifiedOwner": async () => {
     const user = await createUser();
     const claim = { userId: user.id, githubUserId: a.installerGithubId };
-    await expect(installs.bindVerifiedOwner(claim, [b.org.installationId])).resolves.toEqual([]);
+    await expect(installs.bindVerifiedOwner(claim, adminOf(b))).resolves.toEqual([]);
   },
 };
 
@@ -266,8 +274,11 @@ describe("OWNER binding (SPEC §5.2)", () => {
     const user = await createUser();
     const claim = { userId: user.id, githubUserId: a.installerGithubId };
 
-    const bound = await installs.bindVerifiedOwner(claim, [a.org.installationId, githubId()]);
-    const again = await installs.bindVerifiedOwner(claim, [a.org.installationId]);
+    const bound = await installs.bindVerifiedOwner(claim, {
+      installationIds: [a.org.installationId, githubId()],
+      adminOrgIds: [a.org.githubAccountId, githubId()],
+    });
+    const again = await installs.bindVerifiedOwner(claim, adminOf(a));
 
     expect(bound).toEqual([a.org.id]);
     expect(again).toEqual([]);
@@ -287,14 +298,14 @@ describe("OWNER binding (SPEC §5.2)", () => {
   it("uses up the candidate: a removed owner isn't bound again at their next sign-in", async () => {
     const user = await createUser();
     const claim = { userId: user.id, githubUserId: a.installerGithubId };
-    await installs.bindVerifiedOwner(claim, [a.org.installationId]);
+    await installs.bindVerifiedOwner(claim, adminOf(a));
 
     await expect(db.organization.findUnique({ where: { id: a.org.id } })).resolves.toMatchObject({
       installerGithubId: null,
     });
     await db.membership.deleteMany({ where: { orgId: a.org.id, userId: user.id } });
     await expect(installs.ownerCandidates(claim)).resolves.toEqual([]);
-    await expect(installs.bindVerifiedOwner(claim, [a.org.installationId])).resolves.toEqual([]);
+    await expect(installs.bindVerifiedOwner(claim, adminOf(a))).resolves.toEqual([]);
   });
 
   it("binds one owner when two sign-ins race", async () => {
@@ -302,8 +313,8 @@ describe("OWNER binding (SPEC §5.2)", () => {
     const claim = { userId: user.id, githubUserId: a.installerGithubId };
 
     const results = await Promise.allSettled([
-      installs.bindVerifiedOwner(claim, [a.org.installationId]),
-      installs.bindVerifiedOwner(claim, [a.org.installationId]),
+      installs.bindVerifiedOwner(claim, adminOf(a)),
+      installs.bindVerifiedOwner(claim, adminOf(a)),
     ]);
 
     const bound = results.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
@@ -320,19 +331,66 @@ describe("OWNER binding (SPEC §5.2)", () => {
     const user = await createUser();
     const claim = { userId: user.id, githubUserId: a.installerGithubId };
 
-    await expect(installs.bindVerifiedOwner(claim, [])).resolves.toEqual([]);
+    await expect(
+      installs.bindVerifiedOwner(claim, {
+        installationIds: [],
+        adminOrgIds: [a.org.githubAccountId],
+      }),
+    ).resolves.toEqual([]);
     await installs.setStatus(a.org.installationId, "SUSPENDED");
     await expect(installs.ownerCandidates(claim)).resolves.toEqual([]);
-    await expect(installs.bindVerifiedOwner(claim, [a.org.installationId])).resolves.toEqual([]);
+    await expect(installs.bindVerifiedOwner(claim, adminOf(a))).resolves.toEqual([]);
     await expect(forMember(db, { orgSlug: a.org.slug, userId: user.id })).resolves.toBeNull();
+  });
+
+  // D10: a repository admin can install the App on an org's repos without being an org owner.
+  it("doesn't bind an installer who isn't an admin of the organization", async () => {
+    const user = await createUser();
+    const claim = { userId: user.id, githubUserId: a.installerGithubId };
+
+    await expect(
+      installs.bindVerifiedOwner(claim, {
+        installationIds: [a.org.installationId],
+        adminOrgIds: [b.org.githubAccountId],
+      }),
+    ).resolves.toEqual([]);
+    await expect(forMember(db, { orgSlug: a.org.slug, userId: user.id })).resolves.toBeNull();
+  });
+
+  it("binds a personal account only to the account's own user", async () => {
+    const owner = githubId();
+    const personal = await installs.upsert({
+      githubAccountId: owner,
+      login: uniqueLogin(),
+      accountType: "USER",
+      installationId: githubId(),
+      installerGithubId: owner,
+    });
+    const evidence = { installationIds: [personal.installationId], adminOrgIds: [] };
+    const someoneElse = await createUser();
+    const accountUser = await createUser();
+
+    // Someone else can't be the installer of a personal account; if a record ever said so, no.
+    await db.organization.update({ where: { id: personal.id }, data: { installerGithubId: 77n } });
+    await expect(
+      installs.bindVerifiedOwner({ userId: someoneElse.id, githubUserId: 77n }, evidence),
+    ).resolves.toEqual([]);
+    await db.organization.update({
+      where: { id: personal.id },
+      data: { installerGithubId: owner },
+    });
+    await expect(
+      installs.bindVerifiedOwner({ userId: accountUser.id, githubUserId: owner }, evidence),
+    ).resolves.toEqual([personal.id]);
   });
 
   it("lists a user's organizations and nobody else's", async () => {
     const user = await createUser();
     await db.membership.create({ data: { orgId: b.org.id, userId: user.id, role: "MEMBER" } });
-    await installs.bindVerifiedOwner({ userId: user.id, githubUserId: a.installerGithubId }, [
-      a.org.installationId,
-    ]);
+    await installs.bindVerifiedOwner(
+      { userId: user.id, githubUserId: a.installerGithubId },
+      adminOf(a),
+    );
 
     const orgs = await organizationsOf(db, user.id);
 

@@ -14,6 +14,15 @@ const ownerClaimSchema = z.strictObject({
 });
 export type OwnerClaim = z.infer<typeof ownerClaimSchema>;
 
+const ownerEvidenceSchema = z.strictObject({
+  /** Installations GitHub lists for the user's own token (`GET /user/installations`). */
+  installationIds: z.array(githubIdSchema),
+  /** Organizations where GitHub says the user is an active admin (`GET /user/memberships/orgs`). */
+  adminOrgIds: z.array(githubIdSchema),
+});
+/** What GitHub confirmed, with the user's own token, at sign-in (SPEC §5.2, D10). */
+export type OwnerEvidence = z.infer<typeof ownerEvidenceSchema>;
+
 const STATUS_ACTIONS: Record<OrgStatus, string> = {
   ACTIVE: "organization.activated",
   SUSPENDED: "organization.suspended",
@@ -96,17 +105,21 @@ export function installations(db: Db, component: string) {
           status: "ACTIVE",
           memberships: { none: { userId } },
         },
-        select: { id: true, installationId: true },
+        select: { id: true, installationId: true, accountType: true },
       });
     },
 
     /**
-     * Makes the user OWNER of every candidate organization whose installation GitHub listed as
-     * accessible with the user's own token (`GET /user/installations`). Returns the org IDs bound.
+     * Makes the user OWNER of each candidate organization (they installed the App there) that
+     * GitHub vouches for with the user's own token (SPEC §5.2, D10):
+     * - GitHub lists the installation as accessible to them, and
+     * - a personal account is their own account; an organization lists them as an active admin.
+     * Installing alone isn't enough: a repository admin can install an App on an org's repos.
+     * Returns the org IDs bound.
      */
-    async bindVerifiedOwner(claim: OwnerClaim, accessibleInstallationIds: readonly bigint[]) {
+    async bindVerifiedOwner(claim: OwnerClaim, evidence: OwnerEvidence) {
       const { userId, githubUserId } = ownerClaimSchema.parse(claim);
-      const installationIds = z.array(githubIdSchema).parse(accessibleInstallationIds);
+      const { installationIds, adminOrgIds } = ownerEvidenceSchema.parse(evidence);
       return db.$transaction(async (tx) => {
         const orgs = await tx.organization.findMany({
           where: {
@@ -114,6 +127,10 @@ export function installations(db: Db, component: string) {
             installationId: { in: installationIds },
             status: "ACTIVE",
             memberships: { none: { userId } },
+            OR: [
+              { accountType: "USER", githubAccountId: githubUserId },
+              { accountType: "ORG", githubAccountId: { in: adminOrgIds } },
+            ],
           },
           select: { id: true },
         });

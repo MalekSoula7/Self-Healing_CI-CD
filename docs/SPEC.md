@@ -131,7 +131,7 @@ Repository permissions:
 
 **Account permission: Email addresses (read).** A GitHub App's user token can read the user's email only with this permission. Better Auth needs an email at sign-in, and Phase 6 email notifications use it (D9).
 
-**Not requested: Members.** Teammates join by invitation (Phase 6), not by syncing GitHub org membership.
+**Organization permission: Members (read)** (D10), used for one thing: the OWNER check at sign-in reads the user's own org memberships (`GET /user/memberships/orgs`) to confirm they are an org admin. PipeHeal doesn't sync members: teammates join by invitation (Phase 6). Requesting an organization permission likely also means only org owners can install the App on an organization (to confirm at registration).
 
 The App can be installed on organizations and on personal accounts; both are tenants (§10).
 
@@ -140,7 +140,10 @@ Subscribed events: `installation`, `installation_repositories`, `workflow_run`, 
 ### 5.2 Auth
 - App JWT → installation access tokens, created on demand, cached in memory until shortly before expiry. Never stored in the database.
 - User sign-in with Better Auth's GitHub provider using the App's OAuth client credentials.
-- **Who becomes OWNER.** The `installation` webhook's `sender` is only a candidate. They become OWNER of the tenant on their first sign-in, and only after `GET /user/installations` (with their user access token) confirms they can access that installation. Everyone else joins by invitation (Phase 6).
+- **Who becomes OWNER** (D10). The `installation` webhook's `sender` is only a candidate. They become OWNER on sign-in only when GitHub, asked with their own user access token, confirms both:
+  - `GET /user/installations` lists the installation;
+  - they own the account: a personal account is their own; for an organization, `GET /user/memberships/orgs` shows them as an active admin, matched on the organization's ID. A repository admin who installed the App on some repos is not enough.
+  - Everyone else joins by invitation (Phase 6). A bound candidate is used up; a reinstall names a new one.
 - **User access tokens are kept, encrypted** (D8): Better Auth stores the GitHub user token and refresh token in `Account` with `account.encryptOAuthTokens` (XChaCha20-Poly1305, key = SHA-256 of `BETTER_AUTH_SECRET`). They are used server-side only, for the OWNER check at sign-in and to list the user's installations during onboarding: Better Auth's HTTP endpoints that would return them (`/get-access-token`, `/refresh-token`, `/account-info`) are disabled. Rotating `BETTER_AUTH_SECRET` makes stored tokens unreadable, so users sign in again. The App's installation tokens are still never stored (above).
 - The OWNER check runs where sign-in lands (`/auth/complete`, again at every sign-in and after installing the App). It asks GitHub only when the user is a pending candidate. A GitHub failure never blocks sign-in; the check simply runs again next time.
 - Profile fields (name, avatar, login) come from GitHub at each sign-in and can't be edited in PipeHeal. GitHub is the only sign-in method, and a GitHub identity is never linked to an existing user by email.
@@ -561,7 +564,7 @@ A prompt or model change doesn't ship if the eval fix rate drops or any trap sce
 Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 1:** does creating the `pipeheal` label need Issues: write, or is Pull requests: write enough? Verify in P1.4 before registering the App.
 - **Phase 1 (resolved, D8):** GitHub user access tokens are kept, encrypted at rest (§5.2).
-- **Phase 1, before registering the App (CHECKPOINT 1a):** who can become OWNER. If GitHub lets a repository admin (not an org owner) install an App that requests no organization permissions, which PipeHeal doesn't, that admin is the installation's sender, GitHub lists the installation for them, and they become OWNER of the whole org's tenant (security review of P1.3). Options: request one organization-level read permission so installs need an org owner; check the user's org role (needs Members: read); or bind OWNER only when the installation covers all repositories. Verify GitHub's current install rules first.
+- **Phase 1 (resolved, D10):** who can become OWNER: the installer, when GitHub confirms they are the personal account or an org admin (§5.2).
 - **Phase 3:** policy precedence: split org defaults from org guardrails (§8.1). Merge rules are missing for `scope.branches`, `scope.workflows`, `review.*`, `retryBeforeHeal` and `customRules`.
 - **Phase 4:** async step protocol instead of ~2-minute synchronous requests (§3.1).
 - **Phase 4:** reserve budget atomically before each model call (worst-case estimate per call, org monthly budget with concurrent attempts), not only check it after.
@@ -586,3 +589,4 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 | D7 | 2026-09-27 | Engineering defaults accepted without objection: versions in §4.2, healer path `.github/workflows/pipeheal.yml`, runner hardening (§5.3), OIDC `actor`/`run_id` binding (§5.4), state timeouts and delivery reconciler (§2.2), snapshot/fixture test globs (§8.3), no auth bypass in local mode (§12) | Raised in the alignment review; see `docs/PROGRESS.md`. |
 | D8 | 2026-09-27 | Keep GitHub user access tokens after sign-in, encrypted with Better Auth's `encryptOAuthTokens` (§5.2) | Chosen by Malek over verify-then-discard: onboarding can list the user's installations without a second sign-in; a database leak alone doesn't expose usable tokens. |
 | D9 | 2026-09-27 | The GitHub App requests the account permission "Email addresses: read" (§5.1) | Better Auth needs an email at sign-in, and Phase 6 notifications use it. |
+| D10 | 2026-09-27 | The App requests the organization permission "Members: read"; OWNER binding requires the installer to be the personal account or an active org admin (§5.1, §5.2) | Chosen by Malek. Otherwise a repository admin who installed the App on a few repos could own the whole organization's tenant (P1.3 security review). |

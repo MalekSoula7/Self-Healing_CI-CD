@@ -5,7 +5,7 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { forMember, installations } from "@pipeheal/db";
 import { createTestDb } from "@pipeheal/db/testing";
-import { listUserInstallationIds } from "@pipeheal/github";
+import { listUserAdminOrgIds, listUserInstallationIds } from "@pipeheal/github";
 import { createLogger } from "@pipeheal/shared/logger";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
@@ -100,6 +100,12 @@ describe("GitHub sign-in on Postgres", () => {
           installations: [{ id: Number(org.installationId) }],
         });
       }),
+      http.get("https://api.github.com/user/memberships/orgs", ({ request }) => {
+        seenAuthorization.push(request.headers.get("authorization"));
+        return HttpResponse.json([
+          { state: "active", role: "admin", organization: { id: Number(org.githubAccountId) } },
+        ]);
+      }),
     );
     const { callback } = await signInWithGitHub(auth);
     const headers = new Headers({ cookie: cookieHeader(callback) });
@@ -112,12 +118,13 @@ describe("GitHub sign-in on Postgres", () => {
         getAccessToken: async (accountId) =>
           (await auth.api.getAccessToken({ body: { accountId }, headers })).accessToken,
         listInstallationIds: (token) => listUserInstallationIds(token, { retries: 0 }),
+        listAdminOrgIds: (token) => listUserAdminOrgIds(token, { retries: 0 }),
       },
       userId,
     );
 
     expect(bound).toEqual([org.id]);
-    expect(seenAuthorization).toEqual([`token ${ACCESS_TOKEN}`]);
+    expect(seenAuthorization).toEqual([`token ${ACCESS_TOKEN}`, `token ${ACCESS_TOKEN}`]);
     expect((await forMember(db, { orgSlug: org.slug, userId }))?.role).toBe("OWNER");
   });
 
@@ -140,6 +147,7 @@ describe("GitHub sign-in on Postgres", () => {
         getAccessToken: async (accountId) =>
           (await auth.api.getAccessToken({ body: { accountId }, headers })).accessToken,
         listInstallationIds: (token) => listUserInstallationIds(token, { retries: 0 }),
+        listAdminOrgIds: (token) => listUserAdminOrgIds(token, { retries: 0 }),
       },
       userId,
     );

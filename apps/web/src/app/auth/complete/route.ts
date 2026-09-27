@@ -1,6 +1,6 @@
 // Where GitHub sign-in lands (Better Auth's callbackURL): binds verified ownerships, then
 // continues to the page the user came from. Safe to call again: it only binds what GitHub confirms.
-import { listUserInstallationIds } from "@pipeheal/github";
+import { listUserAdminOrgIds, listUserInstallationIds } from "@pipeheal/github";
 import { NextResponse, type NextRequest } from "next/server";
 import { webEnv } from "@/env";
 import { bindVerifiedOwnerships } from "@/lib/auth/owner-binding";
@@ -19,6 +19,8 @@ export async function GET(request: NextRequest): Promise<Response> {
   }
 
   const logger = getLogger().child({ component: "owner-binding" });
+  // Bounded: GitHub is on the sign-in path, and a slow GitHub must not hang it.
+  const github = { log: logger, retries: 1, timeoutMs: 5_000 };
   try {
     const bound = await bindVerifiedOwnerships(
       {
@@ -30,9 +32,8 @@ export async function GET(request: NextRequest): Promise<Response> {
           });
           return accessToken;
         },
-        // Bounded: GitHub is on the sign-in path, and a slow GitHub must not hang it.
-        listInstallationIds: (accessToken) =>
-          listUserInstallationIds(accessToken, { log: logger, retries: 1, timeoutMs: 5_000 }),
+        listInstallationIds: (accessToken) => listUserInstallationIds(accessToken, github),
+        listAdminOrgIds: (accessToken) => listUserAdminOrgIds(accessToken, github),
       },
       session.user.id,
     );

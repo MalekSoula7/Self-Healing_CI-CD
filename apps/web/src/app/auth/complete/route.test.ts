@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   authConfigured: true,
   bind: vi.fn(),
   listInstallations: vi.fn(),
+  listAdminOrgs: vi.fn(),
   warn: vi.fn(),
   info: vi.fn(),
 }));
@@ -23,7 +24,10 @@ vi.mock("@/lib/auth/server", () => ({
       : null,
 }));
 vi.mock("@/lib/auth/owner-binding", () => ({ bindVerifiedOwnerships: mocks.bind }));
-vi.mock("@pipeheal/github", () => ({ listUserInstallationIds: mocks.listInstallations }));
+vi.mock("@pipeheal/github", () => ({
+  listUserInstallationIds: mocks.listInstallations,
+  listUserAdminOrgIds: mocks.listAdminOrgs,
+}));
 
 const { GET } = await import("./route");
 
@@ -54,21 +58,26 @@ describe("GET /auth/complete", () => {
       {
         getAccessToken: (accountId: string) => Promise<string>;
         listInstallationIds: (token: string) => Promise<bigint[]>;
+        listAdminOrgIds: (token: string) => Promise<bigint[]>;
       },
     ];
     mocks.getAccessToken.mockResolvedValue({ accessToken: "ghu_decrypted" });
     mocks.listInstallations.mockResolvedValue([1n]);
+    mocks.listAdminOrgs.mockResolvedValue([2n]);
 
     await expect(deps.getAccessToken("account-row")).resolves.toBe("ghu_decrypted");
     await deps.listInstallationIds("ghu_decrypted");
+    await deps.listAdminOrgIds("ghu_decrypted");
 
     expect(mocks.getAccessToken).toHaveBeenCalledWith(
       expect.objectContaining({ body: { accountId: "account-row" } }),
     );
-    expect(mocks.listInstallations).toHaveBeenCalledWith(
-      "ghu_decrypted",
-      expect.objectContaining({ retries: 1, timeoutMs: 5_000 }),
-    );
+    for (const call of [mocks.listInstallations, mocks.listAdminOrgs]) {
+      expect(call).toHaveBeenCalledWith(
+        "ghu_decrypted",
+        expect.objectContaining({ retries: 1, timeoutMs: 5_000 }),
+      );
+    }
   });
 
   it("still signs the user in when the check fails, and logs no token", async () => {

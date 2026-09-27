@@ -37,5 +37,5 @@ export type {
   Workflow,
   WorkflowRun,
 } from "./repo";
-export { listUserInstallationIds } from "./user";
+export { listUserAdminOrgIds, listUserInstallationIds } from "./user";
 export { verifyWebhookSignature } from "./webhooks";

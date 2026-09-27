@@ -277,3 +277,16 @@ Newest entry at the bottom. One entry per task. Format:
 - Deferred to where they're used: **L9** repository-scoped, read-only installation tokens for model-facing reads (P4.3b).
 - Mutation-checked: without error sanitizing, or without the branch-tip check, their tests fail.
 - Verified: typecheck, lint, format, 546 unit+integration tests (194 in packages/github).
+
+## 2026-09-27 · CHECKPOINT 1a · Decisions D10 and the Phase 1 PR
+- Malek's answers at the checkpoint:
+  - **D10:** request the org permission Members: read and require an org-admin role for OWNER binding;
+  - open a draft PR now so CI runs on Phase 1.
+- Done (D10):
+  - `listUserAdminOrgIds` (`GET /user/memberships/orgs`, active admins only, matched on organization ID so renamed orgs still match).
+  - `installations.bindVerifiedOwner(claim, { installationIds, adminOrgIds })` enforces the rule in the database query: the installation is listed, and either a personal account whose ID is the user's own, or an organization in `adminOrgIds`.
+  - `/auth/complete` asks for memberships only when an org candidate exists.
+  - SPEC §5.1/§5.2/§15/§16 and the setup guide (Organization permissions: Members read-only) are updated.
+- Tests:
+  - DB: a non-admin installer isn't bound; a personal account binds only to its own user; the cross-org case uses admin evidence for the other org.
+  - Web: a non-admin isn't bound; a personal account needs no membership call; on Postgres, both GitHub calls carry the user's decrypted token.

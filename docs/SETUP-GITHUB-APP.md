@@ -54,7 +54,11 @@ Open **the sandbox organization** → **Settings** → **Developer settings** �
 | Metadata | Read-only | mandatory for every App |
 | **Workflows** | **No access** | on purpose: GitHub then refuses any App commit to `.github/workflows/` |
 
-**Organization permissions:** none. There is one open question before you save: who can become OWNER (see "Decision needed" below).
+**Organization permissions.** Set exactly this; everything else stays **No access**:
+
+| Permission | Access | Why |
+|---|---|---|
+| Members | Read-only | at sign-in, confirm the person who installed the App is an admin of the organization before making them OWNER (D10). PipeHeal doesn't sync members. |
 
 **Account permissions:** Email addresses: **Read-only**. Sign-in needs your email (decision D9).
 
@@ -130,7 +134,7 @@ pnpm dev
 ```
 
 1. Open http://localhost:3000/login. The button reads **Sign in with GitHub**. If the page says sign-in isn't configured instead, a value is missing from `.env`; restart `pnpm dev` after fixing it.
-2. Sign in. GitHub asks you to authorize the App and lists **Email addresses (read)**. You come back to the PipeHeal home page, which says you don't belong to an organization yet. That is expected: the App isn't installed anywhere.
+2. Sign in. GitHub asks you to authorize the App and lists **Email addresses (read)** (and organization **Members (read)** once the App is installed). You come back to the PipeHeal home page, which says you don't belong to an organization yet. That is expected: the App isn't installed anywhere.
 3. In a second terminal:
 
    ```powershell
@@ -140,19 +144,6 @@ pnpm dev
    It prints `relaying webhooks`. On the App's page → **Advanced** → **Recent Deliveries**, redeliver the `ping` delivery. The relay prints `delivery forwarded` with `status: 404`. The webhook route comes in P1.6, so 404 is expected for now.
 
 Don't install the App on the sandbox yet. P1.6 builds the webhook processing that turns an installation into a PipeHeal organization. (Installing earlier does no harm: those deliveries can be redelivered from the same Advanced tab.)
-
-## Decision needed before you save the permissions
-
-The P1.3 security review raised this (`docs/SPEC.md` §15):
-- If GitHub lets a **repository admin** who isn't an org owner install an App that requests no organization permissions, that admin becomes OWNER of the whole organization in PipeHeal.
-- GitHub's docs couldn't be checked from Claude's environment.
-
-The options are:
-1. Request one organization-level read permission, so that installing the App needs an org owner.
-2. Check the user's org role at sign-in; this needs Members: read.
-3. Only bind an OWNER when the installation covers all repositories.
-
-Claude asks about this at CHECKPOINT 1a.
 
 ## Troubleshooting
 
