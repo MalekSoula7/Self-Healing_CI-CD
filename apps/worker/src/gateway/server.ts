@@ -1,6 +1,6 @@
 import { redactText } from "@pipeheal/shared";
 import type { Logger } from "@pipeheal/shared/logger";
-import Fastify from "fastify";
+import Fastify, { LogController } from "fastify";
 
 // The agent gateway that healer runners talk to (SPEC §3). Phase 0: health only.
 
@@ -46,7 +46,7 @@ export function buildGateway({ logger, checks, checkTimeoutMs = 2000 }: GatewayO
   const app = Fastify({
     loggerInstance: logger,
     bodyLimit: 1024 * 1024,
-    disableRequestLogging: true,
+    logController: new LogController({ disableRequestLogging: true }),
   });
 
   app.addHook("onResponse", async (request, reply) => {
