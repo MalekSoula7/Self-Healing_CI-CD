@@ -21,7 +21,7 @@ Watches GitHub Actions pipelines, diagnoses failures, and proposes fixes as pull
 ```powershell
 git clone https://github.com/MalekSoula7/Self-Healing_CI-CD.git
 cd Self-Healing_CI-CD
-Copy-Item .env.example .env   # optional for now: the defaults work locally
+Copy-Item .env.example .env   # optional until the GitHub App exists: without it, sign-in is off
 docker compose up -d          # Postgres + Redis
 pnpm install
 pnpm db:migrate               # create the tables (again after pulling new migrations)

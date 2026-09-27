@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDb } from "./client";
-import { DEV_DATABASE_URL, databaseUrlSchema } from "./url";
+import { DEV_DATABASE_URL, databaseUrlSchema, tlsUnlessLoopback } from "./url";
 
 describe("databaseUrlSchema", () => {
   it.each([DEV_DATABASE_URL, "postgres://user:pw@db.internal:5432/pipeheal?sslmode=require"])(
@@ -29,5 +29,23 @@ describe("createDb", () => {
   it("creates a client without connecting", async () => {
     const db = createDb(DEV_DATABASE_URL);
     await expect(db.$disconnect()).resolves.toBeUndefined();
+  });
+});
+
+describe("tlsUnlessLoopback", () => {
+  it.each([
+    DEV_DATABASE_URL,
+    "postgresql://u:p@db.internal:5432/pipeheal?sslmode=require",
+    "postgresql://u:p@db.internal:5432/pipeheal?sslmode=verify-full",
+  ])("accepts %s", (url) => {
+    expect(tlsUnlessLoopback(url)).toBe(true);
+  });
+
+  it.each([
+    "postgresql://u:p@db.internal:5432/pipeheal",
+    "postgresql://u:p@db.internal:5432/pipeheal?sslmode=disable",
+    "postgresql://u:p@db.internal:5432/pipeheal?sslmode=prefer",
+  ])("rejects %s", (url) => {
+    expect(tlsUnlessLoopback(url)).toBe(false);
   });
 });

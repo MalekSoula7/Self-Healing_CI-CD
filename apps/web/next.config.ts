@@ -20,7 +20,7 @@ if (leaked.length > 0) {
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
-  transpilePackages: ["@pipeheal/shared"],
+  transpilePackages: ["@pipeheal/shared", "@pipeheal/db", "@pipeheal/github"],
   turbopack: { root: repoRoot },
   outputFileTracingRoot: repoRoot,
 };

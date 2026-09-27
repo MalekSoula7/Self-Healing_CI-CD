@@ -1,0 +1,39 @@
+import { expect, test } from "@playwright/test";
+
+test("a signed-out visitor of an org page is sent to sign-in, and back afterwards", async ({
+  page,
+}) => {
+  await page.goto("/acme/repos?tab=all");
+
+  await expect(page).toHaveURL(/\/login\?next=%2Facme%2Frepos%3Ftab%3Dall$/);
+  await expect(page.getByRole("heading", { name: "Sign in to PipeHeal" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign in with GitHub" })).toBeEnabled();
+  await expect(page.locator('input[name="next"]')).toHaveValue("/acme/repos?tab=all");
+});
+
+test("sign-in never sends the user to another site afterwards", async ({ page }) => {
+  await page.goto("/login?next=//evil.example/steal");
+
+  await expect(page.locator('input[name="next"]')).toHaveValue("/");
+});
+
+test("a forged session cookie gets past the proxy but not the org layout", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await context.addCookies([
+    { name: "pipeheal.session_token", value: "forged.value", url: baseURL ?? "" },
+  ]);
+
+  await page.goto("/acme");
+
+  await expect(page).toHaveURL(/\/login\?next=%2Facme$/);
+});
+
+test("Better Auth reports no session for a signed-out visitor", async ({ request }) => {
+  const response = await request.get("/api/auth/get-session");
+
+  expect(response.status()).toBe(200);
+  expect(await response.json()).toBeNull();
+});

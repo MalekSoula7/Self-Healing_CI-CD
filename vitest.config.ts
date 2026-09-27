@@ -19,8 +19,15 @@ const blankSecrets = {
   SENTRY_DSN: "",
 };
 // "server-only" throws unless bundled by Next.js for the server; tests run outside that bundler.
+// "@/" is apps/web's import alias (apps/web/tsconfig.json).
 const resolve = {
-  alias: { "server-only": fileURLToPath(new URL("./tests/stubs/server-only.ts", import.meta.url)) },
+  alias: [
+    {
+      find: "server-only",
+      replacement: fileURLToPath(new URL("./tests/stubs/server-only.ts", import.meta.url)),
+    },
+    { find: /^@\//, replacement: fileURLToPath(new URL("./apps/web/src/", import.meta.url)) },
+  ],
 };
 const strictCoverage = { lines: 95, functions: 95, branches: 95, statements: 95 };
 

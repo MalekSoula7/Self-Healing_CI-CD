@@ -11,7 +11,7 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 const testingImports = {
-  group: ["@pipeheal/*/testing"],
+  group: ["@pipeheal/*/testing", "@/testing/*"],
   message: "Test-only helpers: import them from tests only.",
 };
 
@@ -63,7 +63,7 @@ export default defineConfig(
   {
     // Test helpers (msw, the network guard, the test database) never ship in runtime code.
     files: ["**/*.{ts,tsx}"],
-    ignores: ["**/*.test.{ts,tsx}", "vitest.*.ts", "packages/*/src/testing/**"],
+    ignores: ["**/*.test.{ts,tsx}", "vitest.*.ts", "{apps,packages}/*/src/testing/**"],
     rules: {
       "no-restricted-imports": ["error", { patterns: [testingImports] }],
     },

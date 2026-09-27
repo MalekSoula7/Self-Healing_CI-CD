@@ -1,9 +1,18 @@
-// Tenants come from GitHub App installations (SPEC §5.1, §10). These helpers run in the worker on
-// verified webhooks and are the only way an Organization row is created or changes status.
+// Tenants come from GitHub App installations (SPEC §5.1, §10). These helpers act on verified
+// input only: signed webhooks (worker) and sign-ins GitHub confirmed (web, OWNER binding). They
+// are the only way an Organization row is created or changes status, and an OWNER is bound.
+import { z } from "zod";
 import { auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
 import type { OrgStatus } from "./generated/prisma/enums";
 import { githubIdSchema, installationInputSchema, type InstallationInput } from "./inputs";
+
+const ownerClaimSchema = z.strictObject({
+  userId: z.string().min(1),
+  /** The user's GitHub ID (Better Auth's Account.accountId for the github provider). */
+  githubUserId: githubIdSchema,
+});
+export type OwnerClaim = z.infer<typeof ownerClaimSchema>;
 
 const STATUS_ACTIONS: Record<OrgStatus, string> = {
   ACTIVE: "organization.activated",
@@ -71,6 +80,52 @@ export function installations(db: Db, component: string) {
           metadata: { installationId: String(updated.installationId) },
         });
         return updated;
+      });
+    },
+
+    /**
+     * Active organizations this GitHub user installed the App on and isn't a member of yet: the
+     * OWNER candidates of SPEC §5.2. Empty for almost every sign-in, so callers only ask GitHub
+     * for the user's installations when this isn't.
+     */
+    async ownerCandidates(claim: OwnerClaim) {
+      const { userId, githubUserId } = ownerClaimSchema.parse(claim);
+      return db.organization.findMany({
+        where: {
+          installerGithubId: githubUserId,
+          status: "ACTIVE",
+          memberships: { none: { userId } },
+        },
+        select: { id: true, installationId: true },
+      });
+    },
+
+    /**
+     * Makes the user OWNER of every candidate organization whose installation GitHub listed as
+     * accessible with the user's own token (`GET /user/installations`). Returns the org IDs bound.
+     */
+    async bindVerifiedOwner(claim: OwnerClaim, accessibleInstallationIds: readonly bigint[]) {
+      const { userId, githubUserId } = ownerClaimSchema.parse(claim);
+      const installationIds = z.array(githubIdSchema).parse(accessibleInstallationIds);
+      return db.$transaction(async (tx) => {
+        const orgs = await tx.organization.findMany({
+          where: {
+            installerGithubId: githubUserId,
+            installationId: { in: installationIds },
+            status: "ACTIVE",
+            memberships: { none: { userId } },
+          },
+          select: { id: true },
+        });
+        for (const { id } of orgs) {
+          await tx.membership.create({ data: { orgId: id, userId, role: "OWNER" } });
+          await writeAudit(tx, id, actor, {
+            action: "member.owner_verified",
+            target: auditTarget("user", userId),
+            metadata: { githubUserId: String(githubUserId) },
+          });
+        }
+        return orgs.map((org) => org.id);
       });
     },
 

@@ -1,3 +1,2 @@
-// @pipeheal/github: GitHub App client (Octokit) with typed wrappers.
-// Empty until its first task in docs/PLAN.md.
-export {};
+// @pipeheal/github: GitHub App client (Octokit) with typed wrappers. The App client arrives in P1.4.
+export { USER_AGENT, listUserInstallationIds, type GitHubClientOptions } from "./user";

@@ -173,3 +173,37 @@ Newest entry at the bottom. One entry per task. Format:
   - The audit log pages by ID (UUIDv7). I checked that Prisma generates v7 IDs monotonically: 300 IDs created within 7 ms came out in order. So no extra sequence column.
   - Membership creation (OWNER binding) and workflow discovery get their helpers in P1.3 and P1.7, with their own cross-org cases.
 - Verified: typecheck, lint, format, 235 unit+integration tests.
+
+## 2026-09-27 · P1.3 · Better Auth sign-in, OWNER binding, org guard
+- Done:
+  - **Env** (`apps/web/src/env.ts`): `DATABASE_URL`, `LOG_LEVEL`, `BETTER_AUTH_SECRET` (≥ 32 chars), `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`.
+    - In development the three sign-in settings are all-or-none: with none, the app runs and `/login` says sign-in isn't configured.
+    - Production requires all of them, plus `sslmode=require|verify-*` on non-loopback database URLs.
+    - `BETTER_AUTH_URL` removed from `.env.example`: the base URL is `APP_URL`.
+  - **Better Auth** (`lib/auth/options.ts`, a pure factory so tests run the real flow):
+    - GitHub provider with no OAuth scopes (App permissions apply); tokens encrypted at rest (D8).
+    - Account linking off, email/password off, telemetry off, `pipeheal` cookie prefix.
+    - Better Auth's logs go through the redacting logger.
+    - `login` refreshed from GitHub at every sign-in; `/update-user` disabled, so nobody can edit the profile fields other members see.
+  - **OWNER binding** (SPEC §5.2):
+    - `/auth/complete` (the sign-in callback URL) finds pending candidates in the DB (installer GitHub ID, active org, not yet a member). Only if there is one, it gets the user's decrypted token from Better Auth and calls `GET /user/installations`.
+    - `installations.bindVerifiedOwner` then binds OWNER, with audit, only for installations GitHub listed.
+    - GitHub errors are logged and never block sign-in. Redirects after sign-in accept same-origin paths only.
+  - **Guards:**
+    - `proxy.ts` is only a session-cookie-presence redirect to `/login?next=`.
+    - `requireOrgMember(slug, minRole)` checks session and membership in every org layout and page. Non-members, unknown orgs and insufficient roles all give 404.
+    - Minimal `/login`, `/[org]` (repository list), a home page listing the user's orgs, and sign-out.
+  - **`packages/github`:** `listUserInstallationIds` (octokit, all pages, zod-validated, configurable retries and logger). The rest of the client comes in P1.4.
+  - **`packages/db`:** `ownerCandidates`, `bindVerifiedOwner` (both with cross-org cases), `organizationsOf`, `githubIdentity` (IDs only, never tokens), `tlsUnlessLoopback`, and a light `@pipeheal/db/url` entry point.
+- Tests (new: 9 Better Auth flow, 5 proxy, 17 redirect, 10 env, 5 GitHub wrapper, 7 access/binding, 3 Postgres sign-in, 5 schema, e2e 4):
+  - The real OAuth flow against msw GitHub checks: authorize URL, user and login, verified email, cookie flags, tokens not in storage but decryptable, login rename, no linking by email, missing-email refusal, profile edits refused (mutation-checked), no token in logs.
+  - On Postgres: sign-in through the Prisma adapter, then OWNER binding with the decrypted token actually sent to GitHub, and no binding for a non-installer.
+  - Better Auth's expected tables vs the migrated DB (types, nullability; mutation-checked).
+  - e2e (production build): signed-out redirect with `next`, open-redirect refusal, forged cookie stopped by the layout. I ran e2e once with the database unreachable to prove signed-out paths never query it (the e2e CI job has no Postgres).
+  - Live dev-server smoke test with a real session: member sees the demo org's repos, a non-member org gives 404, and a signed-in user is sent past `/login`.
+- Fixed on the way:
+  - The home page read env during prerender, so `next build` needed runtime secrets. Sessions now read the request first, making those pages dynamic.
+  - `instrumentation.ts` pulled Prisma into the Edge bundle; it now imports env lazily, and env uses `@pipeheal/db/url`.
+  - Vitest resolves the web `@/` alias.
+- Decisions (SPEC §5.2 updated): 404 for non-members and insufficient roles (Next's `forbidden()` is still experimental); OWNER check at `/auth/complete` rather than inside Better Auth hooks.
+- Not covered by e2e yet: clicking "Sign in" (Better Auth stores OAuth state in Postgres, which the e2e job lacks). The flow is covered by the unit and integration tests above. Adding Postgres to the e2e job fits P1.7.

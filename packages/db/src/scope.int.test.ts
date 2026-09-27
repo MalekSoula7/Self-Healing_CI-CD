@@ -9,7 +9,14 @@ import { ConflictError, ForbiddenError, NotFoundError } from "./errors";
 import type { Organization, RepoWorkflow, Repository, User } from "./generated/prisma/client";
 import type { Role } from "./generated/prisma/enums";
 import { installations } from "./installations";
-import { SYNC_BATCH_LIMIT, forMember, forSystem, type OrgScope, type SystemScope } from "./scope";
+import {
+  SYNC_BATCH_LIMIT,
+  forMember,
+  forSystem,
+  organizationsOf,
+  type OrgScope,
+  type SystemScope,
+} from "./scope";
 import { createTestDb } from "./testing";
 
 const db = createTestDb();
@@ -41,6 +48,8 @@ async function addMember(org: Organization, role: Role): Promise<User> {
 
 interface Tenant {
   org: Organization;
+  /** GitHub ID of the user who installed the App (the OWNER candidate). */
+  installerGithubId: bigint;
   repo: Repository;
   workflow: RepoWorkflow;
   admin: User;
@@ -57,11 +66,13 @@ function present<T>(value: T | null | undefined, what: string): T {
 
 async function createTenant(): Promise<Tenant> {
   const login = uniqueLogin();
+  const installerGithubId = githubId();
   const org = await installs.upsert({
     githubAccountId: githubId(),
     login,
     accountType: "ORG",
     installationId: githubId(),
+    installerGithubId,
   });
   const [admin, member] = await Promise.all([addMember(org, "ADMIN"), addMember(org, "MEMBER")]);
   const system = await forSystem(db, org.id, "test");
@@ -81,6 +92,7 @@ async function createTenant(): Promise<Tenant> {
   });
   return {
     org,
+    installerGithubId,
     repo: present(repo, "repository"),
     workflow,
     admin,
@@ -183,6 +195,21 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
   "installations.setStatus": async () => {
     await installs.setStatus(a.org.installationId, "SUSPENDED");
   },
+  "installations.ownerCandidates": async () => {
+    const user = await createUser();
+    const candidates = await installs.ownerCandidates({
+      userId: user.id,
+      githubUserId: a.installerGithubId,
+    });
+    expect(candidates.map((org) => org.id)).toEqual([a.org.id]);
+  },
+  // A's installer who can also access B's installation on GitHub (e.g. as a B member) must not
+  // become B's owner: only B's installer can.
+  "installations.bindVerifiedOwner": async () => {
+    const user = await createUser();
+    const claim = { userId: user.id, githubUserId: a.installerGithubId };
+    await expect(installs.bindVerifiedOwner(claim, [b.org.installationId])).resolves.toEqual([]);
+  },
 };
 
 function helperNames(scope: object, prefix = ""): string[] {
@@ -231,6 +258,59 @@ describe("tenant isolation", () => {
     await expect(forSystem(db, randomUUID(), "test")).rejects.toThrow(NotFoundError);
     await expect(a.system.repositories.findByGithubId(-5n)).resolves.toBeNull();
     await expect(installs.findByInstallationId(0n)).resolves.toBeNull();
+  });
+});
+
+describe("OWNER binding (SPEC §5.2)", () => {
+  it("binds the installer as OWNER once GitHub confirms their access, exactly once", async () => {
+    const user = await createUser();
+    const claim = { userId: user.id, githubUserId: a.installerGithubId };
+
+    const bound = await installs.bindVerifiedOwner(claim, [a.org.installationId, githubId()]);
+    const again = await installs.bindVerifiedOwner(claim, [a.org.installationId]);
+
+    expect(bound).toEqual([a.org.id]);
+    expect(again).toEqual([]);
+    await expect(installs.ownerCandidates(claim)).resolves.toEqual([]);
+    const scope = await forMember(db, { orgSlug: a.org.slug, userId: user.id });
+    expect(scope?.role).toBe("OWNER");
+    const [latest] = await a.asAdmin.audit.list({ take: 1 });
+    expect(latest).toMatchObject({
+      actorType: "SYSTEM",
+      actorId: "test",
+      action: "member.owner_verified",
+      target: `user:${user.id}`,
+      metadata: { githubUserId: String(a.installerGithubId) },
+    });
+  });
+
+  it("binds nothing when GitHub doesn't list the installation, or the org isn't active", async () => {
+    const user = await createUser();
+    const claim = { userId: user.id, githubUserId: a.installerGithubId };
+
+    await expect(installs.bindVerifiedOwner(claim, [])).resolves.toEqual([]);
+    await installs.setStatus(a.org.installationId, "SUSPENDED");
+    await expect(installs.ownerCandidates(claim)).resolves.toEqual([]);
+    await expect(installs.bindVerifiedOwner(claim, [a.org.installationId])).resolves.toEqual([]);
+    await expect(forMember(db, { orgSlug: a.org.slug, userId: user.id })).resolves.toBeNull();
+  });
+
+  it("lists a user's organizations and nobody else's", async () => {
+    const user = await createUser();
+    await db.membership.create({ data: { orgId: b.org.id, userId: user.id, role: "MEMBER" } });
+    await installs.bindVerifiedOwner({ userId: user.id, githubUserId: a.installerGithubId }, [
+      a.org.installationId,
+    ]);
+
+    const orgs = await organizationsOf(db, user.id);
+
+    expect(orgs.map(({ org, role }) => [org.id, role]).sort()).toEqual(
+      [
+        [a.org.id, "OWNER"],
+        [b.org.id, "MEMBER"],
+      ].sort(),
+    );
+    await expect(organizationsOf(db, (await createUser()).id)).resolves.toEqual([]);
   });
 });
 

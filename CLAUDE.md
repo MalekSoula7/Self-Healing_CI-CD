@@ -56,6 +56,7 @@ Created in Phase 0. Keep this section accurate whenever scripts change.
 - Adding a dependency requires a one-line justification in the commit message. Prefer what's already installed.
 - Conventional Commits (`feat(policy): ...`, `fix(worker): ...`). Small, focused commits.
 - Server code never trusts the runner: re-validate everything the runner sends.
+- Every org layout, page, route handler and server action calls `requireOrgMember` (`apps/web/src/lib/auth/session.ts`). `proxy.ts` only redirects visitors without a session cookie; it is never the check.
 
 ## Product invariants (the app must never violate these, whatever the config)
 - Never merge a PR. Never push to a branch the App did not create. Never force-push.

@@ -5,17 +5,19 @@ export type { Actor } from "./audit";
 export { createDb, type Db } from "./client";
 export { ConflictError, ForbiddenError, NotFoundError } from "./errors";
 export type { AuditPage, InstallationInput, InstalledRepository } from "./inputs";
-export { installations, type Installations } from "./installations";
+export { installations, type Installations, type OwnerClaim } from "./installations";
 export {
   SYNC_BATCH_LIMIT,
   forMember,
   forSystem,
   hasRole,
+  organizationsOf,
   type OrgScope,
   type OrgSummary,
   type SystemScope,
 } from "./scope";
-export { DEV_DATABASE_URL, databaseUrlSchema } from "./url";
+export { DEV_DATABASE_URL, databaseUrlSchema, tlsUnlessLoopback } from "./url";
+export { GITHUB_PROVIDER_ID, githubIdentity, type GitHubIdentity } from "./users";
 export * from "./generated/prisma/enums";
 export {
   Prisma,

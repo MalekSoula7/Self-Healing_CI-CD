@@ -142,7 +142,9 @@ Subscribed events: `installation`, `installation_repositories`, `workflow_run`, 
 - User sign-in with Better Auth's GitHub provider using the App's OAuth client credentials.
 - **Who becomes OWNER.** The `installation` webhook's `sender` is only a candidate. They become OWNER of the tenant on their first sign-in, and only after `GET /user/installations` (with their user access token) confirms they can access that installation. Everyone else joins by invitation (Phase 6).
 - **User access tokens are kept, encrypted** (D8): Better Auth stores the GitHub user token and refresh token in `Account` with `account.encryptOAuthTokens` (AES-256-GCM, keyed from `BETTER_AUTH_SECRET`). They are used for the OWNER check at sign-in and to list the user's installations during onboarding. Rotating `BETTER_AUTH_SECRET` makes stored tokens unreadable, so users sign in again. The App's installation tokens are still never stored (above).
-- Route protection: `proxy.ts` (Next.js 16) redirects signed-out users, but the membership check happens in every org layout, route handler and data helper, never in the proxy alone.
+- The OWNER check runs where sign-in lands (`/auth/complete`, again at every sign-in and after installing the App). It asks GitHub only when the user is a pending candidate. A GitHub failure never blocks sign-in; the check simply runs again next time.
+- Profile fields (name, avatar, login) come from GitHub at each sign-in and can't be edited in PipeHeal. GitHub is the only sign-in method, and a GitHub identity is never linked to an existing user by email.
+- Route protection: `proxy.ts` (Next.js 16) redirects signed-out users, but the membership check happens in every org layout, route handler and data helper, never in the proxy alone. Non-members and members below the required role get a 404.
 - Commits created by the App trigger workflows normally (unlike pushes made with `GITHUB_TOKEN`). We rely on this for independent verification of fixes.
 
 ### 5.3 Healer workflow (customer commits once, on the default branch)

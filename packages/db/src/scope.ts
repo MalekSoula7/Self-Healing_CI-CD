@@ -303,3 +303,12 @@ export async function forSystem(db: Db, orgId: string, component: string): Promi
   if (org === null) throw new NotFoundError("organization not found");
   return buildSystemScope({ db, org, role: "OWNER", actor: { type: "SYSTEM", component } });
 }
+
+/** The organizations a user belongs to, with their role in each (for org switchers). */
+export async function organizationsOf(db: Db, userId: string) {
+  return db.membership.findMany({
+    where: { userId },
+    select: { role: true, org: { select: ORG_SUMMARY } },
+    orderBy: { org: { slug: "asc" } },
+  });
+}
