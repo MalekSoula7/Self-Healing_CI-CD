@@ -54,7 +54,7 @@ Acceptance: installing the App on the sandbox org shows the org and repos in the
 
 - [ ] **P2.0** `examples/demo-node` (TypeScript + Vitest + ESLint) and `examples/demo-python` (pytest + ruff + mypy), each with a CI workflow emitting JUnit XML, plus `scripts/break.ts <scenario>` (TypeScript via `tsx`, no bash) that introduces each eval scenario from SPEC §14 on a new branch.
 - [ ] **CHECKPOINT 2a [HUMAN]**: Malek pushes the demo repos to the sandbox org and installs the App on them.
-- [ ] **P2.1** `workflow_run` processor: filters from SPEC §2 step 4, one `PipelineFailure` per repo + head SHA with `FailedRun`/`FailedJob`, collection window, late arrivals and re-runs (SPEC §2.1).
+- [ ] **P2.1** `workflow_run` processor: filters from SPEC §2 step 4, one `PipelineFailure` per repo + head SHA with `FailedRun`/`FailedJob`, collection window, late arrivals and re-runs (SPEC §2.1). Forks are detected by repository ID (`WorkflowRun.fromFork`, fail closed). GitHub calls are paced per installation in the worker's queues (octokit's process-wide throttling is off, P1.4 review).
 - [ ] **P2.2** Log fetch + clean + redact (`packages/agent-core/redact`). Fixture tests with planted fake secrets of every type in SPEC §6.2.
 - [ ] **P2.3** Error-window extractor and signal parsers for tsc, eslint, jest/vitest, pytest, mypy, ruff, pip/npm install errors. Real log samples in `packages/agent-core/fixtures/logs/`, test-first.
 - [ ] **P2.4** Heuristic classifier + `TRIAGE_MODEL` fallback with zod-validated JSON and one retry. Cost recorded.
@@ -73,7 +73,7 @@ Acceptance: each `break.ts` scenario shows up within ~1 minute and has the right
 - [ ] **P3.1** `PolicyRules` zod schema, defaults, invariants as code (SPEC §8.2–8.3). Export types.
 - [ ] **P3.2** Diff model: build `Change { path, oldPath, status, isBinary, modeChanged, oldContent, newContent, hunks }` from old/new file contents. Tests.
 - [ ] **P3.3** Layer merge with provenance (SPEC §8.4). Property-based tests (fast-check): the merged policy is never less restrictive than any layer.
-- [ ] **P3.4** Static checks, one module per family (SPEC §8.5), each with allowed and forbidden fixtures in `packages/policy/fixtures/`. Test-first.
+- [ ] **P3.4** Static checks, one module per family (SPEC §8.5), each with allowed and forbidden fixtures in `packages/policy/fixtures/`. Test-first. INV-GITHUB-DIR and path rules use the same NTFS/HFS-aware normalizer as `packages/github`'s `assertWritablePath` (move it to `packages/shared`).
 - [ ] **P3.5** Behavioral checks: JUnit parser + inventory comparison (SPEC §8.6). Fixtures from Jest, Vitest and pytest reports.
 - [ ] **P3.6** Run the `policy-red-team` subagent. Turn every bypass it finds into a failing fixture, then fix the engine. Repeat until it finds nothing new.
 - [ ] **P3.7** `.pipeheal.yml` loader from the default branch, validated; errors shown in the UI, never crash the pipeline.
@@ -93,6 +93,7 @@ Acceptance: coverage ≥ 95% on `packages/policy`; all red-team fixtures rejecte
 - [ ] **P4.1b** Gateway hardening before it is reachable from runners (Phase 0 review L5): public `/livez` (no dependency checks) vs internal `/readyz`, `requestTimeout` ~150 s and `connectionTimeout`, small per-route body limits before auth, `@fastify/rate-limit`.
 - [ ] **P4.2** Gateway `POST /v1/session`: OIDC verification per SPEC §5.4. Tests with locally generated keys and JWTs, including every rejection path.
 - [ ] **P4.3** Gateway `POST /v1/step`: accept tool results, run the next model turn, return tool calls; persist `AgentEvent`s; enforce caps; idempotent on `stepSeq`.
+- [ ] **P4.3b** Reads that feed the model use installation tokens scoped to the one repository and read-only permissions (`repositoryIds` + `permissions`, P1.4 review).
 - [ ] **P4.4** `packages/agent-core`: prompt builder (SPEC §7.4, versioned), tool definitions, context assembler, loop controller with all stop conditions, cost accounting, prompt caching on the static prefix.
 - [ ] **P4.5** `packages/heal-action`: JavaScript action bundled to `dist/`. OIDC exchange, install, reproduce, baseline JUnit, tool executor (path-traversal protection, output truncation, commands only from config, args as arrays), final checks, submission upload.
 - [ ] **P4.6** Local mode: `pnpm heal:local --repo examples/demo-node --scenario <name>` runs the same executor inside a Linux Docker container against a local copy of the repo and a local gateway. A dev CLI creates a real attempt and session token; there is no auth bypass (SPEC §12). This is the main dev loop for agent work.
@@ -108,8 +109,8 @@ Acceptance: local mode fixes at least 4 of the 6 fixable demo scenarios; both tr
 ## Phase 5: PRs & verification loop (MVP complete)
 
 - [ ] **P5.1** Submission validation: fetch originals at `target_sha` from GitHub, recompute the diff, run static + behavioral + judge. Never use the runner's diff as truth.
-- [ ] **P5.2** Branch, commit and PR via Git Data API; PR body template (SPEC §9); label; reviewer request; draft rule; link comment on the originating PR.
-- [ ] **P5.3** Verification: map `workflow_run` on `pipeheal/*` to its attempt; `VERIFIED`, retry-with-feedback, or `NEEDS_HUMAN` + comment; `UNVERIFIED` timeouts and the delivery reconciler (SPEC §2.2).
+- [ ] **P5.2** Branch, commit and PR via Git Data API; PR body template (SPEC §9); label; reviewer request; draft rule; link comment on the originating PR. Record each `pipeheal/*` branch the App creates, with its last commit SHA, and only ever extend those (`commitFiles` already refuses a branch whose tip isn't the given parent).
+- [ ] **P5.3** Verification: map `workflow_run` on `pipeheal/*` to its attempt by the head SHA of the App's own commit, never by branch name alone, and ignore fork runs; `VERIFIED`, retry-with-feedback, or `NEEDS_HUMAN` + comment; `UNVERIFIED` timeouts and the delivery reconciler (SPEC §2.2).
 - [ ] **P5.4** Outcome tracking from `pull_request` closed events.
 - [ ] **P5.5** Concurrency and loop protection (SPEC §9.1), with tests for each case.
 - [ ] **P5.6** Failure detail timeline UI: attempts, iterations, tool calls, diff viewer, policy results, PR link, cost.

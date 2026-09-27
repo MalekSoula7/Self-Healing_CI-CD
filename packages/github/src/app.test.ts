@@ -4,13 +4,16 @@ import { delay, http, HttpResponse, type JsonBodyType } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ZodError } from "zod";
 import { createGitHubApp } from "./app";
+import { GitHubApiError } from "./client";
 import { GuardError } from "./guards";
 
 const API = "https://api.github.com";
 const REPO = `${API}/repos/octo-org/app`;
+const REPO_ID = 1001;
 const INSTALLATION_TOKEN = "ghs_installationTokenForTests0000000000";
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
+const TREE = "1".repeat(40);
 
 const { privateKey, publicKey } = generateKeyPairSync("rsa", {
   modulusLength: 2048,
@@ -49,7 +52,6 @@ function createApp(options: { requestTimeoutMs?: number; retries?: number } = {}
     privateKey,
     retries: options.retries ?? 0,
     retryAfterMs: 1,
-    pacing: false,
     ...(options.requestTimeoutMs === undefined
       ? {}
       : { requestTimeoutMs: options.requestTimeoutMs }),
@@ -81,7 +83,8 @@ function run(id: number, overrides: Record<string, unknown> = {}) {
     status: "completed",
     conclusion: "failure",
     html_url: `https://github.com/octo-org/app/actions/runs/${String(id)}`,
-    head_repository: { full_name: "octo-org/app" },
+    repository: { id: REPO_ID, full_name: "octo-org/app" },
+    head_repository: { id: REPO_ID, full_name: "octo-org/app" },
     ...overrides,
   };
 }
@@ -99,6 +102,26 @@ function job(id: number, conclusion: string | null) {
       { name: "Checkout", number: 1, conclusion: "success" },
       { name: "Test", number: 2, conclusion: conclusion === "failure" ? "failure" : "success" },
     ],
+  };
+}
+
+const ownRepo = { id: REPO_ID, full_name: "octo-org/app" };
+const forkHead = {
+  ref: "pipeheal/abc-1",
+  sha: SHA_B,
+  repo: { id: 999, full_name: "octo-org/app" },
+};
+
+function pull(overrides: Record<string, unknown> = {}) {
+  return {
+    number: 12,
+    html_url: "https://github.com/octo-org/app/pull/12",
+    state: "open",
+    draft: true,
+    merged: false,
+    head: { ref: "pipeheal/abc-1", sha: SHA_B, repo: ownRepo },
+    base: { ref: "main", repo: ownRepo },
+    ...overrides,
   };
 }
 
@@ -186,9 +209,27 @@ describe("workflow runs and jobs", () => {
 
     expect(query?.get("head_sha")).toBe(SHA_A);
     expect(runs).toEqual([
-      expect.objectContaining({ id: 5n, workflowId: 7n, headSha: SHA_A, conclusion: "failure" }),
+      expect.objectContaining({ id: 5n, workflowId: 7n, headSha: SHA_A, fromFork: false }),
     ]);
-    expect(runs[0]?.headRepositoryFullName).toBe("octo-org/app");
+  });
+
+  it.each([
+    ["another repository with the same name", { id: 999, full_name: "octo-org/app" }],
+    ["a deleted head repository", null],
+    ["no head repository at all", undefined],
+  ])("marks a run from %s as a fork (fail closed)", async (_label, headRepository) => {
+    mockServer.use(
+      http.get(`${REPO}/actions/runs`, () =>
+        HttpResponse.json({
+          total_count: 1,
+          workflow_runs: [run(5, { head_repository: headRepository })],
+        }),
+      ),
+    );
+
+    const [first] = await (await repo()).listRunsForSha(SHA_A);
+
+    expect(first?.fromFork).toBe(true);
   });
 
   it("refuses a malformed SHA before calling GitHub", async () => {
@@ -228,24 +269,37 @@ describe("workflow runs and jobs", () => {
 });
 
 describe("job logs", () => {
-  const STORAGE = "https://results-receiver.actions.githubusercontent.com/logs/job-7.txt";
+  const STORAGE_URL = "https://results-receiver.actions.githubusercontent.com/logs/job-7.txt";
+  const SIGNED_URL = `${STORAGE_URL}?sig=signed-secret`;
 
-  function serveLog(log: string, seen: { storageAuthorization?: string | null } = {}) {
+  function serveLog(chunks: string[], options: { location?: string; status?: number } = {}) {
+    const seen: { storageAuthorization?: string | null } = {};
     mockServer.use(
       http.get(
         `${REPO}/actions/jobs/7/logs`,
-        () => new HttpResponse(null, { status: 302, headers: { location: STORAGE } }),
+        () =>
+          new HttpResponse(null, {
+            status: 302,
+            headers: { location: options.location ?? SIGNED_URL },
+          }),
       ),
-      http.get(STORAGE, ({ request }) => {
+      http.get(STORAGE_URL, ({ request }) => {
         seen.storageAuthorization = request.headers.get("authorization");
-        return new HttpResponse(log, { headers: { "content-type": "text/plain" } });
+        const encoder = new TextEncoder();
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+            controller.close();
+          },
+        });
+        return new HttpResponse(body, { status: options.status ?? 200 });
       }),
     );
+    return seen;
   }
 
-  it("follows GitHub's redirect to storage without forwarding our token", async () => {
-    const seen: { storageAuthorization?: string | null } = {};
-    serveLog("line 1\nError: boom\n", seen);
+  it("follows GitHub's redirect to log storage itself, without our token", async () => {
+    const seen = serveLog(["line 1\nErr", "or: boom\n"]);
 
     const log = await (await repo()).downloadJobLog(7n);
 
@@ -253,9 +307,9 @@ describe("job logs", () => {
     expect(seen.storageAuthorization).toBeNull();
   });
 
-  it("keeps only the end of a huge log, starting on a whole line", async () => {
-    const lines = Array.from({ length: 2_000 }, (_, i) => `line ${String(i)}`);
-    serveLog(`${lines.join("\n")}\nError: the real failure\n`);
+  it("keeps only the end of a huge log, streamed in chunks, from a whole line", async () => {
+    const lines = Array.from({ length: 2_000 }, (_, i) => `line ${String(i)}\n`);
+    serveLog([...lines, "Error: the real failure\n"]);
 
     const log = await (await repo()).downloadJobLog(7n, 1_000);
 
@@ -264,24 +318,48 @@ describe("job logs", () => {
     expect(log.text).toMatch(/^line \d+\n/);
     expect(log.text.endsWith("Error: the real failure\n")).toBe(true);
   });
+
+  it.each([
+    "https://evil.example/logs/job-7.txt",
+    "http://results-receiver.actions.githubusercontent.com/logs/job-7.txt",
+    "https://actions.githubusercontent.com.evil.example/x",
+  ])("refuses a redirect to %s", async (location) => {
+    serveLog(["x"], { location });
+
+    await expect((await repo()).downloadJobLog(7n)).rejects.toThrow(GuardError);
+  });
+
+  it("fails on a storage error without the signed URL", async () => {
+    serveLog(["denied"], { status: 403 });
+
+    const error: unknown = await (await repo()).downloadJobLog(7n).then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(GitHubApiError);
+    expect(JSON.stringify(error) + String(error)).not.toContain("signed-secret");
+  });
 });
 
 describe("files and comparisons", () => {
-  it("compares two commits", async () => {
+  it("compares two commits and says when GitHub cut the lists short", async () => {
     let path = "";
+    const manyFiles = Array.from({ length: 300 }, (_, i) => ({
+      filename: `f${String(i)}.ts`,
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+    }));
     mockServer.use(
       http.get(`${REPO}/compare/:basehead`, ({ request }) => {
         path = decodeURIComponent(new URL(request.url).pathname);
         return HttpResponse.json({
           status: "ahead",
-          ahead_by: 1,
+          ahead_by: 400,
           behind_by: 0,
-          total_commits: 1,
+          total_commits: 400,
           commits: [{ sha: SHA_B, commit: { message: "fix: x" }, author: null }],
-          files: [
-            { filename: "src/a.ts", status: "modified", additions: 1, deletions: 1, patch: "@@" },
-            { filename: "img.png", status: "added", additions: 0, deletions: 0 },
-          ],
+          files: manyFiles,
         });
       }),
     );
@@ -290,57 +368,92 @@ describe("files and comparisons", () => {
 
     expect(path).toBe(`/repos/octo-org/app/compare/${SHA_A}...${SHA_B}`);
     expect(comparison.commits).toEqual([{ sha: SHA_B, message: "fix: x", authorLogin: null }]);
-    expect(comparison.files.map((file) => [file.path, file.patch])).toEqual([
-      ["src/a.ts", "@@"],
-      ["img.png", null],
-    ]);
+    expect(comparison.commitsTruncated).toBe(true);
+    expect(comparison.filesTruncated).toBe(true);
   });
 
-  function serveFile(body: string | Uint8Array | null, init?: ResponseInit) {
+  function serveContent(body: JsonBodyType, init?: ResponseInit) {
     let seenPath = "";
-    let seenAccept: string | null = null;
     mockServer.use(
       http.get(`${REPO}/contents/*`, ({ request }) => {
         // octokit percent-encodes the slashes of {path}; GitHub decodes them.
-        seenPath = decodeURIComponent(new URL(request.url).pathname) + new URL(request.url).search;
-        seenAccept = request.headers.get("accept");
-        return new HttpResponse(body, init);
+        const url = new URL(request.url);
+        seenPath = decodeURIComponent(url.pathname) + url.search;
+        return HttpResponse.json(body, init);
       }),
     );
-    return () => ({ path: seenPath, accept: seenAccept });
+    return () => seenPath;
   }
 
-  it("reads a text file at a commit, raw, keeping the path's slashes", async () => {
-    const seen = serveFile("export const x = 1;\n");
+  function fileContent(path: string, data: Uint8Array | string) {
+    const bytes = typeof data === "string" ? Buffer.from(data) : Buffer.from(data);
+    return {
+      type: "file",
+      path,
+      size: bytes.byteLength,
+      encoding: "base64",
+      content: bytes.toString("base64").replace(/(.{60})/g, "$1\n"),
+    };
+  }
+
+  it("reads a text file at a commit exactly", async () => {
+    const source = "export const café = 1;\n";
+    const seenPath = serveContent(fileContent("src/lib/x.ts", source));
 
     await expect((await repo()).getFileAtRef("src/lib/x.ts", SHA_A)).resolves.toEqual({
       kind: "text",
-      content: "export const x = 1;\n",
-      bytes: 20,
+      content: source,
+      bytes: Buffer.byteLength(source),
     });
-    expect(seen().path).toBe(`/repos/octo-org/app/contents/src/lib/x.ts?ref=${SHA_A}`);
-    expect(seen().accept).toMatch(/raw/);
+    expect(seenPath()).toBe(`/repos/octo-org/app/contents/src/lib/x.ts?ref=${SHA_A}`);
   });
 
-  it("recognizes binary files, oversized files, directories and missing files", async () => {
+  it("keeps a byte-order mark, so writing the file back doesn't change it", async () => {
+    serveContent(fileContent("a.cs", "﻿class A {}\n"));
+
+    const file = await (await repo()).getFileAtRef("a.cs", SHA_A);
+
+    expect(file).toMatchObject({ kind: "text", content: "﻿class A {}\n" });
+  });
+
+  it.each([
+    ["a NUL byte", new Uint8Array([0x89, 0x50, 0x00, 0x47])],
+    ["invalid UTF-8", new Uint8Array([0x63, 0x61, 0x66, 0xe9, 0x0a])],
+  ])("treats %s as binary", async (_label, bytes) => {
+    serveContent(fileContent("data.bin", bytes));
+
+    await expect((await repo()).getFileAtRef("data.bin", SHA_A)).resolves.toEqual({
+      kind: "binary",
+      bytes: bytes.byteLength,
+    });
+  });
+
+  it("recognizes large files, directories, symlinks, submodules and missing files", async () => {
     const client = await repo();
 
-    serveFile(new Uint8Array([0x89, 0x50, 0x00, 0x47]));
-    await expect(client.getFileAtRef("img.png", SHA_A)).resolves.toEqual({
-      kind: "binary",
-      bytes: 4,
-    });
-
-    serveFile("x".repeat(2_000));
-    await expect(client.getFileAtRef("big.txt", SHA_A, 1_000)).resolves.toEqual({
+    serveContent({ type: "file", path: "big.txt", size: 5_000_000, encoding: "none", content: "" });
+    await expect(client.getFileAtRef("big.txt", SHA_A)).resolves.toEqual({
       kind: "too_large",
-      maxBytes: 1_000,
+      bytes: 5_000_000,
+      maxBytes: 1024 * 1024,
     });
 
-    serveFile("[]", { headers: { "content-type": "application/json; charset=utf-8" } });
+    serveContent([{ type: "file", path: "src/a.ts" }]);
     await expect(client.getFileAtRef("src", SHA_A)).resolves.toEqual({ kind: "not_a_file" });
 
-    serveFile(JSON.stringify({ message: "Not Found" }), { status: 404 });
+    serveContent({ type: "symlink", path: "link", size: 5, target: "../x" });
+    await expect(client.getFileAtRef("link", SHA_A)).resolves.toEqual({ kind: "symlink" });
+
+    // A symlink to a file: GitHub answers with the target file, under the target's path.
+    serveContent(fileContent("real/config.json", "{}"));
+    await expect(client.getFileAtRef("config.json", SHA_A)).resolves.toEqual({ kind: "symlink" });
+
+    serveContent({ type: "submodule", path: "vendor/lib", size: 0, submodule_git_url: "x" });
+    await expect(client.getFileAtRef("vendor/lib", SHA_A)).resolves.toEqual({
+      kind: "submodule",
+    });
+
+    serveContent({ message: "Not Found" }, { status: 404 });
     await expect(client.getFileAtRef("gone.ts", SHA_A)).resolves.toBeNull();
   });
 
@@ -365,18 +478,27 @@ describe("actions", () => {
     ]);
   });
 
-  it("re-runs a run's failed jobs", async () => {
-    let called = false;
+  it("re-runs a run's failed jobs, but never a fork's", async () => {
+    const reruns: string[] = [];
     mockServer.use(
-      http.post(`${REPO}/actions/runs/99/rerun-failed-jobs`, () => {
-        called = true;
+      http.get(`${REPO}/actions/runs/:id`, ({ params }) =>
+        HttpResponse.json(
+          params.id === "98"
+            ? run(98, { head_repository: { id: 999, full_name: "someone/app" } })
+            : run(99),
+        ),
+      ),
+      http.post(`${REPO}/actions/runs/:id/rerun-failed-jobs`, ({ params }) => {
+        reruns.push(String(params.id));
         return new HttpResponse(null, { status: 201 });
       }),
     );
+    const client = await repo();
 
-    await (await repo()).rerunFailedJobs(99n);
+    await client.rerunFailedJobs(99n);
+    await expect(client.rerunFailedJobs(98n)).rejects.toThrow(GuardError);
 
-    expect(called).toBe(true);
+    expect(reruns).toEqual(["99"]);
   });
 
   it("dispatches the healer with its inputs and returns the run ID", async () => {
@@ -419,18 +541,56 @@ describe("actions", () => {
     ).resolves.toEqual({ runId: null });
   });
 
+  it("never retries a dispatch (a retry could start a second healer run)", async () => {
+    let calls = 0;
+    mockServer.use(
+      http.post(`${REPO}/actions/workflows/:workflow/dispatches`, () => {
+        calls += 1;
+        return HttpResponse.json({ message: "Server Error" }, { status: 502 });
+      }),
+    );
+
+    await expect(
+      (await repo({ retries: 3 })).dispatchWorkflow(".github/workflows/pipeheal.yml", "main", {}),
+    ).rejects.toThrow(GitHubApiError);
+    expect(calls).toBe(1);
+  });
+
   it.each([
-    "pipeheal.yml",
-    ".github/workflows/../ci.yml",
-    "src/workflow.yml",
-    ".github/workflows/a/b.yml",
-  ])("refuses to dispatch %s", async (path) => {
-    await expect((await repo()).dispatchWorkflow(path, "main", {})).rejects.toThrow(GuardError);
+    ["pipeheal.yml", "main"],
+    [".github/workflows/../ci.yml", "main"],
+    ["src/workflow.yml", "main"],
+    [".github/workflows/a/b.yml", "main"],
+    [".github/workflows/pipeheal.yml", "main..evil"],
+    [".github/workflows/pipeheal.yml", "-x"],
+  ])("refuses to dispatch %s on %s", async (path, ref) => {
+    await expect((await repo()).dispatchWorkflow(path, ref, {})).rejects.toThrow(GuardError);
   });
 });
 
 describe("commits (Git Data API)", () => {
-  function serveGitData() {
+  interface TreeEntry {
+    path: string;
+    mode: string;
+    type: string;
+    sha: string;
+  }
+
+  const blob = (path: string, mode = "100644"): TreeEntry => ({
+    path,
+    mode,
+    type: "blob",
+    sha: "4".repeat(40),
+  });
+  const SRC_TREE = "5".repeat(40);
+
+  function serveGitData(options: { root?: TreeEntry[]; branchTip?: string } = {}) {
+    const root = options.root ?? [
+      { path: "src", mode: "040000", type: "tree", sha: SRC_TREE },
+      blob("old.ts"),
+      blob("run.sh", "100755"),
+    ];
+    const subtrees: Record<string, TreeEntry[]> = { [SRC_TREE]: [blob("a.ts")] };
     const calls: { method: string; path: string; body: unknown }[] = [];
     const record = async (request: Request) => {
       calls.push({
@@ -440,9 +600,18 @@ describe("commits (Git Data API)", () => {
       });
     };
     mockServer.use(
+      http.get(`${REPO}/git/ref/*`, async ({ request }) => {
+        await record(request);
+        return HttpResponse.json({ ref: "x", object: { sha: options.branchTip ?? SHA_A } });
+      }),
       http.get(`${REPO}/git/commits/:sha`, async ({ request }) => {
         await record(request);
-        return HttpResponse.json({ sha: SHA_A, tree: { sha: "1".repeat(40) } });
+        return HttpResponse.json({ sha: SHA_A, tree: { sha: TREE } });
+      }),
+      http.get(`${REPO}/git/trees/:sha`, async ({ request, params }) => {
+        await record(request);
+        const sha = String(params.sha);
+        return HttpResponse.json({ sha, tree: sha === TREE ? root : (subtrees[sha] ?? []) });
       }),
       http.post(`${REPO}/git/trees`, async ({ request }) => {
         await record(request);
@@ -464,36 +633,40 @@ describe("commits (Git Data API)", () => {
     return calls;
   }
 
-  const changes = [
-    { path: "src/a.ts", content: "export {};\n" },
-    { path: "bin/run", content: "#!/bin/sh\n", executable: true },
-    { path: "old.ts", delete: true as const },
-  ];
+  const writesIn = (calls: { method: string }[]) => calls.filter((call) => call.method !== "GET");
 
-  it("creates a pipeheal/* branch with one commit on top of the parent", async () => {
-    const calls = serveGitData();
-
-    const result = await (
-      await repo()
-    ).commitFiles({
+  function commit(overrides: Record<string, unknown> = {}) {
+    return {
       branch: "pipeheal/abc-1",
       parentSha: SHA_A,
       message: "fix: x [PipeHeal]",
-      changes,
+      changes: [
+        { path: "src/a.ts", content: "export {};\n" },
+        { path: "run.sh", content: "#!/bin/sh\n" },
+        { path: "src/new.ts", content: "new\n" },
+        { path: "old.ts", delete: true as const },
+      ],
       createBranch: true,
-    });
+      ...overrides,
+    };
+  }
+
+  it("creates a pipeheal/* branch with one commit, keeping each file's mode", async () => {
+    const calls = serveGitData();
+
+    const result = await (await repo()).commitFiles(commit());
 
     expect(result).toEqual({ commitSha: "3".repeat(40) });
-    expect(calls).toEqual([
-      { method: "GET", path: `/repos/octo-org/app/git/commits/${SHA_A}`, body: null },
+    expect(writesIn(calls)).toEqual([
       {
         method: "POST",
         path: "/repos/octo-org/app/git/trees",
         body: {
-          base_tree: "1".repeat(40),
+          base_tree: TREE,
           tree: [
             { path: "src/a.ts", mode: "100644", type: "blob", content: "export {};\n" },
-            { path: "bin/run", mode: "100755", type: "blob", content: "#!/bin/sh\n" },
+            { path: "run.sh", mode: "100755", type: "blob", content: "#!/bin/sh\n" },
+            { path: "src/new.ts", mode: "100644", type: "blob", content: "new\n" },
             { path: "old.ts", mode: "100644", type: "blob", sha: null },
           ],
         },
@@ -511,24 +684,55 @@ describe("commits (Git Data API)", () => {
     ]);
   });
 
-  it("moves an existing pipeheal/* branch forward, never forcing", async () => {
+  it("moves its own branch forward from its last commit, never forcing", async () => {
     const calls = serveGitData();
 
     await (
       await repo()
-    ).commitFiles({
-      branch: "pipeheal/abc-1",
-      parentSha: SHA_A,
-      message: "fix: retry",
-      changes: [{ path: "src/a.ts", content: "x" }],
-      createBranch: false,
-    });
+    ).commitFiles(commit({ createBranch: false, changes: [{ path: "src/a.ts", content: "x" }] }));
 
+    expect(calls[0]).toMatchObject({
+      method: "GET",
+      path: "/repos/octo-org/app/git/ref/heads/pipeheal/abc-1",
+    });
     expect(calls.at(-1)).toEqual({
       method: "PATCH",
       path: "/repos/octo-org/app/git/refs/heads/pipeheal/abc-1",
       body: { sha: "3".repeat(40), force: false },
     });
+  });
+
+  it("refuses to extend a branch that moved (someone else pushed to it)", async () => {
+    const calls = serveGitData({ branchTip: SHA_B });
+
+    await expect(
+      (await repo()).commitFiles(
+        commit({ createBranch: false, changes: [{ path: "src/a.ts", content: "x" }] }),
+      ),
+    ).rejects.toThrow(GuardError);
+    expect(writesIn(calls)).toEqual([]);
+  });
+
+  it.each([
+    ["a symlink", { path: "link", mode: "120000", type: "blob", sha: "6".repeat(40) }, "link"],
+    [
+      "a submodule",
+      { path: "vendor", mode: "160000", type: "commit", sha: "6".repeat(40) },
+      "vendor",
+    ],
+    ["a directory", { path: "src", mode: "040000", type: "tree", sha: SRC_TREE }, "src"],
+    [
+      "a path through a symlink",
+      { path: "link", mode: "120000", type: "blob", sha: "6".repeat(40) },
+      "link/x.ts",
+    ],
+  ])("refuses to write over %s", async (_label, entry, path) => {
+    const calls = serveGitData({ root: [entry] });
+
+    await expect(
+      (await repo()).commitFiles(commit({ changes: [{ path, content: "x" }] })),
+    ).rejects.toThrow(GuardError);
+    expect(writesIn(calls)).toEqual([]);
   });
 
   it.each([
@@ -540,39 +744,33 @@ describe("commits (Git Data API)", () => {
       "a deletion under .github/",
       { changes: [{ path: ".github/dependabot.yml", delete: true as const }] },
     ],
+    [
+      "a nested .git directory",
+      { changes: [{ path: "vendor/x/.git/hooks/post-checkout", content: "x" }] },
+    ],
+    ["a Windows-reserved name", { changes: [{ path: "src/aux.ts", content: "x" }] }],
     ["path traversal", { changes: [{ path: "../x", content: "x" }] }],
+    [
+      "the same path twice",
+      {
+        changes: [
+          { path: "a", content: "1" },
+          { path: "a", content: "2" },
+        ],
+      },
+    ],
     ["an empty commit", { changes: [] }],
-  ])("refuses %s before calling GitHub", async (_label, override) => {
+    ["a message that skips CI", { message: "fix: x [skip ci]" }],
+    ["deleting a missing file", { changes: [{ path: "nope.ts", delete: true as const }] }],
+  ])("refuses %s before writing anything", async (_label, override) => {
     const calls = serveGitData();
 
-    await expect(
-      (await repo()).commitFiles({
-        branch: "pipeheal/abc-1",
-        parentSha: SHA_A,
-        message: "m",
-        changes,
-        createBranch: true,
-        ...override,
-      }),
-    ).rejects.toThrow(GuardError);
-    expect(calls).toEqual([]);
+    await expect((await repo()).commitFiles(commit(override))).rejects.toThrow(GuardError);
+    expect(writesIn(calls)).toEqual([]);
   });
 });
 
 describe("pull requests", () => {
-  function pull(overrides: Record<string, unknown> = {}) {
-    return {
-      number: 12,
-      html_url: "https://github.com/octo-org/app/pull/12",
-      state: "open",
-      draft: true,
-      merged: false,
-      head: { ref: "pipeheal/abc-1", sha: SHA_B, repo: { full_name: "octo-org/app" } },
-      base: { ref: "main", repo: { full_name: "octo-org/app" } },
-      ...overrides,
-    };
-  }
-
   it("opens a PR from a pipeheal/* branch, without maintainer edits", async () => {
     let body: unknown;
     mockServer.use(
@@ -612,15 +810,12 @@ describe("pull requests", () => {
     }
   });
 
-  it("tells PRs from forks apart", async () => {
+  it("tells PRs from forks apart by repository ID", async () => {
     mockServer.use(
       http.get(`${REPO}/pulls/:number`, ({ params }) =>
         HttpResponse.json(
           params.number === "13"
-            ? pull({
-                number: 13,
-                head: { ref: "patch", sha: SHA_B, repo: { full_name: "someone/app" } },
-              })
+            ? pull({ number: 13, head: forkHead })
             : pull({ number: 14, head: { ref: "patch", sha: SHA_B, repo: null } }),
         ),
       ),
@@ -631,21 +826,31 @@ describe("pull requests", () => {
     await expect(client.getPullRequest(14)).resolves.toMatchObject({ fromFork: true });
   });
 
-  it("comments and requests reviewers", async () => {
-    const seen: unknown[] = [];
+  function servePullActions(pullBody: JsonBodyType | null) {
+    const writes: unknown[] = [];
     mockServer.use(
+      http.get(`${REPO}/pulls/:number`, () =>
+        pullBody === null
+          ? HttpResponse.json({ message: "Not Found" }, { status: 404 })
+          : HttpResponse.json(pullBody),
+      ),
       http.post(`${REPO}/issues/12/comments`, async ({ request }) => {
-        seen.push(await request.json());
+        writes.push(await request.json());
         return HttpResponse.json(
           { id: 900, html_url: "https://github.com/c/900" },
           { status: 201 },
         );
       }),
       http.post(`${REPO}/pulls/12/requested_reviewers`, async ({ request }) => {
-        seen.push(await request.json());
+        writes.push(await request.json());
         return HttpResponse.json(pull(), { status: 201 });
       }),
     );
+    return writes;
+  }
+
+  it("comments on its PRs and requests reviewers", async () => {
+    const writes = servePullActions(pull());
     const client = await repo();
 
     await expect(client.comment(12, "Diagnosis")).resolves.toEqual({
@@ -654,10 +859,28 @@ describe("pull requests", () => {
     });
     await client.requestReviewers(12, ["octo-dev"]);
 
-    expect(seen).toEqual([{ body: "Diagnosis" }, { reviewers: ["octo-dev"] }]);
-    await expect(client.comment(12, "x".repeat(65_537))).rejects.toThrow(GuardError);
+    expect(writes).toEqual([{ body: "Diagnosis" }, { reviewers: ["octo-dev"] }]);
+  });
+
+  it.each([
+    ["a fork's PR", pull({ head: forkHead })],
+    ["an issue", null],
+  ])("never comments on %s", async (_label, pullBody) => {
+    const writes = servePullActions(pullBody);
+
+    await expect((await repo()).comment(12, "Diagnosis")).rejects.toThrow(GuardError);
+    expect(writes).toEqual([]);
+  });
+
+  it("requests reviews only on its own PRs, with valid logins", async () => {
+    const writes = servePullActions(pull({ head: { ref: "feature", sha: SHA_B, repo: ownRepo } }));
+    const client = await repo();
+
+    await expect(client.requestReviewers(12, ["octo-dev"])).rejects.toThrow(GuardError);
     await expect(client.requestReviewers(12, ["not a login"])).rejects.toThrow(ZodError);
     await expect(client.requestReviewers(12, [])).rejects.toThrow(ZodError);
+    await expect(client.comment(12, "x".repeat(65_537))).rejects.toThrow(GuardError);
+    expect(writes).toEqual([]);
   });
 
   it("has no way to merge (PipeHeal never merges)", async () => {
@@ -666,8 +889,8 @@ describe("pull requests", () => {
   });
 });
 
-describe("resilience", () => {
-  it("retries a 5xx, then succeeds", async () => {
+describe("resilience and errors", () => {
+  it("retries a 5xx on a read, then succeeds", async () => {
     let calls = 0;
     mockServer.use(
       http.get(`${REPO}/actions/workflows`, () => {
@@ -691,22 +914,52 @@ describe("resilience", () => {
     );
 
     const started = Date.now();
-    await expect((await repo({ requestTimeoutMs: 100 })).listWorkflows()).rejects.toThrow();
+    await expect((await repo({ requestTimeoutMs: 100 })).listWorkflows()).rejects.toThrow(
+      GitHubApiError,
+    );
     expect(Date.now() - started).toBeLessThan(1_500);
   });
 
-  it("fails without leaking the installation token", async () => {
+  it("reports failures as GitHubApiError: status, route template, request ID, nothing else", async () => {
+    const secretCode = "const apiKey = 'customer-secret-code';";
     mockServer.use(
-      http.get(`${REPO}/actions/workflows`, () =>
-        HttpResponse.json({ message: "Resource not accessible by integration" }, { status: 403 }),
+      http.get(`${REPO}/git/commits/:sha`, () =>
+        HttpResponse.json({ sha: SHA_A, tree: { sha: TREE } }),
+      ),
+      http.get(`${REPO}/git/trees/:sha`, () => HttpResponse.json({ sha: TREE, tree: [] })),
+      http.post(`${REPO}/git/trees`, () =>
+        HttpResponse.json(
+          { message: "Validation Failed", documentation_url: "x" },
+          { status: 422, headers: { "x-github-request-id": "ABCD:1234" } },
+        ),
       ),
     );
 
-    const error: unknown = await (await repo()).listWorkflows().then(
-      () => null,
-      (reason: unknown) => reason,
-    );
-    expect(error).toMatchObject({ status: 403 });
-    expect(JSON.stringify(error)).not.toContain(INSTALLATION_TOKEN);
+    const error: unknown = await (
+      await repo()
+    )
+      .commitFiles({
+        branch: "pipeheal/abc-1",
+        parentSha: SHA_A,
+        message: "fix: x",
+        changes: [{ path: "src/new.ts", content: secretCode }],
+        createBranch: true,
+      })
+      .then(
+        () => null,
+        (reason: unknown) => reason,
+      );
+
+    expect(error).toBeInstanceOf(GitHubApiError);
+    expect(error).toMatchObject({
+      status: 422,
+      route: "POST /repos/{owner}/{repo}/git/trees",
+      requestId: "ABCD:1234",
+      message: "GitHub answered 422 to POST /repos/{owner}/{repo}/git/trees: Validation Failed",
+    });
+    const everything = `${JSON.stringify(error)} ${String(error)} ${error instanceof Error ? String(error.stack) : ""}`;
+    expect(everything).not.toContain("customer-secret-code");
+    expect(everything).not.toContain(INSTALLATION_TOKEN);
+    expect(everything).not.toContain("octo-org");
   });
 });

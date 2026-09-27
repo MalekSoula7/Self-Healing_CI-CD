@@ -254,3 +254,26 @@ Newest entry at the bottom. One entry per task. Format:
     - 14 tests (SSE parsing across chunk boundaries, header allowlist, env validation).
 - Dependencies (root, dev): `tsx` (runs repo scripts, CLAUDE.md), `msw` (the relay's tests); both already used in the workspace.
 - Couldn't run against the real smee.io (blocked in this container). The relay is covered by tests with an SSE stream; Malek's step 6 in the guide is the live check.
+
+## 2026-09-27 · P1.4 follow-up · Security review fixes (packages/github)
+- `security-reviewer` on P1.4: no critical or high findings; 4 medium, 6 low.
+- Fixed:
+  - **M1: modes and symlinks.**
+    - `commitFiles` now walks the parent commit's tree for every changed path. It keeps each file's mode (100755 stays executable) and refuses symlinks, submodules, directories, paths through non-directories, and deleting missing files. The `executable` option is gone.
+    - `getFileAtRef` uses the JSON contents API. It reports `symlink` (including GitHub silently following a link to its target), `submodule`, `not_a_file`, `too_large`, and binary for NUL bytes or invalid UTF-8.
+    - Text is decoded exactly, BOM kept, so reading a file and writing it back is lossless.
+  - **M2: multi-tenant throttling.** octokit's throttling plugin is off. Its queues are process-wide (every tenant shared one write queue) and its rate-limit waits weren't bounded by our time limits. Rate-limited calls now fail fast with their status; per-installation pacing goes in the worker's queues (noted in P2.1).
+  - **M3: error contents.** Every failed call becomes a `GitHubApiError` (status, route template, `x-github-request-id`, GitHub's short message). No request body (customer code), headers or URLs. Tested with customer code in a failing tree POST.
+    - Job logs: we take GitHub's redirect manually, accept only `https` log storage hosts, and download without our token. Storage errors carry no signed URL.
+  - **M4: forks fail closed.**
+    - Runs and PRs compare repository IDs, never names; a missing head repo counts as a fork.
+    - `rerunFailedJobs` refuses fork runs. `comment` refuses fork PRs and plain issues. `requestReviewers` only works on PipeHeal's own `pipeheal/*` PRs.
+    - SPEC §9.1 and P5.3: runs map to attempts by the App's commit SHA, not by branch name.
+  - **L5:** moving an existing `pipeheal/*` branch requires its tip to equal the given parent (someone else's push is refused). P5.2 records created branches.
+  - **L6:** write paths follow git's NTFS/HFS protections: `GITHUB~1`, trailing dots/spaces, nested `.git`/`git~1`, `.gitmodules`, Windows reserved names and characters, HFS-ignorable code points. P3.4 shares this normalizer with INV-GITHUB-DIR.
+  - **L7:** commit messages may not contain `[skip ci]`-style markers or `skip-checks: true`.
+  - **L8:** non-idempotent calls are never retried: dispatch, comment, PR creation, re-run, ref creation and update.
+  - **L10:** listings are capped at 10,000 items (100 pages for installation repos); comparisons report `commitsTruncated` / `filesTruncated`; dispatch `ref` and PR `base` are validated as branch names.
+- Deferred to where they're used: **L9** repository-scoped, read-only installation tokens for model-facing reads (P4.3b).
+- Mutation-checked: without error sanitizing, or without the branch-tip check, their tests fail.
+- Verified: typecheck, lint, format, 546 unit+integration tests (194 in packages/github).

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   GuardError,
+  assertBranchName,
+  assertCommitMessage,
   assertHealBranch,
   assertRepoPath,
   assertWritablePath,
@@ -96,5 +98,96 @@ describe("parseFullName", () => {
     "octo/re po",
   ])("refuses %s", (value) => {
     expect(() => parseFullName(value)).toThrow(GuardError);
+  });
+});
+
+describe("writable paths on Windows and macOS checkouts", () => {
+  it.each([
+    "GITHUB~1/workflows/ci.yml",
+    "github~2/x",
+    ".github./workflows/ci.yml",
+    ".github /workflows/ci.yml",
+    "vendor/lib/.git/hooks/post-checkout",
+    "vendor/lib/.GIT/config",
+    "vendor/GIT~1/config",
+    ".gitmodules",
+    "sub/.GitModules",
+    ".git‌/config",
+    "src/a‍.ts",
+    "src/aux.ts",
+    "src/CON",
+    "src/com1.txt",
+    "src/lpt¹",
+    "src/file.",
+    "src/file ",
+    "src/a:b.ts",
+    "src/what?.ts",
+  ])("refuses %j", (path) => {
+    expect(() => {
+      assertWritablePath(path);
+    }).toThrow(GuardError);
+  });
+
+  it.each([
+    "src/auxiliary.ts",
+    "src/console.ts",
+    "docs/git-guide.md",
+    ".gitignore",
+    ".gitattributes",
+  ])("accepts %s", (path) => {
+    expect(() => {
+      assertWritablePath(path);
+    }).not.toThrow();
+  });
+});
+
+describe("branch names", () => {
+  it.each(["main", "release/2.0", "feature/x_y-z.1"])("accepts %s", (branch) => {
+    expect(() => {
+      assertBranchName(branch);
+    }).not.toThrow();
+  });
+
+  it.each([
+    "",
+    "-main",
+    "/main",
+    "main/",
+    "a..b",
+    "a//b",
+    "x.lock",
+    "a b",
+    "main\n",
+    "a~1",
+    "a^b",
+    "a:b",
+  ])("refuses %j", (branch) => {
+    expect(() => {
+      assertBranchName(branch);
+    }).toThrow(GuardError);
+  });
+});
+
+describe("commit messages", () => {
+  it("accepts a normal message", () => {
+    expect(() => {
+      assertCommitMessage("fix: handle empty config [PipeHeal]\n\nRoot cause: ...");
+    }).not.toThrow();
+  });
+
+  it.each([
+    "fix: x [skip ci]",
+    "fix: x [CI SKIP]",
+    "fix: x [no ci]",
+    "fix: x [skip actions]",
+    "fix: x [actions skip]",
+    "fix: x\n\nskip-checks: true",
+    "fix: x\n\nSkip-Checks:true",
+    "",
+    "   ",
+  ])("refuses %j", (message) => {
+    expect(() => {
+      assertCommitMessage(message);
+    }).toThrow(GuardError);
   });
 });

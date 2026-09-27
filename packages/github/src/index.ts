@@ -6,7 +6,7 @@ export {
   type GitHubAppConfig,
   type InstallationClient,
 } from "./app";
-export { USER_AGENT, type GitHubClientOptions, type GitHubLog } from "./client";
+export { GitHubApiError, USER_AGENT, type GitHubClientOptions, type GitHubLog } from "./client";
 export {
   PrivateKeyError,
   decodePrivateKey,
@@ -17,12 +17,15 @@ export {
 export {
   GuardError,
   HEAL_BRANCH_PREFIX,
+  assertBranchName,
+  assertCommitMessage,
   assertHealBranch,
   assertRepoPath,
   assertWritablePath,
   isHealBranch,
   parseFullName,
 } from "./guards";
+export { COMPARE_FILE_LIMIT, MAX_FILE_BYTES } from "./repo";
 export type {
   Comparison,
   FileAtRef,

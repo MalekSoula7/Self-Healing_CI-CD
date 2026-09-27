@@ -460,7 +460,7 @@ Iterations: <n> · Model: <id> · Cost: $<x> · [Full timeline](<dashboard link>
 ```
 
 ### 9.1 Verification and loop protection
-- `workflow_run` on a `pipeheal/*` branch maps to its attempt, never to a new root failure.
+- `workflow_run` on a `pipeheal/*` branch maps to its attempt, never to a new root failure. The mapping uses the head SHA of the commit the App created, not the branch name: a fork PR can use any branch name (P1.4 review). Runs from forks are ignored.
 - Green → `VERIFIED`. Red → if attempts remain, new attempt with the new failure as context, pushing a new commit to the same `pipeheal/*` branch. Otherwise `NEEDS_HUMAN` + PR comment with the diagnosis. No CI on the PR → `UNVERIFIED` after the timeouts in §2.2.
 - One active heal per repo + branch. A newer failure on the same branch supersedes a pending heal (the code moved on).
 - `pull_request` closed → outcome `MERGED` or `CLOSED`, feeding the north-star metric.

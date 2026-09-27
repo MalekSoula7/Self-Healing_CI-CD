@@ -37,17 +37,71 @@ export function assertRepoPath(path: string): void {
   if (invalid) throw new GuardError("not a repository-relative POSIX path");
 }
 
+// Code points macOS (HFS+) ignores in file names, so ".git\u200c" is ".git" there.
+const HFS_IGNORABLE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u206a-\u206f\ufeff]/;
+// Names Windows reserves (any extension), and characters it refuses.
+const WINDOWS_RESERVED =
+  /^(con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])(\..*)?$/i;
+const WINDOWS_INVALID_CHARS = /[<>:"|?*]/;
+
 /**
- * A path the App may write: never under `.github/` (INV-GITHUB-DIR; GitHub itself only blocks
- * `.github/workflows/` for Apps without the Workflows permission) and never inside `.git/`.
- * Compared case-insensitively: checkouts on Windows and macOS are case-insensitive.
+ * A path the App may write, checked the way git protects checkouts (verify_path with
+ * protectNTFS and protectHFS), since customers check PipeHeal's branches out on Windows and
+ * macOS:
+ * - never under `.github/` (INV-GITHUB-DIR; GitHub itself only blocks `.github/workflows/` for
+ *   Apps without the Workflows permission), including its Windows 8.3 alias `GITHUB~1`;
+ * - never a `.git` directory or `.gitmodules` file, at any depth;
+ * - no name Windows can't check out (reserved names, trailing dot or space, `<>:"|?*`), and no
+ *   code point macOS ignores.
+ * Compared case-insensitively: Windows and macOS checkouts are case-insensitive.
  */
 export function assertWritablePath(path: string): void {
   assertRepoPath(path);
-  const [first = ""] = path.toLowerCase().split("/");
-  if (first === ".github" || first === ".git") {
-    throw new GuardError("the App never writes under .github/ or .git/");
+  const segments = path.split("/");
+  const [first = ""] = segments;
+  if (/^(\.github|github~\d+)$/i.test(first)) {
+    throw new GuardError("the App never writes under .github/");
   }
+  for (const segment of segments) {
+    if (/^(\.git|git~\d+|\.gitmodules)$/i.test(segment)) {
+      throw new GuardError("the App never writes .git or .gitmodules");
+    }
+    if (
+      HFS_IGNORABLE.test(segment) ||
+      WINDOWS_RESERVED.test(segment) ||
+      WINDOWS_INVALID_CHARS.test(segment) ||
+      /[. ]$/.test(segment)
+    ) {
+      throw new GuardError("the path can't be checked out safely on Windows or macOS");
+    }
+  }
+}
+
+/** A branch name safe to pass to GitHub (the healer's `ref`, a PR base). */
+export function assertBranchName(branch: string): void {
+  const valid =
+    /^[A-Za-z0-9._/-]{1,255}$/.test(branch) &&
+    !branch.startsWith("-") &&
+    !branch.startsWith("/") &&
+    !branch.endsWith("/") &&
+    !branch.endsWith(".lock") &&
+    !branch.includes("..") &&
+    !branch.includes("//");
+  if (!valid) throw new GuardError("not a valid branch name");
+}
+
+// Commit-message markers that make GitHub Actions skip workflows for the commit.
+const SKIP_CI = /\[(skip ci|ci skip|no ci|skip actions|actions skip)\]|^skip-checks:\s*true/im;
+
+/**
+ * A commit message for a fix: it must never switch off the CI run that verifies the fix
+ * independently (SPEC §9.1). Messages are built from model output, so this is enforced here.
+ */
+export function assertCommitMessage(message: string): void {
+  if (message.trim().length === 0 || message.length > 10_000) {
+    throw new GuardError("a commit message must be 1 to 10000 characters");
+  }
+  if (SKIP_CI.test(message)) throw new GuardError("a fix's commit must not skip CI");
 }
 
 function hasControlCharacter(value: string): boolean {

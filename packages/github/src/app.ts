@@ -3,7 +3,8 @@
 // demand and caches them in memory until shortly before they expire; they are never stored.
 import { App } from "octokit";
 import { z } from "zod";
-import { octokitOptions, timeLimitedOctokit, type GitHubClientOptions } from "./client";
+import { octokitOptions, pipehealOctokit, type GitHubClientOptions } from "./client";
+import { GuardError } from "./guards";
 import { repoClient } from "./repo";
 
 export interface GitHubAppConfig extends GitHubClientOptions {
@@ -21,8 +22,11 @@ const installedRepositorySchema = z.object({
   archived: z.boolean().optional(),
 });
 
+// 100 pages of 100: the most repositories one installation is synced with.
+const MAX_PAGES = 100;
+
 export function createGitHubApp(config: GitHubAppConfig) {
-  const Octokit = timeLimitedOctokit(config.requestTimeoutMs ?? 30_000).defaults(
+  const Octokit = pipehealOctokit(config.requestTimeoutMs ?? 30_000).defaults(
     octokitOptions(config),
   );
   const app = new App({ appId: config.appId, privateKey: config.privateKey, Octokit });
@@ -34,9 +38,18 @@ export function createGitHubApp(config: GitHubAppConfig) {
       return {
         /** Repositories the installation can access (P1.6 sync). */
         async listRepositories() {
-          const repositories: unknown = await octokit.paginate("GET /installation/repositories", {
-            per_page: 100,
-          });
+          let pages = 0;
+          const repositories: unknown[] = await octokit.paginate(
+            "GET /installation/repositories",
+            { per_page: 100 },
+            (response, done) => {
+              if (++pages > MAX_PAGES) done();
+              return response.data;
+            },
+          );
+          if (pages > MAX_PAGES) {
+            throw new GuardError("the installation lists too many repositories");
+          }
           return z
             .array(installedRepositorySchema)
             .parse(repositories)
