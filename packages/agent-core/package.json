@@ -1,0 +1,17 @@
+{
+  "name": "@pipeheal/agent-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Log cleaning, redaction, triage, prompts, tool schemas, agent loop controller.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

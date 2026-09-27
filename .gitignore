@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.next/
+.turbo/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+next-env.d.ts
+
+.env
+.env.*
+!.env.example
+
+# Private keys and certificates (e.g. the GitHub App's <slug>.<date>.private-key.pem)
+*.pem
+*.key
+*.p12
+*.pfx
+
+.DS_Store
+Thumbs.db

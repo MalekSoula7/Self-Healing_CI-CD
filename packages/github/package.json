@@ -1,0 +1,20 @@
+{
+  "name": "@pipeheal/github",
+  "version": "0.0.0",
+  "private": true,
+  "description": "GitHub App client (Octokit) with typed wrappers.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@pipeheal/shared": "workspace:*",
+    "@types/node": "catalog:",
+    "msw": "^2.15.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
