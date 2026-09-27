@@ -6,7 +6,7 @@ Before any work, read `docs/SPEC.md` (what and why) and `docs/PLAN.md` (in what 
 
 ## Stack
 - pnpm workspaces + Turborepo, TypeScript `strict` everywhere
-- `apps/web`: Next.js (App Router), Tailwind, shadcn/ui, Auth.js (GitHub provider), TanStack Query
+- `apps/web`: Next.js 16 (App Router, `proxy.ts`), Tailwind, shadcn/ui, Better Auth (GitHub provider), TanStack Query
 - `apps/worker`: Node service with BullMQ consumers + a Fastify "agent gateway" that healer runners talk to
 - `packages/db`: Prisma + PostgreSQL, plus org-scoped data helpers
 - `packages/policy`: the rules engine. Pure functions, no I/O, no network.
@@ -16,6 +16,13 @@ Before any work, read `docs/SPEC.md` (what and why) and `docs/PLAN.md` (in what 
 - `packages/shared`: zod schemas and types shared by apps (incl. runner <-> gateway protocol)
 - Redis, Vitest, Playwright, msw, pino, Sentry
 - LLM: Anthropic API via the official TypeScript SDK. Model IDs come from env (`HEAL_MODEL`, `TRIAGE_MODEL`), never hardcoded in logic.
+- Versions: Node 24, TypeScript 6.0.x (not 7.x), Prisma 7.10.x for both `prisma` and `@prisma/client` (never `prisma@latest`, it is an RC). Full table in `docs/SPEC.md` §4.2.
+
+## Dev environment
+- Malek works on native Windows (PowerShell + Docker Desktop, no WSL). Servers and GitHub runners are Linux. Details in `docs/SPEC.md` §4.1.
+- No bash scripts: write repo scripts in TypeScript and run them with `tsx`. No Unix-only syntax in `package.json` scripts.
+- LF line endings everywhere.
+- Repo paths are POSIX strings in all logic. Never use the platform `path` module for repo paths.
 
 ## Commands
 Created in Phase 0. Keep this section accurate whenever scripts change.
