@@ -16,6 +16,11 @@ import {
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 const logger = pino({ level: "silent" });
 
+function ready<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("test setup did not complete");
+  return value;
+}
+
 async function waitUntilReady(redis: Redis, timeoutMs: number): Promise<void> {
   if (redis.status === "ready") return;
   await new Promise<void>((resolve, reject) => {
@@ -32,10 +37,10 @@ async function waitUntilReady(redis: Redis, timeoutMs: number): Promise<void> {
 describe("maintenance queue against real Redis", () => {
   const prefix = `test-${randomUUID()}`;
   let redis: Redis;
-  let eventsConnection: Redis;
-  let queue: MaintenanceQueue;
-  let worker: Worker;
-  let events: QueueEvents;
+  let eventsConnection: Redis | undefined;
+  let queue: MaintenanceQueue | undefined;
+  let worker: Worker | undefined;
+  let events: QueueEvents | undefined;
 
   beforeAll(async () => {
     redis = createRedis(REDIS_URL, logger);
@@ -47,25 +52,26 @@ describe("maintenance queue against real Redis", () => {
     await Promise.all([worker.waitUntilReady(), events.waitUntilReady()]);
   });
 
+  // Tolerates a failed beforeAll, so the only error shown is the "Redis not reachable" one.
   afterAll(async () => {
-    await worker.close();
-    await events.close();
-    await queue.obliterate({ force: true });
-    await queue.close();
-    await eventsConnection.quit();
-    await redis.quit();
+    await worker?.close();
+    await events?.close();
+    if (redis.status === "ready") await queue?.obliterate({ force: true });
+    await queue?.close();
+    await eventsConnection?.quit();
+    redis.disconnect();
   });
 
   it("processes a ping end to end", async () => {
     const requestedAt = new Date().toISOString();
-    const job = await queue.add("ping", { requestedAt });
-    const result = await job.waitUntilFinished(events, 5000);
+    const job = await ready(queue).add("ping", { requestedAt });
+    const result = await job.waitUntilFinished(ready(events), 5000);
     expect(result).toEqual({ pong: true, requestedAt });
   });
 
   it("fails a ping with invalid data", async () => {
-    const job = await queue.add("ping", { requestedAt: "not-a-date" }, { attempts: 1 });
-    await expect(job.waitUntilFinished(events, 5000)).rejects.toThrow();
+    const job = await ready(queue).add("ping", { requestedAt: "not-a-date" }, { attempts: 1 });
+    await expect(job.waitUntilFinished(ready(events), 5000)).rejects.toThrow();
   });
 
   it("reports Redis as up through the gateway health check", async () => {
