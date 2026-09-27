@@ -1,0 +1,39 @@
+# Local infrastructure only: Postgres and Redis. The apps run on the host (`pnpm dev`).
+# Ports bind to 127.0.0.1; override the host ports with POSTGRES_PORT / REDIS_PORT in .env.
+# Credentials below are for local development only.
+name: pipeheal
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pipeheal
+      POSTGRES_PASSWORD: pipeheal
+      POSTGRES_DB: pipeheal
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pipeheal -d pipeheal"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:8-alpine
+    # BullMQ requires noeviction; appendonly keeps queued jobs across restarts.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  postgres-data:
+  redis-data:

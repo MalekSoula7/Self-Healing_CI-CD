@@ -14,7 +14,7 @@ Phases 0–5 are the MVP (private beta). Phases 6–8 turn it into a product.
 ## Phase 0: Foundation
 
 - [x] **P0.1** Monorepo: pnpm workspaces, Turborepo, shared `tsconfig` (strict), ESLint flat config, Prettier, folder layout from `CLAUDE.md` with empty packages that build.
-- [ ] **P0.2** `docker-compose.yml` for Postgres + Redis. `.env.example` listing every variable with a comment. Env validation with zod in each app (fail fast on startup).
+- [x] **P0.2** `docker-compose.yml` for Postgres + Redis. `.env.example` listing every variable with a comment. Env validation with zod in each app (fail fast on startup).
 - [ ] **P0.3** `apps/web`: Next.js App Router skeleton, Tailwind, shadcn/ui, `/api/health`.
 - [ ] **P0.4** `apps/worker`: BullMQ connection, one sample queue + processor, Fastify gateway with `/health`, pino logger, graceful shutdown.
 - [ ] **P0.5** Vitest across packages, Playwright skeleton in `apps/web`, msw for HTTP mocking.
