@@ -129,6 +129,8 @@ Repository permissions:
 
 **Not requested: Workflows.** GitHub therefore refuses any App commit that touches `.github/workflows/**`, a hard guarantee on top of our own policy. GitHub does not guard the rest of `.github/` (composite actions under `.github/actions/**`, `CODEOWNERS`, `dependabot.yml`); only `INV-GITHUB-DIR` protects those.
 
+**Account permission: Email addresses (read).** A GitHub App's user token can read the user's email only with this permission. Better Auth needs an email at sign-in, and Phase 6 email notifications use it (D9).
+
 **Not requested: Members.** Teammates join by invitation (Phase 6), not by syncing GitHub org membership.
 
 The App can be installed on organizations and on personal accounts; both are tenants (§10).
@@ -139,6 +141,7 @@ Subscribed events: `installation`, `installation_repositories`, `workflow_run`, 
 - App JWT → installation access tokens, created on demand, cached in memory until shortly before expiry. Never stored in the database.
 - User sign-in with Better Auth's GitHub provider using the App's OAuth client credentials.
 - **Who becomes OWNER.** The `installation` webhook's `sender` is only a candidate. They become OWNER of the tenant on their first sign-in, and only after `GET /user/installations` (with their user access token) confirms they can access that installation. Everyone else joins by invitation (Phase 6).
+- **User access tokens are kept, encrypted** (D8): Better Auth stores the GitHub user token and refresh token in `Account` with `account.encryptOAuthTokens` (AES-256-GCM, keyed from `BETTER_AUTH_SECRET`). They are used for the OWNER check at sign-in and to list the user's installations during onboarding. Rotating `BETTER_AUTH_SECRET` makes stored tokens unreadable, so users sign in again. The App's installation tokens are still never stored (above).
 - Route protection: `proxy.ts` (Next.js 16) redirects signed-out users, but the membership check happens in every org layout, route handler and data helper, never in the proxy alone.
 - Commits created by the App trigger workflows normally (unlike pushes made with `GITHUB_TOKEN`). We rely on this for independent verification of fixes.
 
@@ -555,7 +558,7 @@ A prompt or model change doesn't ship if the eval fix rate drops or any trap sce
 
 Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 1:** does creating the `pipeheal` label need Issues: write, or is Pull requests: write enough? Verify in P1.4 before registering the App.
-- **Phase 1:** keep GitHub user access tokens after sign-in? Better Auth stores them in `Account` by default. We only need them to verify installation access (§5.2); if kept, encrypt them at rest.
+- **Phase 1 (resolved, D8):** GitHub user access tokens are kept, encrypted at rest (§5.2).
 - **Phase 3:** policy precedence: split org defaults from org guardrails (§8.1). Merge rules are missing for `scope.branches`, `scope.workflows`, `review.*`, `retryBeforeHeal` and `customRules`.
 - **Phase 4:** async step protocol instead of ~2-minute synchronous requests (§3.1).
 - **Phase 4:** reserve budget atomically before each model call (worst-case estimate per call, org monthly budget with concurrent attempts), not only check it after.
@@ -578,3 +581,5 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 | D5 | 2026-09-27 | Watched workflows are opt-in per workflow, with CI-looking ones pre-selected; the flaky re-run happens at most once, only on failed jobs, never where a job uses `environment:` (§2.1, §6.2) | Re-runs spend the customer's CI minutes and can deploy again; release and deploy workflows mostly fail for reasons we don't heal. |
 | D6 | 2026-09-27 | Anthropic in development: a dedicated workspace with a hard spend cap, key only in the local `.env`; automated tests never call the real API (§6.2, §7.5) | Keeps spend bounded and tests deterministic. |
 | D7 | 2026-09-27 | Engineering defaults accepted without objection: versions in §4.2, healer path `.github/workflows/pipeheal.yml`, runner hardening (§5.3), OIDC `actor`/`run_id` binding (§5.4), state timeouts and delivery reconciler (§2.2), snapshot/fixture test globs (§8.3), no auth bypass in local mode (§12) | Raised in the alignment review; see `docs/PROGRESS.md`. |
+| D8 | 2026-09-27 | Keep GitHub user access tokens after sign-in, encrypted with Better Auth's `encryptOAuthTokens` (§5.2) | Chosen by Malek over verify-then-discard: onboarding can list the user's installations without a second sign-in; a database leak alone doesn't expose usable tokens. |
+| D9 | 2026-09-27 | The GitHub App requests the account permission "Email addresses: read" (§5.1) | Better Auth needs an email at sign-in, and Phase 6 notifications use it. |

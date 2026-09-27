@@ -107,3 +107,15 @@ Newest entry at the bottom. One entry per task. Format:
   - P4.1b: gateway hardening;
   - P8.4: SHA-pinned actions + Dependabot, earlier if a workflow gets secrets.
 - Follow-ups for Malek: optional GitHub ruleset on `main` (block force-push and deletion, require PR + the three CI checks); Windows fresh-clone check; merge PR #2.
+
+## 2026-09-27 · Phase 1 kickoff · Plan approved, decisions D8/D9
+- PR #2 (Phase 0) merged by Claude at Malek's request after his Windows fresh-clone check passed (after installing Node 24 and starting Docker Desktop). Branch `claude/intelligent-wozniak-jvzh97` fast-forwarded to the merged `main`.
+- Phase 1 plan approved with two decisions (SPEC §16):
+  - D8: GitHub user access tokens are kept, encrypted with Better Auth's `encryptOAuthTokens`. Malek chose this over verify-then-discard.
+  - D9: the App requests the account permission "Email addresses: read".
+- Plan choices recorded here for reference:
+  - audit logging built into the P1.2 helpers (P1.8 becomes a coverage test);
+  - separate `pipeheal_test` database;
+  - private key as base64;
+  - `octokit` behind zod-validated wrappers;
+  - label permission deferred to Phase 5.
