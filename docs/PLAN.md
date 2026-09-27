@@ -18,8 +18,8 @@ Phases 0–5 are the MVP (private beta). Phases 6–8 turn it into a product.
 - [x] **P0.3** `apps/web`: Next.js App Router skeleton, Tailwind, shadcn/ui, `/api/health`.
 - [x] **P0.4** `apps/worker`: BullMQ connection, one sample queue + processor, Fastify gateway with `/health`, pino logger, graceful shutdown.
 - [x] **P0.5** Vitest across packages, Playwright skeleton in `apps/web`, msw for HTTP mocking.
-- [ ] **P0.6** CI for this repo (`.github/workflows/ci.yml`): install, typecheck, lint, test on push and PR, with caching. Full suite on `ubuntu-latest`, unit tests also on `windows-latest` (SPEC §4.1).
-- [ ] **P0.7** Fill the Commands section of `CLAUDE.md`, create `docs/PROGRESS.md` first entry.
+- [x] **P0.6** CI for this repo (`.github/workflows/ci.yml`): install, typecheck, lint, test on push and PR, with caching. Full suite on `ubuntu-latest`, unit tests also on `windows-latest` (SPEC §4.1).
+- [x] **P0.7** Fill the Commands section of `CLAUDE.md`, create `docs/PROGRESS.md` first entry.
 
 Acceptance: fresh clone → `docker compose up -d && pnpm i && pnpm dev` works; all checks green locally and in CI.
 
