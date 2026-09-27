@@ -1,0 +1,23 @@
+{
+  "name": "@pipeheal/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@pipeheal/shared": "workspace:*",
+    "bullmq": "^6.3.9",
+    "fastify": "^5.12.5",
+    "ioredis": "^5.11.1",
+    "pino": "^10.3.1",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "^4.23.15",
+    "typescript": "catalog:"
+  }
+}

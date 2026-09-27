@@ -112,7 +112,8 @@ See `CLAUDE.md`. Decisions worth recording:
 | Next.js | 16.x | `proxy.ts` replaces `middleware.ts`; `next lint` is removed, use the ESLint CLI |
 | Postgres / Redis images | 17 / 8 | widely available on managed hosts; production uses the same majors |
 | ESLint | 10.x, one flat config for the workspace | 9.x is end-of-life. `eslint-config-next` is not used because its react, import and jsx-a11y plugins don't support ESLint 10; `apps/web` uses `@next/eslint-plugin-next` and `eslint-plugin-react-hooks` directly |
-| Other majors to pin | Vitest 5, Zod 4, Tailwind 4, BullMQ 6, Fastify 5, `@anthropic-ai/sdk` 0.x current | |
+| ioredis | 5.11.x, not 6.x | BullMQ 6.3 is tested against ioredis 5.11. With 6.0.0, a worker's `close()` hung when shutdown landed right after a Redis restart (reproduced in P0.4) |
+| Other majors to pin | Vitest 5, Zod 4, Tailwind 4, BullMQ 6, Fastify 5, pino 10, `@anthropic-ai/sdk` 0.x current | |
 
 ---
 

@@ -12,3 +12,7 @@ catalog:
 # pnpm 10 blocks dependency install scripts unless listed here.
 onlyBuiltDependencies:
   - esbuild
+
+# Optional native accelerators we deliberately don't build (pure-JS fallbacks exist).
+ignoredBuiltDependencies:
+  - msgpackr-extract
