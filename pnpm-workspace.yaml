@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/*
+
+# One version per shared tool across the workspace. Reference with "catalog:".
+catalog:
+  "@types/node": ^24.19.0
+  typescript: 6.0.3
+  vitest: ^5.0.2
+  zod: ^4.6.5
+
+# pnpm 10 blocks dependency install scripts unless listed here.
+onlyBuiltDependencies:
+  - esbuild

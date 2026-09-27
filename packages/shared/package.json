@@ -1,0 +1,17 @@
+{
+  "name": "@pipeheal/shared",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Zod schemas and types shared by apps, including the runner <-> gateway protocol.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

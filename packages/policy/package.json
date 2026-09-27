@@ -1,0 +1,16 @@
+{
+  "name": "@pipeheal/policy",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The rules engine. Pure functions, no I/O, no network.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}
