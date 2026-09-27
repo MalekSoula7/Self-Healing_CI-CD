@@ -1,2 +1,38 @@
-// @pipeheal/github: GitHub App client (Octokit) with typed wrappers. The App client arrives in P1.4.
-export { USER_AGENT, listUserInstallationIds, type GitHubClientOptions } from "./user";
+// @pipeheal/github: GitHub App client (Octokit) with typed, validated wrappers. Writes are
+// guarded by the product invariants in ./guards.ts; there is no way to merge.
+export {
+  createGitHubApp,
+  type GitHubApp,
+  type GitHubAppConfig,
+  type InstallationClient,
+} from "./app";
+export { USER_AGENT, type GitHubClientOptions, type GitHubLog } from "./client";
+export {
+  PrivateKeyError,
+  decodePrivateKey,
+  githubAppIdSchema,
+  githubPrivateKeySchema,
+  webhookSecretSchema,
+} from "./credentials";
+export {
+  GuardError,
+  HEAL_BRANCH_PREFIX,
+  assertHealBranch,
+  assertRepoPath,
+  assertWritablePath,
+  isHealBranch,
+  parseFullName,
+} from "./guards";
+export type {
+  Comparison,
+  FileAtRef,
+  FileChange,
+  Job,
+  JobLog,
+  PullRequest,
+  RepoClient,
+  Workflow,
+  WorkflowRun,
+} from "./repo";
+export { listUserInstallationIds } from "./user";
+export { verifyWebhookSignature } from "./webhooks";
