@@ -26,12 +26,19 @@ Before any work, read `docs/SPEC.md` (what and why) and `docs/PLAN.md` (in what 
 
 ## Commands
 Created in Phase 0. Keep this section accurate whenever scripts change.
-- `pnpm dev` - web + worker (infra via `docker compose up -d`)
-- `pnpm test` / `pnpm test:e2e`
-- `pnpm typecheck` / `pnpm lint` / `pnpm format`
-- `pnpm db:migrate` / `pnpm db:studio` / `pnpm db:seed`
-- `pnpm heal:local` - run the healer against a local example repo (Phase 4)
-- `pnpm eval` - run the healing eval suite (Phase 8)
+- `docker compose up -d` - Postgres + Redis (needed by `pnpm dev` and `pnpm test`)
+- `pnpm dev` - web (:3000) + worker/gateway (:4000) via Turborepo; both read the root `.env`
+- `pnpm build` - production builds
+- `pnpm test` - unit + integration tests with coverage (needs `docker compose up -d`)
+- `pnpm test:unit` - unit tests only, no infrastructure (what the Windows CI job runs)
+- `pnpm test:e2e` - Playwright against a production build on :3100 (once per machine: `pnpm --filter @pipeheal/web exec playwright install chromium`)
+- `pnpm typecheck` / `pnpm lint` / `pnpm format` / `pnpm format:check`
+- Not created yet: `pnpm db:migrate` / `pnpm db:studio` / `pnpm db:seed` (Phase 1), `pnpm heal:local` (Phase 4), `pnpm eval` (Phase 8)
+
+## Testing conventions
+- Unit tests: `*.test.ts` next to the code. Integration tests (real Postgres/Redis): `*.int.test.ts`.
+- Unit tests cannot reach the network: every request goes through msw and unmocked ones fail. Mock with `mockServer.use(...)` from `@pipeheal/shared/testing`.
+- Coverage thresholds (95%) apply to `packages/policy` and `packages/agent-core`; `pnpm test` fails below them.
 
 ## Engineering rules
 - A task is done only when `pnpm typecheck && pnpm lint && pnpm test` pass. Never tick a checkbox otherwise.
