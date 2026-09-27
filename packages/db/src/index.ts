@@ -1,5 +1,20 @@
-// @pipeheal/db: Prisma + PostgreSQL, plus org-scoped data helpers (P1.2).
+// @pipeheal/db: Prisma + PostgreSQL, plus org-scoped data helpers.
+// Tenant-owned tables are read and written through `forMember` / `forSystem` / `installations`
+// only (CLAUDE.md). The raw client from `createDb` is for Better Auth's adapter and these helpers.
+export type { Actor } from "./audit";
 export { createDb, type Db } from "./client";
+export { ConflictError, ForbiddenError, NotFoundError } from "./errors";
+export type { AuditPage, InstallationInput, InstalledRepository } from "./inputs";
+export { installations, type Installations } from "./installations";
+export {
+  SYNC_BATCH_LIMIT,
+  forMember,
+  forSystem,
+  hasRole,
+  type OrgScope,
+  type OrgSummary,
+  type SystemScope,
+} from "./scope";
 export { DEV_DATABASE_URL, databaseUrlSchema } from "./url";
 export * from "./generated/prisma/enums";
 export {

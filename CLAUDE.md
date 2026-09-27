@@ -50,7 +50,7 @@ Created in Phase 0. Keep this section accurate whenever scripts change.
 - No `any`, no `@ts-ignore`, no `eslint-disable`, no skipped tests. If you believe you need one, stop and explain why.
 - Never make a check pass by weakening a test, loosening config, or suppressing an error. (This is exactly what our product forbids its own agent from doing.)
 - Validate every external input with zod: env vars, webhooks, API bodies, runner messages, LLM tool calls and LLM JSON outputs.
-- Every query on tenant-owned tables goes through the org-scoped helpers in `packages/db`. No raw tenant queries without `orgId`.
+- Every query on tenant-owned tables goes through the org-scoped helpers in `packages/db` (`forMember` for signed-in users, `forSystem` / `installations` for the worker). They filter on `orgId`, check roles and write the audit row in the same transaction. A new helper needs a case in `packages/db/src/scope.int.test.ts` (a meta-test enforces it). No raw tenant queries without `orgId`.
 - Never log secrets, tokens, or raw customer logs. Log IDs and redacted excerpts only.
 - `packages/policy` and `packages/agent-core` parsers: write the test/fixture first, keep coverage >= 95%.
 - Adding a dependency requires a one-line justification in the commit message. Prefer what's already installed.
