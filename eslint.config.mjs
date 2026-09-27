@@ -2,9 +2,11 @@
 // Several CLAUDE.md rules are enforced here rather than trusted:
 // no `any`, no @ts-* suppression comments, no eslint-disable comments, no skipped or focused tests.
 import js from "@eslint/js";
+import nextPlugin from "@next/eslint-plugin-next";
 import vitest from "@vitest/eslint-plugin";
 import prettier from "eslint-config-prettier";
 import { defineConfig, globalIgnores } from "eslint/config";
+import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
@@ -87,6 +89,14 @@ export default defineConfig(
         { name: "fetch", message: "packages/policy must not do network calls." },
       ],
     },
+  },
+  {
+    // Next.js rules and React hooks rules. eslint-config-next is not used: its react, import and
+    // jsx-a11y plugins do not support ESLint 10 (SPEC §4.2).
+    files: ["apps/web/**/*.{ts,tsx}"],
+    extends: [nextPlugin.configs["core-web-vitals"], reactHooks.configs.flat["recommended-latest"]],
+    languageOptions: { globals: { ...globals.browser, ...globals.node } },
+    settings: { next: { rootDir: "apps/web/" } },
   },
   {
     files: ["**/*.test.ts", "**/*.test.tsx"],

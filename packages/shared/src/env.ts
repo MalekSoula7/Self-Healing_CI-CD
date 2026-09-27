@@ -32,6 +32,9 @@ export const envPort = z
   .transform(Number)
   .pipe(z.number().int().min(1).max(65535));
 
+/** An absolute http(s) URL. Plain z.url() also accepts "localhost:3000" (scheme "localhost:"). */
+export const envHttpUrl = z.url({ protocol: /^https?$/, error: "must be an http(s) URL" });
+
 /** "true"/"1" or "false"/"0". Anything else is rejected rather than guessed. */
 export const envBoolean = z
   .enum(["true", "false", "1", "0"])

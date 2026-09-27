@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { EnvValidationError, envBoolean, envPort, parseEnv } from "./env";
+import { EnvValidationError, envBoolean, envHttpUrl, envPort, parseEnv } from "./env";
 
 const schema = z.object({
   DATABASE_URL: z.url(),
@@ -78,6 +78,20 @@ describe("envPort", () => {
   it.each(["0", "65536", "80.5", "http", "-1"])("rejects %s", (raw) => {
     expect(envPort.safeParse(raw).success).toBe(false);
   });
+});
+
+describe("envHttpUrl", () => {
+  it.each(["http://localhost:3000", "https://pipeheal.example/app"])("accepts %s", (raw) => {
+    expect(envHttpUrl.parse(raw)).toBe(raw);
+  });
+
+  // "localhost:3000" is a valid WHATWG URL with scheme "localhost:", so plain z.url() accepts it.
+  it.each(["localhost:3000", "ftp://example.com", "javascript:alert(1)", "not a url"])(
+    "rejects %s",
+    (raw) => {
+      expect(envHttpUrl.safeParse(raw).success).toBe(false);
+    },
+  );
 });
 
 describe("envBoolean", () => {
