@@ -4,7 +4,17 @@ import { mockServer } from "@pipeheal/shared/testing";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
+// Sent while this file is being imported, before any beforeAll hook runs.
+const importTimeRequest = fetch("https://api.github.com/zen").then(
+  () => "reached the network",
+  (error: unknown) => (error instanceof Error ? error.message : String(error)),
+);
+
 describe("network access in unit tests", () => {
+  it("blocks requests made while the test file is imported", async () => {
+    expect(await importTimeRequest).toMatch(/\[MSW\]/);
+  });
+
   it("serves GitHub API calls from msw handlers", async () => {
     mockServer.use(
       http.get("https://api.github.com/repos/:owner/:repo", ({ params }) =>

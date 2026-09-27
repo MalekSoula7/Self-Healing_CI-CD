@@ -25,7 +25,9 @@ async function waitUntilReady(redis: Redis, timeoutMs: number): Promise<void> {
   if (redis.status === "ready") return;
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error(`Redis not reachable at ${REDIS_URL}. Run \`docker compose up -d\`.`));
+      // Host only: the URL can carry a password.
+      const { host } = new URL(REDIS_URL);
+      reject(new Error(`Redis not reachable at ${host}. Run \`docker compose up -d\`.`));
     }, timeoutMs);
     redis.once("ready", () => {
       clearTimeout(timer);

@@ -43,6 +43,8 @@ jobs:
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false # no token in .git/config for install/test steps to read
       - uses: pnpm/action-setup@v4 # version from package.json "packageManager"
       - uses: actions/setup-node@v5
         with:
@@ -61,6 +63,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false # no token in .git/config for install/test steps to read
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -75,6 +79,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false # no token in .git/config for install/test steps to read
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:

@@ -29,6 +29,11 @@ Acceptance: fresh clone → `docker compose up -d && pnpm i && pnpm dev` works; 
 
 ## Phase 1: Tenancy, auth, GitHub App
 
+- [ ] **P1.0** Phase 0 security review follow-ups (before anything logs webhooks or holds secrets):
+  - Move `createLogger` to `packages/shared` for web and worker. Redact keys case-insensitively at any depth (`authorization`, `cookie`, `x-api-key`, `*token*`, `*secret*`, `password`, `private_key`, `access_token`, `client_secret`, ...). Scrub string values too, including `msg` and error messages: GitHub tokens, `sk-ant-`, PEM blocks, JWTs, credentials in URLs, pre-signed query params.
+  - Fastify `req` serializer without the query string and `err` serializer keeping type/message/code/stack only. Test through `app.inject` with `?token=`, an `authorization` header and a throwing route.
+  - `import "server-only"` in `apps/web/src/env.ts`, plus a startup check and test that no `NEXT_PUBLIC_*` name looks like a secret. Required (not defaulted) URLs in production, https / rediss for non-loopback hosts.
+  - Network guard gaps: a socket-level guard (`net`/`tls` connect, `dns`) blocking everything in unit tests and non-loopback in integration tests. Lint `@pipeheal/shared/testing` imports outside test files.
 - [ ] **P1.1** Prisma schema for `User` (plus Better Auth's tables), `Organization`, `Membership`, `Repository`, `RepoWorkflow`, `AuditLog`, `WebhookDelivery` (SPEC §10). Migration + seed script.
 - [ ] **P1.2** Org-scoped data helpers in `packages/db`. Tests proving a user of org A cannot read or write org B's rows through any helper.
 - [ ] **P1.3** Better Auth with GitHub provider; session carries `userId`; `proxy.ts` redirects signed-out users on `/[org]/**`; org membership check in every org layout, route handler and data helper (never the proxy alone). Verified-installer OWNER binding on sign-in (SPEC §5.2).
@@ -85,6 +90,7 @@ Acceptance: coverage ≥ 95% on `packages/policy`; all red-team fixtures rejecte
 ## Phase 4: Healing agent
 
 - [ ] **P4.1** `packages/shared`: runner ↔ gateway protocol schemas (session exchange, step request/response with `stepSeq`, tool calls/results, submission payload).
+- [ ] **P4.1b** Gateway hardening before it is reachable from runners (Phase 0 review L5): public `/livez` (no dependency checks) vs internal `/readyz`, `requestTimeout` ~150 s and `connectionTimeout`, small per-route body limits before auth, `@fastify/rate-limit`.
 - [ ] **P4.2** Gateway `POST /v1/session`: OIDC verification per SPEC §5.4. Tests with locally generated keys and JWTs, including every rejection path.
 - [ ] **P4.3** Gateway `POST /v1/step`: accept tool results, run the next model turn, return tool calls; persist `AgentEvent`s; enforce caps; idempotent on `stepSeq`.
 - [ ] **P4.4** `packages/agent-core`: prompt builder (SPEC §7.4, versioned), tool definitions, context assembler, loop controller with all stop conditions, cost accounting, prompt caching on the static prefix.
@@ -141,7 +147,7 @@ Acceptance: on real GitHub, `break.ts` → PR opened → PR CI green → human m
 - [ ] **P8.1** `pnpm eval` harness (SPEC §14) with a report and comparison to the previous run; gate prompt/model changes on it in CI.
 - [ ] **P8.2** Rate limits (webhooks, gateway, API), retention purge job, DB backups.
 - [ ] **P8.3** Observability: Sentry, structured logs, OpenTelemetry traces across webhook → triage → attempt → PR.
-- [ ] **P8.4** Full `security-reviewer` pass + manual checklist from SPEC §12.
+- [ ] **P8.4** Full `security-reviewer` pass + manual checklist from SPEC §12. Pin every GitHub Action to a commit SHA and add Dependabot for `github-actions` (Phase 0 review L1); this must happen earlier if any workflow gets secrets or write access, and before P8.6 at the latest.
 - [ ] **P8.5** Production deploy: Docker images, migrations on deploy, health checks, zero-downtime rollout, runbook in `docs/RUNBOOK.md`.
 - [ ] **P8.6** Publish `heal-action` in its own public repo with version tags.
 - [ ] **P8.7** **[HUMAN]** Privacy policy and ToS drafts, reviewed by a lawyer before public launch.

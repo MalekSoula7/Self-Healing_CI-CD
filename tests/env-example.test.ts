@@ -14,7 +14,10 @@ const entries = text
     return { key: line.slice(0, eq), value: line.slice(eq + 1) };
   });
 
-const SECRET_KEY = /(SECRET|PRIVATE_KEY|API_KEY|TOKEN|PASSWORD|DSN)/;
+// SMEE_URL is a capability URL: anyone holding it can read the forwarded webhooks.
+const SECRET_KEY = /(SECRET|PRIVATE_KEY|API_KEY|TOKEN|PASSWORD|DSN|SMEE_URL)/;
+// The only credentials allowed in a URL are the documented local docker compose defaults.
+const LOCAL_DEV_CREDENTIALS = "pipeheal:pipeheal@localhost";
 
 describe(".env.example", () => {
   it("only contains KEY=value lines and comments", () => {
@@ -24,6 +27,13 @@ describe(".env.example", () => {
   it("declares each key once", () => {
     const keys = entries.map((entry) => entry.key);
     expect(keys.length).toBe(new Set(keys).size);
+  });
+
+  it("embeds no credentials in URLs except the local docker compose default", () => {
+    const withCredentials = entries.filter(
+      ({ value }) => /:\/\/[^/\s]*@/.test(value) && !value.includes(LOCAL_DEV_CREDENTIALS),
+    );
+    expect(withCredentials).toEqual([]);
   });
 
   it("leaves every secret empty", () => {

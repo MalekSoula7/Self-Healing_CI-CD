@@ -9,10 +9,17 @@ catalog:
   vitest: ^5.0.2
   zod: ^4.6.5
 
-# pnpm 10 blocks dependency install scripts unless listed here.
+# Dependency install scripts: pnpm 10 runs none unless listed in onlyBuiltDependencies. Packages
+# in ignoredBuiltDependencies are a deliberate decision not to run them (silences the warning).
+# A new package with an install script produces a warning and is NOT run until listed here.
+# (strictDepBuilds would make that an error, but pnpm 10.34 then also rejects ignored packages.)
 onlyBuiltDependencies:
   - esbuild
-
-# Optional native accelerators we deliberately don't build (pure-JS fallbacks exist).
 ignoredBuiltDependencies:
+  # optional native speed-up for BullMQ's serializer; the pure-JS fallback is used instead
   - msgpackr-extract
+  # postinstall copies the browser service worker; we only use msw in Node
+  - msw
+
+# Don't install versions published less than a day ago (time for malicious releases to be pulled).
+minimumReleaseAge: 1440
