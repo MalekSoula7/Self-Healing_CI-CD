@@ -18,7 +18,7 @@ Phases 0–5 are the MVP (private beta). Phases 6–8 turn it into a product.
 - [ ] **P0.3** `apps/web`: Next.js App Router skeleton, Tailwind, shadcn/ui, `/api/health`.
 - [ ] **P0.4** `apps/worker`: BullMQ connection, one sample queue + processor, Fastify gateway with `/health`, pino logger, graceful shutdown.
 - [ ] **P0.5** Vitest across packages, Playwright skeleton in `apps/web`, msw for HTTP mocking.
-- [ ] **P0.6** CI for this repo (`.github/workflows/ci.yml`): install, typecheck, lint, test on push and PR, with caching.
+- [ ] **P0.6** CI for this repo (`.github/workflows/ci.yml`): install, typecheck, lint, test on push and PR, with caching. Full suite on `ubuntu-latest`, unit tests also on `windows-latest` (SPEC §4.1).
 - [ ] **P0.7** Fill the Commands section of `CLAUDE.md`, create `docs/PROGRESS.md` first entry.
 
 Acceptance: fresh clone → `docker compose up -d && pnpm i && pnpm dev` works; all checks green locally and in CI.
@@ -29,14 +29,14 @@ Acceptance: fresh clone → `docker compose up -d && pnpm i && pnpm dev` works; 
 
 ## Phase 1: Tenancy, auth, GitHub App
 
-- [ ] **P1.1** Prisma schema for `User`, `Organization`, `Membership`, `Repository`, `AuditLog`, `WebhookDelivery` (SPEC §10). Migration + seed script.
+- [ ] **P1.1** Prisma schema for `User` (plus Better Auth's tables), `Organization`, `Membership`, `Repository`, `RepoWorkflow`, `AuditLog`, `WebhookDelivery` (SPEC §10). Migration + seed script.
 - [ ] **P1.2** Org-scoped data helpers in `packages/db`. Tests proving a user of org A cannot read or write org B's rows through any helper.
-- [ ] **P1.3** Auth.js with GitHub provider; session carries `userId`; middleware protects `/[org]/**`; org membership check on every org route.
+- [ ] **P1.3** Better Auth with GitHub provider; session carries `userId`; `proxy.ts` redirects signed-out users on `/[org]/**`; org membership check in every org layout, route handler and data helper (never the proxy alone). Verified-installer OWNER binding on sign-in (SPEC §5.2).
 - [ ] **P1.4** `packages/github`: App JWT, installation token cache, typed wrappers for the endpoints we use (list failed jobs, download job logs, compare commits, get file contents at ref, re-run failed jobs, dispatch workflow, Git Data API, create PR, comment, request reviewers). msw-based tests.
 - [ ] **P1.5** `docs/SETUP-GITHUB-APP.md`: exact permissions and events from SPEC §5.1, callback/webhook URLs, smee forwarding for local dev, which `.env` values come from where.
 - [ ] **CHECKPOINT 1a [HUMAN]**: Malek creates a GitHub sandbox organization, registers the dev GitHub App, fills `.env`.
-- [ ] **P1.6** Webhook route: HMAC verification, delivery-ID idempotency, enqueue, fast 2xx. Processors for `installation` and `installation_repositories` → upsert `Organization`, `Repository`; the installing user becomes OWNER.
-- [ ] **P1.7** Onboarding UI: "Install GitHub App" → post-install callback → repo list with enable toggles.
+- [ ] **P1.6** Webhook route: HMAC verification, delivery-ID idempotency, enqueue, fast 2xx. Processors for `installation` and `installation_repositories` → upsert `Organization` (org or personal account), `Repository`, `RepoWorkflow`; the installing user becomes the OWNER candidate, confirmed on sign-in (SPEC §5.2).
+- [ ] **P1.7** Onboarding UI: "Install GitHub App" → post-install callback → repo list with enable toggles → per-repo workflow selection with CI-looking workflows pre-selected (SPEC §11).
 - [ ] **P1.8** Audit log entries for every mutation (who, what, when).
 
 Acceptance: installing the App on the sandbox org shows the org and repos in the dashboard; removing a repo from the installation disables it; tenant isolation tests pass.
@@ -47,17 +47,17 @@ Acceptance: installing the App on the sandbox org shows the org and repos in the
 
 ## Phase 2: Detection & triage (no fixing yet)
 
-- [ ] **P2.0** `examples/demo-node` (TypeScript + Vitest + ESLint) and `examples/demo-python` (pytest + ruff + mypy), each with a CI workflow emitting JUnit XML, plus `scripts/break.sh <scenario>` that introduces each eval scenario from SPEC §14 on a new branch.
+- [ ] **P2.0** `examples/demo-node` (TypeScript + Vitest + ESLint) and `examples/demo-python` (pytest + ruff + mypy), each with a CI workflow emitting JUnit XML, plus `scripts/break.ts <scenario>` (TypeScript via `tsx`, no bash) that introduces each eval scenario from SPEC §14 on a new branch.
 - [ ] **CHECKPOINT 2a [HUMAN]**: Malek pushes the demo repos to the sandbox org and installs the App on them.
-- [ ] **P2.1** `workflow_run` processor: filters from SPEC §2 step 4, dedupe, create `PipelineFailure`.
+- [ ] **P2.1** `workflow_run` processor: filters from SPEC §2 step 4, one `PipelineFailure` per repo + head SHA with `FailedRun`/`FailedJob`, collection window, late arrivals and re-runs (SPEC §2.1).
 - [ ] **P2.2** Log fetch + clean + redact (`packages/agent-core/redact`). Fixture tests with planted fake secrets of every type in SPEC §6.2.
 - [ ] **P2.3** Error-window extractor and signal parsers for tsc, eslint, jest/vitest, pytest, mypy, ruff, pip/npm install errors. Real log samples in `packages/agent-core/fixtures/logs/`, test-first.
 - [ ] **P2.4** Heuristic classifier + `TRIAGE_MODEL` fallback with zod-validated JSON and one retry. Cost recorded.
 - [ ] **P2.5** Last-green resolver + recent-changes fetcher with token-budget truncation.
-- [ ] **P2.6** Flaky check: re-run failed jobs once when `retryBeforeHeal` is on; link the re-run's result to the failure.
+- [ ] **P2.6** Flaky check: re-run failed jobs once when `retryBeforeHeal` is on, with the guards in SPEC §6.2 step 8 (selected workflows only, never with `environment:`); link the re-run's result to the failure.
 - [ ] **P2.7** UI: failures list and detail page (category, summary, error window, signals, recent changes).
 
-Acceptance: each `break.sh` scenario shows up within ~1 minute with the right category; no planted secret appears in the DB or logs.
+Acceptance: each `break.ts` scenario shows up within ~1 minute and has the right category once its collection window closes; no planted secret appears in the DB or logs.
 
 **CHECKPOINT 2b**
 
@@ -89,7 +89,7 @@ Acceptance: coverage ≥ 95% on `packages/policy`; all red-team fixtures rejecte
 - [ ] **P4.3** Gateway `POST /v1/step`: accept tool results, run the next model turn, return tool calls; persist `AgentEvent`s; enforce caps; idempotent on `stepSeq`.
 - [ ] **P4.4** `packages/agent-core`: prompt builder (SPEC §7.4, versioned), tool definitions, context assembler, loop controller with all stop conditions, cost accounting, prompt caching on the static prefix.
 - [ ] **P4.5** `packages/heal-action`: JavaScript action bundled to `dist/`. OIDC exchange, install, reproduce, baseline JUnit, tool executor (path-traversal protection, output truncation, commands only from config, args as arrays), final checks, submission upload.
-- [ ] **P4.6** Local mode: `pnpm heal:local --repo examples/demo-node --scenario <name>` runs the same executor against a local directory and a local gateway with a dev-only auth bypass that is compiled out of production builds. This is the main dev loop for agent work.
+- [ ] **P4.6** Local mode: `pnpm heal:local --repo examples/demo-node --scenario <name>` runs the same executor inside a Linux Docker container against a local copy of the repo and a local gateway. A dev CLI creates a real attempt and session token; there is no auth bypass (SPEC §12). This is the main dev loop for agent work.
 - [ ] **P4.7** Soft-rule judge (SPEC §8.7 step 3).
 - [ ] **P4.8** Dispatcher: healable + in scope + within budget → create `HealAttempt` → `workflow_dispatch` on the default branch. Missing workflow → `NEEDS_SETUP`.
 
@@ -103,14 +103,14 @@ Acceptance: local mode fixes at least 4 of the 6 fixable demo scenarios; both tr
 
 - [ ] **P5.1** Submission validation: fetch originals at `target_sha` from GitHub, recompute the diff, run static + behavioral + judge. Never use the runner's diff as truth.
 - [ ] **P5.2** Branch, commit and PR via Git Data API; PR body template (SPEC §9); label; reviewer request; draft rule; link comment on the originating PR.
-- [ ] **P5.3** Verification: map `workflow_run` on `pipeheal/*` to its attempt; `VERIFIED`, retry-with-feedback, or `NEEDS_HUMAN` + comment.
+- [ ] **P5.3** Verification: map `workflow_run` on `pipeheal/*` to its attempt; `VERIFIED`, retry-with-feedback, or `NEEDS_HUMAN` + comment; `UNVERIFIED` timeouts and the delivery reconciler (SPEC §2.2).
 - [ ] **P5.4** Outcome tracking from `pull_request` closed events.
 - [ ] **P5.5** Concurrency and loop protection (SPEC §9.1), with tests for each case.
 - [ ] **P5.6** Failure detail timeline UI: attempts, iterations, tool calls, diff viewer, policy results, PR link, cost.
 - [ ] **P5.7** `docs/E2E.md`: a manual end-to-end checklist on the sandbox org, then run it.
 - [ ] **P5.8** Run the `security-reviewer` subagent on everything built so far; fix findings.
 
-Acceptance: on real GitHub, `break.sh` → PR opened → PR CI green → human merges. No branch other than `pipeheal/*` is ever written. Nothing under `.github/` is ever changed.
+Acceptance: on real GitHub, `break.ts` → PR opened → PR CI green → human merges. No branch other than `pipeheal/*` is ever written. Nothing under `.github/` is ever changed.
 
 **CHECKPOINT 5**: MVP ready for private beta.
 
