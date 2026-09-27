@@ -11,7 +11,10 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@pipeheal/shared": "workspace:*",
     "@types/node": "catalog:",
-    "typescript": "catalog:"
+    "msw": "^2.15.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

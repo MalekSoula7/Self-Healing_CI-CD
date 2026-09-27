@@ -108,6 +108,20 @@ export default defineConfig(
     },
   },
   {
+    // Playwright specs: same rule as Vitest, no skipped, focused or fixme tests.
+    files: ["apps/web/e2e/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.type='MemberExpression'][callee.property.name=/^(only|skip|fixme)$/]",
+          message: "No skipped, focused or fixme tests (CLAUDE.md).",
+        },
+      ],
+    },
+  },
+  {
     files: ["**/*.{js,mjs,cjs}"],
     extends: [tseslint.configs.disableTypeChecked],
   },

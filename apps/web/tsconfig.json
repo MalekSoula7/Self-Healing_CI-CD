@@ -4,11 +4,22 @@
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     "types": ["node"],
-    "plugins": [{ "name": "next" }],
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
     "paths": {
       "@/*": ["./src/*"]
     }
   },
-  "include": ["next-env.d.ts", "next.config.ts", "src", ".next/types/**/*.ts"],
+  "include": [
+    "next-env.d.ts",
+    "next.config.ts",
+    "playwright.config.ts",
+    "src",
+    "e2e",
+    ".next/types/**/*.ts"
+  ],
   "exclude": ["node_modules"]
 }
