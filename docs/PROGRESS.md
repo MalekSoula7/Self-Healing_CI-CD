@@ -390,3 +390,4 @@ Newest entry at the bottom. One entry per task. Format:
   - `tests/workspace.test.ts`'s no-shell-scripts check now skips `.venv` like it skips `node_modules`: a local, git-ignored Python install ships `activate.bat`/`Activate.ps1`.
 - Follow-ups:
   - This monorepo's own CI still pins `actions/checkout@v5`, `setup-node@v5`, `upload-artifact@v4`; v7 is current. Worth a small separate update.
+  - **Gap found while writing the CHECKPOINT 2a steps:** workflows are only discovered when a repository is added to the installation. A workflow pushed later (or a repository created empty under an "all repositories" installation, then pushed) is never discovered, because the App gets no event for it. Workaround documented in `examples/README.md` (select the demos after pushing). Proper fix proposed for P2.1: a `workflow_run` for a workflow we don't know discovers it (fetch its file, apply the CI-looking pre-selection) before the "selected workflows only" filter runs.

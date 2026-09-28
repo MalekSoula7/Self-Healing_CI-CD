@@ -13,6 +13,12 @@ green.
 
 ## Push them to the sandbox org (once)
 
+**Order matters:** PipeHeal scans a repository's workflows when the repository is added to the
+App's installation, and nothing tells it about workflows pushed later (yet: see P2.1). If the
+installation covers *all* repositories, a new repository is added the moment it's created,
+while still empty. So first switch the installation to **Only select repositories** (org
+Settings → GitHub Apps → the App → Configure), then create and push, then select the demos.
+
 Create two empty repositories on the sandbox org (no README, no license), e.g.
 `pipeheal-demo-node` and `pipeheal-demo-python`, then from PowerShell:
 
@@ -27,7 +33,7 @@ git push -u origin main
 ```
 
 Same for `demo-python` (the same `robocopy` line skips anything a local run created). Then add
-both repositories to the App's installation, enable them on
+both repositories to the App's installation (select them under Configure), enable them on
 `/<sandbox-org>/repos`, and check that the `CI` workflow is selected (it's pre-selected).
 
 ## Break one
