@@ -20,7 +20,7 @@ const testingImports = {
 const PRISMA_WRITES =
   "create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert|delete|deleteMany";
 const auditedTableWrite = {
-  selector: `CallExpression > MemberExpression.callee[property.name=/^(${PRISMA_WRITES})$/] > MemberExpression.object[property.name=/^(organization|membership|repository|repoWorkflow|auditLog)$/]`,
+  selector: `CallExpression > MemberExpression.callee[property.name=/^(${PRISMA_WRITES})$/] > MemberExpression.object[property.name=/^(organization|membership|repository|repoWorkflow|pipelineFailure|failedRun|failedJob|auditLog)$/]`,
   message:
     "Change tenant data through @pipeheal/db's helpers: they record the audit entry in the same transaction (P1.8).",
 };

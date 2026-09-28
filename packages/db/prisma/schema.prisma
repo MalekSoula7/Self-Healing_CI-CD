@@ -1,4 +1,5 @@
-// PipeHeal data model (SPEC §10). Phase 1 tables only; later phases add theirs with a migration.
+// PipeHeal data model (SPEC §10). Phase 1 tables, plus failures (P2.1); later phases add theirs
+// with a migration.
 //
 // Conventions:
 // - Every tenant-owned table carries `orgId` and is only queried through the org-scoped helpers
@@ -129,6 +130,9 @@ model Organization {
   repositories Repository[]
   workflows    RepoWorkflow[]
   auditLogs    AuditLog[]
+  failures     PipelineFailure[]
+  failedRuns   FailedRun[]
+  failedJobs   FailedJob[]
 }
 
 enum Role {
@@ -181,7 +185,9 @@ model Repository {
   createdAt                 DateTime     @default(now())
   updatedAt                 DateTime     @updatedAt
 
-  workflows RepoWorkflow[]
+  workflows  RepoWorkflow[]
+  failures   PipelineFailure[]
+  failedRuns FailedRun[]
 
   // Webhook lookups go installation → org → (orgId, githubRepoId), never by repo ID alone.
   @@unique([orgId, githubRepoId])
@@ -212,6 +218,128 @@ model RepoWorkflow {
   @@unique([repoId, githubWorkflowId])
   @@index([orgId, createdAt])
   @@index([repoId, path])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Failures (SPEC §2.1, §10): one per repo + head SHA, holding every failed run and job of it.
+
+enum FailureStatus {
+  /// Collecting runs (window open), or waiting for triage.
+  DETECTED
+  TRIAGED
+  SKIPPED
+  /// Every failed run passed on a re-run before any dispatch.
+  FLAKY
+  QUEUED
+  HEALING
+  PR_OPENED
+  VERIFIED
+  UNVERIFIED
+  NEEDS_HUMAN
+  NEEDS_SETUP
+  NOT_REPRODUCIBLE
+  FAILED
+}
+
+/// SPEC §6.1. Set by triage (Phase 2 onward).
+enum FailureCategory {
+  COMPILE
+  TYPECHECK
+  LINT
+  TEST
+  DEPENDENCY
+  BUILD
+  INFRA
+  CONFIG
+  FLAKY
+  UNKNOWN
+}
+
+model PipelineFailure {
+  id             String           @id @default(uuid(7)) @db.Uuid
+  orgId          String           @db.Uuid
+  org            Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  repoId         String           @db.Uuid
+  repo           Repository       @relation(fields: [orgId, repoId], references: [orgId, id], onDelete: Cascade)
+  headSha        String
+  /// Null for runs GitHub reports without a branch (e.g. some tag pushes).
+  headBranch     String?
+  status         FailureStatus    @default(DETECTED)
+  category       FailureCategory?
+  /// 0..1, from triage.
+  confidence     Float?
+  summary        String?
+  skipReason     String?
+  /// When the collection window closes at the latest (first failure + 5 min, SPEC §2.1).
+  windowClosesAt DateTime
+  /// When it actually closed (possibly earlier: every selected run completed). Runs attached
+  /// after this are late arrivals.
+  windowClosedAt DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  runs FailedRun[]
+
+  @@unique([repoId, headSha])
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
+}
+
+/// One failed workflow run of a failure; a re-run (higher runAttempt) updates this row.
+model FailedRun {
+  id           String          @id @default(uuid(7)) @db.Uuid
+  orgId        String          @db.Uuid
+  org          Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  repoId       String          @db.Uuid
+  repo         Repository      @relation(fields: [orgId, repoId], references: [orgId, id], onDelete: Cascade)
+  failureId    String          @db.Uuid
+  failure      PipelineFailure @relation(fields: [orgId, failureId], references: [orgId, id], onDelete: Cascade)
+  runId        BigInt
+  /// The latest attempt we've seen.
+  runAttempt   Int
+  workflowId   BigInt
+  workflowName String
+  workflowPath String
+  /// GitHub's conclusion for `runAttempt`: failure or timed_out, or success once a re-run passed.
+  conclusion   String
+  htmlUrl      String?
+  /// We asked GitHub to re-run it (flaky check, SPEC §6.2 step 8).
+  rerunByUs    Boolean         @default(false)
+  /// Attached after the failure's collection window closed (SPEC §2.1).
+  lateArrival  Boolean         @default(false)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  jobs FailedJob[]
+
+  @@unique([repoId, runId])
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
+  @@index([failureId])
+}
+
+/// A failed job of the run's latest failed attempt. Triage fields are filled from Phase 2 on.
+model FailedJob {
+  id          String           @id @default(uuid(7)) @db.Uuid
+  orgId       String           @db.Uuid
+  org         Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  failedRunId String           @db.Uuid
+  failedRun   FailedRun        @relation(fields: [orgId, failedRunId], references: [orgId, id], onDelete: Cascade)
+  githubJobId BigInt
+  name        String
+  failedStep  String?
+  htmlUrl     String?
+  category    FailureCategory?
+  confidence  Float?
+  summary     String?
+  /// Redacted before it's stored (SPEC §6.2).
+  errorWindow String?
+  signals     Json?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([failedRunId, githubJobId])
+  @@index([orgId, createdAt])
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -10,17 +10,31 @@ import { auditChanges, auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
 import { ConflictError, ForbiddenError, NotFoundError } from "./errors";
 import type { RepoWorkflow } from "./generated/prisma/client";
-import type { AccountType, OrgStatus, Role } from "./generated/prisma/enums";
+import type { AccountType, FailureStatus, OrgStatus, Role } from "./generated/prisma/enums";
 import {
   auditPageSchema,
+  failedRunInputSchema,
   githubIdSchema,
   idSchema,
   installedRepositorySchema,
   installedWorkflowSchema,
+  passedRunInputSchema,
   type AuditPage,
+  type FailedRunInput,
   type InstalledRepository,
   type InstalledWorkflow,
+  type PassedRunInput,
 } from "./inputs";
+
+/** SPEC §2.1: the first failed run for a commit opens a window this long to collect the rest. */
+export const COLLECTION_WINDOW_MS = 5 * 60 * 1000;
+
+/** Nothing was dispatched for a failure in these states, so passing re-runs can still make it FLAKY. */
+const NOT_DISPATCHED: readonly FailureStatus[] = ["DETECTED", "TRIAGED", "SKIPPED", "NEEDS_SETUP"];
+
+const FAILURE_WITH_RUNS = {
+  runs: { include: { jobs: true }, orderBy: { createdAt: "asc" } },
+} as const;
 
 export interface OrgSummary {
   id: string;
@@ -153,6 +167,16 @@ function buildOrgScope(ctx: ScopeContext) {
           });
           return updated;
         });
+      },
+    },
+
+    failures: {
+      /** A failure with its runs and their jobs, oldest run first. */
+      async get(failureId: string) {
+        const id = parseId(failureId);
+        return id === null
+          ? null
+          : db.pipelineFailure.findFirst({ where: { id, orgId }, include: FAILURE_WITH_RUNS });
       },
     },
 
@@ -358,6 +382,173 @@ function buildSystemScope(ctx: ScopeContext) {
             results.push(updated);
           }
           return results;
+        });
+      },
+    },
+
+    failures: {
+      ...base.failures,
+
+      /** The failure for this commit of the repository, if there is one. */
+      async findBySha(repoId: string, headSha: string) {
+        const id = parseId(repoId);
+        if (id === null || !/^[0-9a-f]{40}$/.test(headSha)) return null;
+        return db.pipelineFailure.findFirst({
+          where: { orgId, repoId: id, headSha },
+          include: FAILURE_WITH_RUNS,
+        });
+      },
+
+      /**
+       * Attaches a failed run to its commit's failure (SPEC §2.1), opening the failure and its
+       * collection window if it's the commit's first. A known run is updated only by a newer
+       * attempt, whose failed jobs replace the old attempt's. Safe under concurrent and repeated
+       * deliveries: inserts that lose a race do nothing, and the row is read back.
+       */
+      async recordFailedRun(
+        repoId: string,
+        input: FailedRunInput,
+        windowMs: number = COLLECTION_WINDOW_MS,
+      ) {
+        const id = requireId(repoId, "repository");
+        const { jobs, headSha, headBranch, ...run } = failedRunInputSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const repo = await tx.repository.findFirst({ where: { id, orgId } });
+          if (repo === null) throw new NotFoundError("repository not found");
+
+          const opened = await tx.pipelineFailure.createMany({
+            data: [
+              {
+                orgId,
+                repoId: id,
+                headSha,
+                headBranch,
+                windowClosesAt: new Date(Date.now() + windowMs),
+              },
+            ],
+            skipDuplicates: true,
+          });
+          const failure = await tx.pipelineFailure.findUniqueOrThrow({
+            where: { repoId_headSha: { repoId: id, headSha } },
+          });
+          const lateArrival = failure.windowClosedAt !== null;
+          const inserted = await tx.failedRun.createMany({
+            data: [{ orgId, repoId: id, failureId: failure.id, lateArrival, ...run }],
+            skipDuplicates: true,
+          });
+          const existing = await tx.failedRun.findUniqueOrThrow({
+            where: { repoId_runId: { repoId: id, runId: run.runId } },
+          });
+          const metadata = {
+            runId: String(run.runId),
+            runAttempt: run.runAttempt,
+            workflowPath: run.workflowPath,
+          };
+
+          if (inserted.count === 1) {
+            await tx.failedJob.createMany({
+              data: jobs.map((job) => ({ orgId, failedRunId: existing.id, ...job })),
+              skipDuplicates: true,
+            });
+            await writeAudit(tx, orgId, actor, {
+              action: opened.count === 1 ? "failure.detected" : "failure.run_attached",
+              target: auditTarget("failure", failure.id),
+              metadata: { ...metadata, headSha, lateArrival },
+            });
+            return {
+              failure,
+              run: existing,
+              outcome: opened.count === 1 ? ("opened" as const) : ("attached" as const),
+            };
+          }
+
+          if (run.runAttempt <= existing.runAttempt) {
+            return { failure, run: existing, outcome: "unchanged" as const };
+          }
+          const updated = await tx.failedRun.update({
+            where: { id: existing.id },
+            data: { runAttempt: run.runAttempt, conclusion: run.conclusion, htmlUrl: run.htmlUrl },
+          });
+          await tx.failedJob.deleteMany({ where: { orgId, failedRunId: existing.id } });
+          await tx.failedJob.createMany({
+            data: jobs.map((job) => ({ orgId, failedRunId: existing.id, ...job })),
+            skipDuplicates: true,
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "failure.run_updated",
+            target: auditTarget("failure", failure.id),
+            metadata,
+          });
+          return { failure, run: updated, outcome: "updated" as const };
+        });
+      },
+
+      /**
+       * A newer attempt of a failed run passed (SPEC §2.1 re-runs). When every run of a failure
+       * that hasn't been dispatched has passed, the failure is FLAKY. Null for a run we don't
+       * track (it never failed).
+       */
+      async recordPassedRun(repoId: string, input: PassedRunInput) {
+        const id = requireId(repoId, "repository");
+        const { runId, runAttempt } = passedRunInputSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const repo = await tx.repository.findFirst({ where: { id, orgId } });
+          if (repo === null) throw new NotFoundError("repository not found");
+          const run = await tx.failedRun.findUnique({
+            where: { repoId_runId: { repoId: id, runId } },
+          });
+          if (run === null) return null;
+          const failure = await tx.pipelineFailure.findUniqueOrThrow({
+            where: { orgId_id: { orgId, id: run.failureId } },
+          });
+          if (runAttempt <= run.runAttempt) return { failure, outcome: "unchanged" as const };
+
+          await tx.failedRun.update({
+            where: { id: run.id },
+            data: { runAttempt, conclusion: "success" },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "failure.run_passed",
+            target: auditTarget("failure", failure.id),
+            metadata: { runId: String(runId), runAttempt },
+          });
+          const failing = await tx.failedRun.count({
+            where: { orgId, failureId: failure.id, conclusion: { not: "success" } },
+          });
+          if (failing > 0 || !NOT_DISPATCHED.includes(failure.status)) {
+            return { failure, outcome: "passed" as const };
+          }
+          const flaky = await tx.pipelineFailure.update({
+            where: { id: failure.id },
+            data: { status: "FLAKY" },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "failure.flaky",
+            target: auditTarget("failure", failure.id),
+            metadata: { from: failure.status, to: "FLAKY" },
+          });
+          return { failure: flaky, outcome: "flaky" as const };
+        });
+      },
+
+      /** Closes the collection window now (SPEC §2.1). Later runs are late arrivals. */
+      async closeWindow(failureId: string) {
+        const id = requireId(failureId, "failure");
+        return db.$transaction(async (tx) => {
+          const failure = await tx.pipelineFailure.findFirst({ where: { id, orgId } });
+          if (failure === null) throw new NotFoundError("failure not found");
+          if (failure.windowClosedAt !== null) return failure;
+          const closedAt = new Date();
+          const closed = await tx.pipelineFailure.update({
+            where: { id },
+            data: { windowClosedAt: closedAt },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "failure.window_closed",
+            target: auditTarget("failure", id),
+            metadata: { early: closedAt < failure.windowClosesAt },
+          });
+          return closed;
         });
       },
     },

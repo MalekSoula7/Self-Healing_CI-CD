@@ -6,8 +6,15 @@ import { randomInt, randomUUID } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { ZodError } from "zod";
 import { ConflictError, ForbiddenError, NotFoundError } from "./errors";
-import type { Organization, RepoWorkflow, Repository, User } from "./generated/prisma/client";
+import type {
+  Organization,
+  PipelineFailure,
+  RepoWorkflow,
+  Repository,
+  User,
+} from "./generated/prisma/client";
 import type { Role } from "./generated/prisma/enums";
+import type { FailedRunInput } from "./inputs";
 import { installations } from "./installations";
 import {
   SYNC_BATCH_LIMIT,
@@ -28,6 +35,28 @@ afterAll(async () => {
 
 function githubId(): bigint {
   return BigInt(randomInt(1, 2 ** 47));
+}
+
+function sha(): string {
+  return randomUUID().replaceAll("-", "").padEnd(40, "0");
+}
+
+/** A failed run of the repo's CI workflow, as the worker would pass it. */
+function failedRun(overrides: Partial<FailedRunInput> = {}): FailedRunInput {
+  const runId = githubId();
+  return {
+    headSha: sha(),
+    headBranch: "main",
+    runId,
+    runAttempt: 1,
+    workflowId: 11n,
+    workflowName: "CI",
+    workflowPath: ".github/workflows/ci.yml",
+    conclusion: "failure",
+    htmlUrl: `https://github.com/acme/app/actions/runs/${String(runId)}`,
+    jobs: [{ githubJobId: githubId(), name: "check", failedStep: "Test", htmlUrl: null }],
+    ...overrides,
+  };
 }
 
 function uniqueLogin(): string {
@@ -52,6 +81,9 @@ interface Tenant {
   installerGithubId: bigint;
   repo: Repository;
   workflow: RepoWorkflow;
+  /** An open failure of `repo`, with one failed run and job. */
+  failure: PipelineFailure;
+  failureRun: FailedRunInput;
   admin: User;
   member: User;
   system: SystemScope;
@@ -98,11 +130,18 @@ async function createTenant(): Promise<Tenant> {
       triggers: ["push"],
     },
   });
+  const failureRun = failedRun();
+  const { failure } = await system.failures.recordFailedRun(
+    present(repo, "repository").id,
+    failureRun,
+  );
   return {
     org,
     installerGithubId,
     repo: present(repo, "repository"),
     workflow,
+    failure,
+    failureRun,
     admin,
     member,
     system,
@@ -122,6 +161,9 @@ async function snapshot(tenant: Tenant) {
     repositories: await db.repository.findMany({ where, orderBy: { id: "asc" } }),
     workflows: await db.repoWorkflow.findMany({ where, orderBy: { id: "asc" } }),
     memberships: await db.membership.findMany({ where, orderBy: { id: "asc" } }),
+    failures: await db.pipelineFailure.findMany({ where, orderBy: { id: "asc" } }),
+    failedRuns: await db.failedRun.findMany({ where, orderBy: { id: "asc" } }),
+    failedJobs: await db.failedJob.findMany({ where, orderBy: { id: "asc" } }),
     auditLogs: await db.auditLog.findMany({ where, orderBy: { id: "asc" } }),
   };
 }
@@ -183,6 +225,26 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
         { githubWorkflowId: githubId(), path: ".github/workflows/x.yml", name: "X" },
       ]),
     ).rejects.toThrow(NotFoundError);
+  },
+  "failures.get": async () => {
+    await expect(a.asAdmin.failures.get(b.failure.id)).resolves.toBeNull();
+    await expect(a.system.failures.get(b.failure.id)).resolves.toBeNull();
+  },
+  "failures.findBySha": async () => {
+    await expect(a.system.failures.findBySha(b.repo.id, b.failure.headSha)).resolves.toBeNull();
+  },
+  "failures.recordFailedRun": async () => {
+    await expect(
+      a.system.failures.recordFailedRun(b.repo.id, failedRun({ headSha: b.failure.headSha })),
+    ).rejects.toThrow(NotFoundError);
+  },
+  "failures.recordPassedRun": async () => {
+    await expect(
+      a.system.failures.recordPassedRun(b.repo.id, { runId: b.failureRun.runId, runAttempt: 2 }),
+    ).rejects.toThrow(NotFoundError);
+  },
+  "failures.closeWindow": async () => {
+    await expect(a.system.failures.closeWindow(b.failure.id)).rejects.toThrow(NotFoundError);
   },
   "members.list": async () => {
     const members = await a.asAdmin.members.list();
@@ -253,6 +315,8 @@ const readOnlyHelpers = [
   "repositories.get",
   "repositories.findByGithubId",
   "workflows.listForRepo",
+  "failures.get",
+  "failures.findBySha",
   "members.list",
   "audit.list",
   "installations.findByInstallationId",
@@ -320,6 +384,60 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
         action: "workflow.updated",
         target: `workflow:${a.workflow.id}`,
         metadata: { repoId: a.repo.id, changes: { name: { from: "CI", to: "Checks" } } },
+      },
+    ];
+  },
+  "failures.recordFailedRun": async () => {
+    const run = failedRun({
+      headSha: a.failure.headSha,
+      workflowPath: ".github/workflows/lint.yml",
+    });
+    await a.system.failures.recordFailedRun(a.repo.id, run);
+    return [
+      {
+        actorType: "SYSTEM",
+        actorId: "test",
+        action: "failure.run_attached",
+        target: `failure:${a.failure.id}`,
+        metadata: {
+          runId: String(run.runId),
+          runAttempt: 1,
+          workflowPath: ".github/workflows/lint.yml",
+          headSha: a.failure.headSha,
+          lateArrival: false,
+        },
+      },
+    ];
+  },
+  "failures.recordPassedRun": async () => {
+    await a.system.failures.recordPassedRun(a.repo.id, {
+      runId: a.failureRun.runId,
+      runAttempt: 2,
+    });
+    return [
+      {
+        actorType: "SYSTEM",
+        action: "failure.run_passed",
+        target: `failure:${a.failure.id}`,
+        metadata: { runId: String(a.failureRun.runId), runAttempt: 2 },
+      },
+      {
+        actorType: "SYSTEM",
+        action: "failure.flaky",
+        target: `failure:${a.failure.id}`,
+        metadata: { from: "DETECTED", to: "FLAKY" },
+      },
+    ];
+  },
+  "failures.closeWindow": async () => {
+    await a.system.failures.closeWindow(a.failure.id);
+    return [
+      {
+        actorType: "SYSTEM",
+        actorId: "test",
+        action: "failure.window_closed",
+        target: `failure:${a.failure.id}`,
+        metadata: { early: true },
       },
     ];
   },
@@ -838,6 +956,189 @@ describe("audit", () => {
     ]);
     expect([first, second, ...next]).toEqual(all.slice(0, 4));
     expect(() => a.asAdmin.audit.list({ take: 1000 })).toThrow(ZodError);
+  });
+});
+
+describe("failures (SPEC §2.1)", () => {
+  async function failureAudits(failureId: string): Promise<string[]> {
+    const entries = await db.auditLog.findMany({
+      where: { orgId: a.org.id, target: `failure:${failureId}` },
+      orderBy: { id: "asc" },
+    });
+    return entries.map((entry) => entry.action);
+  }
+
+  it("opens one failure per commit, with a 5-minute collection window, and its failed jobs", async () => {
+    const run = failedRun();
+    const before = Date.now();
+
+    const result = await a.system.failures.recordFailedRun(a.repo.id, run);
+
+    expect(result.outcome).toBe("opened");
+    expect(result.failure).toMatchObject({
+      repoId: a.repo.id,
+      headSha: run.headSha,
+      headBranch: "main",
+      status: "DETECTED",
+      windowClosedAt: null,
+    });
+    const windowMs = result.failure.windowClosesAt.getTime() - before;
+    expect(windowMs).toBeGreaterThan(4 * 60_000);
+    expect(windowMs).toBeLessThanOrEqual(5 * 60_000 + 1_000);
+    const stored = await a.asMember.failures.get(result.failure.id);
+    expect(stored?.runs).toHaveLength(1);
+    expect(stored?.runs[0]).toMatchObject({
+      runId: run.runId,
+      runAttempt: 1,
+      workflowPath: ".github/workflows/ci.yml",
+      conclusion: "failure",
+      lateArrival: false,
+      rerunByUs: false,
+    });
+    expect(stored?.runs[0]?.jobs).toMatchObject([{ name: "check", failedStep: "Test" }]);
+    expect(await failureAudits(result.failure.id)).toEqual(["failure.detected"]);
+  });
+
+  it("attaches another workflow's failed run of the same commit to the same failure", async () => {
+    const run = failedRun({ headSha: a.failure.headSha, workflowId: 12n, workflowName: "Lint" });
+
+    const result = await a.system.failures.recordFailedRun(a.repo.id, run);
+
+    expect(result).toMatchObject({ outcome: "attached", failure: { id: a.failure.id } });
+    expect((await a.system.failures.findBySha(a.repo.id, a.failure.headSha))?.runs).toHaveLength(2);
+    await expect(db.pipelineFailure.count({ where: { repoId: a.repo.id } })).resolves.toBe(1);
+  });
+
+  it("ignores a redelivery or an older attempt, and updates the run for a newer failed attempt", async () => {
+    const countBefore = await auditCount(a);
+    await expect(a.system.failures.recordFailedRun(a.repo.id, a.failureRun)).resolves.toMatchObject(
+      { outcome: "unchanged" },
+    );
+    expect(await auditCount(a)).toBe(countBefore);
+
+    const newJob = {
+      githubJobId: githubId(),
+      name: "test",
+      failedStep: "Run tests",
+      htmlUrl: null,
+    };
+    const result = await a.system.failures.recordFailedRun(a.repo.id, {
+      ...a.failureRun,
+      runAttempt: 2,
+      conclusion: "timed_out",
+      jobs: [newJob],
+    });
+
+    expect(result).toMatchObject({
+      outcome: "updated",
+      run: { runAttempt: 2, conclusion: "timed_out" },
+    });
+    const stored = await a.system.failures.get(a.failure.id);
+    expect(stored?.runs).toHaveLength(1);
+    expect(stored?.runs[0]?.jobs.map((job) => job.name)).toEqual(["test"]);
+    await expect(
+      a.system.failures.recordFailedRun(a.repo.id, { ...a.failureRun, runAttempt: 1 }),
+    ).resolves.toMatchObject({ outcome: "unchanged" });
+  });
+
+  it("marks a failure FLAKY once every failed run passed on a re-run, not before", async () => {
+    const second = failedRun({ headSha: a.failure.headSha, workflowId: 12n });
+    await a.system.failures.recordFailedRun(a.repo.id, second);
+
+    await expect(
+      a.system.failures.recordPassedRun(a.repo.id, { runId: a.failureRun.runId, runAttempt: 2 }),
+    ).resolves.toMatchObject({ outcome: "passed", failure: { status: "DETECTED" } });
+    await expect(
+      a.system.failures.recordPassedRun(a.repo.id, { runId: second.runId, runAttempt: 2 }),
+    ).resolves.toMatchObject({ outcome: "flaky", failure: { status: "FLAKY" } });
+    await expect(
+      a.system.failures.recordPassedRun(a.repo.id, { runId: second.runId, runAttempt: 2 }),
+    ).resolves.toMatchObject({ outcome: "unchanged" });
+  });
+
+  it("doesn't mark a failure FLAKY once something was dispatched for it", async () => {
+    await db.pipelineFailure.update({ where: { id: a.failure.id }, data: { status: "HEALING" } });
+
+    await expect(
+      a.system.failures.recordPassedRun(a.repo.id, { runId: a.failureRun.runId, runAttempt: 2 }),
+    ).resolves.toMatchObject({ outcome: "passed", failure: { status: "HEALING" } });
+  });
+
+  it("ignores a passing run it never saw fail", async () => {
+    await expect(
+      a.system.failures.recordPassedRun(a.repo.id, { runId: githubId(), runAttempt: 1 }),
+    ).resolves.toBeNull();
+  });
+
+  it("closes the window once, and marks runs attached after it as late arrivals", async () => {
+    const closed = await a.system.failures.closeWindow(a.failure.id);
+    const again = await a.system.failures.closeWindow(a.failure.id);
+
+    expect(closed.windowClosedAt).toBeInstanceOf(Date);
+    expect(again.windowClosedAt).toEqual(closed.windowClosedAt);
+    const late = await a.system.failures.recordFailedRun(
+      a.repo.id,
+      failedRun({ headSha: a.failure.headSha, workflowId: 13n }),
+    );
+    expect(late.run.lateArrival).toBe(true);
+    expect(await failureAudits(a.failure.id)).toEqual([
+      "failure.detected",
+      "failure.window_closed",
+      "failure.run_attached",
+    ]);
+  });
+
+  it("opens exactly one failure when several workflows' failures for a commit arrive at once", async () => {
+    const headSha = sha();
+    const runs = [11n, 12n, 13n, 14n].map((workflowId) => failedRun({ headSha, workflowId }));
+
+    const results = await Promise.all(
+      runs.map((run) => a.system.failures.recordFailedRun(a.repo.id, run)),
+    );
+
+    expect(results.map((r) => r.outcome).sort()).toEqual([
+      "attached",
+      "attached",
+      "attached",
+      "opened",
+    ]);
+    expect(new Set(results.map((r) => r.failure.id)).size).toBe(1);
+    const failure = present(results[0], "result").failure;
+    expect(await failureAudits(failure.id)).toHaveLength(4);
+    await expect(db.failedRun.count({ where: { failureId: failure.id } })).resolves.toBe(4);
+  });
+
+  it("records a run once when the same delivery is processed twice at the same time", async () => {
+    const run = failedRun();
+
+    await Promise.all([
+      a.system.failures.recordFailedRun(a.repo.id, run),
+      a.system.failures.recordFailedRun(a.repo.id, run),
+    ]);
+
+    await expect(
+      db.failedRun.count({ where: { repoId: a.repo.id, runId: run.runId } }),
+    ).resolves.toBe(1);
+    await expect(db.failedJob.count({ where: { failedRun: { runId: run.runId } } })).resolves.toBe(
+      1,
+    );
+  });
+
+  it("rejects malformed runs before touching the database", async () => {
+    const before = await snapshot(a);
+
+    for (const bad of [
+      failedRun({ headSha: "not-a-sha" }),
+      { ...failedRun(), conclusion: "cancelled" },
+      failedRun({ htmlUrl: "javascript:alert(1)" }),
+      failedRun({ runAttempt: 0 }),
+    ]) {
+      await expect(
+        a.system.failures.recordFailedRun(a.repo.id, bad as FailedRunInput),
+      ).rejects.toThrow(ZodError);
+    }
+    await expect(a.system.failures.findBySha(a.repo.id, "' OR 1=1 --")).resolves.toBeNull();
+    expect(await snapshot(a)).toEqual(before);
   });
 });
 

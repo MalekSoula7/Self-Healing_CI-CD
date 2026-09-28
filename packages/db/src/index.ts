@@ -6,7 +6,10 @@ export { createDb, type Db } from "./client";
 export { ConflictError, ForbiddenError, NotFoundError } from "./errors";
 export type {
   AuditPage,
+  FailedJobInput,
+  FailedRunInput,
   InstallationInput,
+  PassedRunInput,
   InstalledRepository,
   InstalledWorkflow,
   WebhookDeliveryInput,
@@ -18,6 +21,7 @@ export {
   type OwnerEvidence,
 } from "./installations";
 export {
+  COLLECTION_WINDOW_MS,
   SYNC_BATCH_LIMIT,
   forMember,
   forSystem,
@@ -42,8 +46,11 @@ export {
   Prisma,
   type Account,
   type AuditLog,
+  type FailedJob,
+  type FailedRun,
   type Membership,
   type Organization,
+  type PipelineFailure,
   type RepoWorkflow,
   type Repository,
   type Session,

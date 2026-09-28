@@ -44,6 +44,41 @@ export const installedWorkflowSchema = z.strictObject({
 });
 export type InstalledWorkflow = z.infer<typeof installedWorkflowSchema>;
 
+const shaSchema = z.string().regex(/^[0-9a-f]{40}$/);
+const githubUrlSchema = z.url({ protocol: /^https$/ }).max(2000);
+
+/** A failed job of a run's latest attempt, as GitHub lists it (SPEC §10 FailedJob). */
+export const failedJobInputSchema = z.strictObject({
+  githubJobId: githubIdSchema,
+  name: z.string().min(1).max(500),
+  failedStep: z.string().min(1).max(500).nullable(),
+  htmlUrl: githubUrlSchema.nullable(),
+});
+export type FailedJobInput = z.infer<typeof failedJobInputSchema>;
+
+/** A completed workflow run that failed, from a `workflow_run` webhook (SPEC §2.1). */
+export const failedRunInputSchema = z.strictObject({
+  headSha: shaSchema,
+  headBranch: z.string().min(1).max(255).nullable(),
+  runId: githubIdSchema,
+  runAttempt: z.int().positive(),
+  workflowId: githubIdSchema,
+  workflowName: z.string().min(1).max(255),
+  workflowPath: z.string().min(1).max(500),
+  conclusion: z.enum(["failure", "timed_out"]),
+  htmlUrl: githubUrlSchema.nullable(),
+  // GitHub caps a workflow run at 256 jobs.
+  jobs: z.array(failedJobInputSchema).max(256),
+});
+export type FailedRunInput = z.infer<typeof failedRunInputSchema>;
+
+/** A later attempt of a run that passed (SPEC §2.1 re-runs). */
+export const passedRunInputSchema = z.strictObject({
+  runId: githubIdSchema,
+  runAttempt: z.int().positive(),
+});
+export type PassedRunInput = z.infer<typeof passedRunInputSchema>;
+
 /**
  * X-GitHub-Delivery header value. GitHub-shaped (UUID-looking), but the column is a plain
  * String (not Postgres `uuid`), so this stays a loose length check rather than `z.uuid()`.
