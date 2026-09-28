@@ -3,6 +3,7 @@ import { createGitHubApp, type GitHubApp } from "@pipeheal/github";
 import { createLogger } from "@pipeheal/shared/logger";
 import { loadWorkerEnv } from "./env";
 import { buildGateway } from "./gateway/server";
+import { createFailuresQueue, createFailuresWorker, scheduleWindowClose } from "./queues/failures";
 import { createMaintenanceQueue, createMaintenanceWorker } from "./queues/maintenance";
 import { createWebhooksQueue, createWebhooksWorker } from "./queues/webhooks";
 import { createRedis, pingRedis } from "./redis";
@@ -27,8 +28,15 @@ async function main(): Promise<void> {
           privateKey: env.GITHUB_APP_PRIVATE_KEY,
           log: logger,
         });
+  const failuresQueue = createFailuresQueue(redis, logger);
+  const failuresWorker = createFailuresWorker(redis, { db, logger });
   const webhooksQueue = createWebhooksQueue(redis, logger);
-  const webhooksWorker = createWebhooksWorker(redis, { db, githubApp, logger });
+  const webhooksWorker = createWebhooksWorker(redis, {
+    db,
+    githubApp,
+    logger,
+    scheduleWindowClose: scheduleWindowClose(failuresQueue),
+  });
 
   const gateway = buildGateway({ logger, checks: { redis: () => pingRedis(redis) } });
 
@@ -38,6 +46,8 @@ async function main(): Promise<void> {
       { name: "gateway", close: () => gateway.close() },
       { name: "webhooks worker", close: () => webhooksWorker.close() },
       { name: "webhooks queue", close: () => webhooksQueue.close() },
+      { name: "failures worker", close: () => failuresWorker.close() },
+      { name: "failures queue", close: () => failuresQueue.close() },
       { name: "maintenance worker", close: () => maintenanceWorker.close() },
       { name: "maintenance queue", close: () => maintenanceQueue.close() },
       { name: "redis", close: () => redis.quit() },

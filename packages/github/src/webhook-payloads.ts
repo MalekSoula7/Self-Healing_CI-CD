@@ -3,6 +3,7 @@
 // (not `z.strictObject()`) keeps only what we use and ignores the rest, so a new GitHub field
 // never breaks parsing.
 import { z } from "zod";
+import { toWorkflowRun, workflowRunSchema } from "./repo";
 
 const id = z.number().int().positive().transform(BigInt);
 
@@ -39,6 +40,18 @@ export const installationRepositoriesEventSchema = z.object({
   repositories_removed: z.array(repoRefSchema).default([]),
 });
 export type InstallationRepositoriesEvent = z.infer<typeof installationRepositoriesEventSchema>;
+
+/**
+ * `workflow_run` event (SPEC §2 steps 2 and 4). The run is parsed and mapped exactly like one
+ * from the API (`RepoClient.getRun`), so `fromFork` is decided the same way: by repository ID.
+ */
+export const workflowRunEventSchema = z.object({
+  action: z.string(),
+  installation: z.object({ id }),
+  repository: repoRefSchema,
+  workflow_run: workflowRunSchema.transform(toWorkflowRun),
+});
+export type WorkflowRunEvent = z.infer<typeof workflowRunEventSchema>;
 
 /** GitHub's account `type` as our `Organization.accountType` (SPEC §10). */
 export function toAccountType(type: "Organization" | "User"): "ORG" | "USER" {

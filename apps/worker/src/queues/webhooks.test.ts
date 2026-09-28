@@ -22,6 +22,9 @@ const unreachableDeps: WebhookProcessorDeps = {
     },
   ) as never,
   logger: createLogger({ level: "silent", service: "test" }),
+  scheduleWindowClose: () => {
+    throw new Error("scheduleWindowClose must not be called");
+  },
 };
 
 describe("processWebhookJob", () => {

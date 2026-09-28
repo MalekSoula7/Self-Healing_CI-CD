@@ -21,7 +21,7 @@ const sha = z.string().regex(/^[0-9a-f]{40}$/);
 const login = z.string().regex(/^[A-Za-z0-9](?:-?[A-Za-z0-9]){0,38}(\[bot\])?$/);
 const repoRef = z.object({ id: z.number().int().positive(), full_name: z.string() });
 
-const workflowRunSchema = z.object({
+export const workflowRunSchema = z.object({
   id,
   run_attempt: z.number().int().positive(),
   workflow_id: id,
@@ -116,7 +116,7 @@ export type Workflow = ReturnType<typeof toWorkflow>;
 export type Comparison = ReturnType<typeof toComparison>;
 export type PullRequest = ReturnType<typeof toPullRequest>;
 
-function toWorkflowRun(run: z.output<typeof workflowRunSchema>) {
+export function toWorkflowRun(run: z.output<typeof workflowRunSchema>) {
   return {
     id: run.id,
     runAttempt: run.run_attempt,

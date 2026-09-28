@@ -4,6 +4,7 @@ import {
   installationEventSchema,
   installationRepositoriesEventSchema,
   toAccountType,
+  workflowRunEventSchema,
 } from "./webhook-payloads";
 
 // Modeled on GitHub's documented `installation` and `installation_repositories` webhook
@@ -150,5 +151,99 @@ describe("installationRepositoriesEventSchema", () => {
         installationRepositoriesPayload({ action: "renamed" }),
       ),
     ).toThrow(ZodError);
+  });
+});
+
+// Modeled on GitHub's documented `workflow_run` payload (completed, failure), trimmed.
+function workflowRunPayload(
+  run: Record<string, unknown> = {},
+  overrides: Record<string, unknown> = {},
+) {
+  const repository = { id: 558712345, name: "app", full_name: "octo-org/app", private: true };
+  return {
+    action: "completed",
+    installation: { id: 30219350, node_id: "MDIz..." },
+    repository,
+    workflow: { id: 161335, name: "CI", path: ".github/workflows/ci.yml" },
+    workflow_run: {
+      id: 30433642,
+      name: "CI",
+      run_attempt: 1,
+      run_number: 562,
+      workflow_id: 161335,
+      path: ".github/workflows/ci.yml",
+      head_sha: "acb5820ced9479c074f688cc328bf03f341a511d",
+      head_branch: "feature/checkout",
+      event: "push",
+      status: "completed",
+      conclusion: "failure",
+      html_url: "https://github.com/octo-org/app/actions/runs/30433642",
+      repository,
+      head_repository: repository,
+      head_commit: { message: "Rename lineTotal" },
+      ...run,
+    },
+    sender: { id: 9998877, login: "octo-dev", type: "User" },
+    ...overrides,
+  };
+}
+
+describe("workflowRunEventSchema", () => {
+  it("parses a completed run into the same shape the API client returns", () => {
+    const event = workflowRunEventSchema.parse(workflowRunPayload());
+
+    expect(event.action).toBe("completed");
+    expect(event.installation.id).toBe(30219350n);
+    expect(event.repository).toEqual({ id: 558712345n, full_name: "octo-org/app" });
+    expect(event.workflow_run).toEqual({
+      id: 30433642n,
+      runAttempt: 1,
+      workflowId: 161335n,
+      name: "CI",
+      path: ".github/workflows/ci.yml",
+      headSha: "acb5820ced9479c074f688cc328bf03f341a511d",
+      headBranch: "feature/checkout",
+      event: "push",
+      status: "completed",
+      conclusion: "failure",
+      htmlUrl: "https://github.com/octo-org/app/actions/runs/30433642",
+      fromFork: false,
+    });
+  });
+
+  it("flags a run whose code came from another repository as a fork, by ID", () => {
+    const fork = { id: 999, name: "app", full_name: "octo-org/app", private: false };
+    expect(
+      workflowRunEventSchema.parse(workflowRunPayload({ head_repository: fork })).workflow_run
+        .fromFork,
+    ).toBe(true);
+  });
+
+  it("fails closed: a run without a head repository counts as a fork", () => {
+    expect(
+      workflowRunEventSchema.parse(workflowRunPayload({ head_repository: null })).workflow_run
+        .fromFork,
+    ).toBe(true);
+    const withoutHead: Record<string, unknown> = { ...workflowRunPayload().workflow_run };
+    delete withoutHead.head_repository;
+    expect(
+      workflowRunEventSchema.parse({ ...workflowRunPayload(), workflow_run: withoutHead })
+        .workflow_run.fromFork,
+    ).toBe(true);
+  });
+
+  it("accepts a run without a branch or a name", () => {
+    const event = workflowRunEventSchema.parse(
+      workflowRunPayload({ head_branch: null, name: null }),
+    );
+    expect(event.workflow_run).toMatchObject({ headBranch: null, name: null });
+  });
+
+  it.each([
+    ["a malformed head SHA", workflowRunPayload({ head_sha: "not-a-sha" })],
+    ["a missing run", { ...workflowRunPayload(), workflow_run: undefined }],
+    ["a missing installation", { ...workflowRunPayload(), installation: undefined }],
+  ])("rejects %s", (_case, payload) => {
+    expect(() => workflowRunEventSchema.parse(payload)).toThrow(ZodError);
   });
 });

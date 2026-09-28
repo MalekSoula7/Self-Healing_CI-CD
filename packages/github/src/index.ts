@@ -16,6 +16,7 @@ export {
 } from "./credentials";
 export {
   GuardError,
+  HEALER_WORKFLOW_PATH,
   HEAL_BRANCH_PREFIX,
   assertBranchName,
   assertCommitMessage,
@@ -42,8 +43,10 @@ export {
   installationEventSchema,
   installationRepositoriesEventSchema,
   toAccountType,
+  workflowRunEventSchema,
   type InstallationEvent,
   type InstallationRepositoriesEvent,
   type WebhookRepoRef,
+  type WorkflowRunEvent,
 } from "./webhook-payloads";
 export { verifyWebhookSignature } from "./webhooks";

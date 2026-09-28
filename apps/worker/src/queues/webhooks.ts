@@ -1,6 +1,6 @@
-// Processes GitHub webhook deliveries `apps/web` enqueued (SPEC §2 step 4, §5.1, §10). Only
-// `installation` and `installation_repositories` are handled here; `workflow_run` and
-// `pull_request` (subscribed to per SPEC §5.1) get their processors in Phase 2.
+// Processes GitHub webhook deliveries `apps/web` enqueued (SPEC §2 step 4, §5.1, §10):
+// `installation`, `installation_repositories` and `workflow_run`. `pull_request` (subscribed to
+// per SPEC §5.1) gets its processor with outcome tracking (P5.4).
 import {
   SYNC_BATCH_LIMIT,
   forSystem,
@@ -13,23 +13,26 @@ import {
   installationEventSchema,
   installationRepositoriesEventSchema,
   toAccountType,
+  workflowRunEventSchema,
   type GitHubApp,
   type InstallationEvent,
   type InstallationRepositoriesEvent,
-  type RepoClient,
-  type Workflow,
 } from "@pipeheal/github";
 import { redactText, webhookJobDataSchema, WEBHOOKS_QUEUE } from "@pipeheal/shared";
 import type { Logger } from "@pipeheal/shared/logger";
 import { Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
-import { isCiLooking, parseWorkflowYaml, type WorkflowFacts } from "./workflow-yaml";
+import type { ScheduleWindowClose } from "./failures";
+import { processWorkflowRunEvent } from "./workflow-runs";
+import { syncRepoWorkflows } from "./workflow-sync";
 
 export interface WebhookProcessorDeps {
   db: Db;
   /** Null when the GitHub App isn't configured yet: repository/workflow sync is skipped. */
   githubApp: GitHubApp | null;
   logger: Logger;
+  /** Closes a failure's collection window when its time is up (SPEC §2.1). */
+  scheduleWindowClose: ScheduleWindowClose;
 }
 
 interface QueueJob {
@@ -76,55 +79,8 @@ async function syncRepositoriesAndWorkflows(
   }
 
   for (const repo of synced) {
-    const repoClient = client.repo(repo.fullName);
-    const workflows = await repoClient.listWorkflows();
-    const facts = await workflowFacts(repoClient, repo.defaultBranch, workflows, log);
-    await system.workflows.syncInstalled(
-      repo.id,
-      workflows.map((workflow) => {
-        const known = facts.get(workflow.id);
-        return {
-          githubWorkflowId: workflow.id,
-          path: workflow.path,
-          name: workflow.name,
-          ...known,
-          // Only meaningful the moment a workflow is first discovered (syncInstalled ignores it
-          // afterward); omitted when facts couldn't be determined, so a brand-new workflow just
-          // starts unselected like any other unknown.
-          ...(known === undefined
-            ? {}
-            : { selected: isCiLooking({ ...known, name: workflow.name, path: workflow.path }) }),
-        };
-      }),
-    );
+    await syncRepoWorkflows(system, client.repo(repo.fullName), repo, log);
   }
-}
-
-/**
- * Each workflow's triggers and `environment:` use (SPEC §11's pre-selection heuristic, §6.2
- * step 8's re-run guard), read from the file at the repo's default branch. Missing from the
- * result for any workflow whose content couldn't be fetched or didn't parse: the caller then
- * keeps whatever facts it already had, rather than overwriting them with empty defaults.
- */
-async function workflowFacts(
-  repoClient: RepoClient,
-  defaultBranch: string,
-  workflows: readonly Workflow[],
-  log: Logger,
-): Promise<Map<bigint, WorkflowFacts>> {
-  const facts = new Map<bigint, WorkflowFacts>();
-  if (workflows.length === 0) return facts;
-  const headSha = await repoClient.getBranchSha(defaultBranch);
-  if (headSha === null) {
-    log.warn({ defaultBranch }, "default branch not found; keeping known workflow facts");
-    return facts;
-  }
-  for (const workflow of workflows) {
-    const file = await repoClient.getFileAtRef(workflow.path, headSha);
-    const parsed = file?.kind === "text" ? parseWorkflowYaml(file.content) : null;
-    if (parsed !== null) facts.set(workflow.id, parsed);
-  }
-  return facts;
 }
 
 async function removeAllRepositories(
@@ -225,9 +181,12 @@ export async function processWebhookJob(job: QueueJob, deps: WebhookProcessorDep
           log,
         );
         break;
+      case "workflow_run":
+        await processWorkflowRunEvent(deps, workflowRunEventSchema.parse(payload), log);
+        break;
       default:
-        // ping, workflow_run, pull_request, or anything GitHub adds later: no processor yet
-        // (Phase 2+). Acknowledged, not an error.
+        // ping, pull_request, or anything GitHub adds later: no processor yet. Acknowledged,
+        // not an error.
         log.info("no processor for this event yet; acknowledged");
     }
     await markWebhookDeliveryProcessed(deps.db, deliveryId);

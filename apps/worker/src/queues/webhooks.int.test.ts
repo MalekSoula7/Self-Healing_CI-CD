@@ -3,7 +3,7 @@
 import { generateKeyPairSync, randomInt, randomUUID } from "node:crypto";
 import { createTestDb } from "@pipeheal/db/testing";
 import { createGitHubApp, GitHubApiError } from "@pipeheal/github";
-import { recordWebhookDelivery } from "@pipeheal/db";
+import { forSystem, recordWebhookDelivery } from "@pipeheal/db";
 import { createLogger } from "@pipeheal/shared/logger";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
@@ -134,6 +134,7 @@ function testDeps(): WebhookProcessorDeps {
       log: createLogger({ level: "silent", service: "test" }),
     }),
     logger: createLogger({ level: "silent", service: "test" }),
+    scheduleWindowClose: () => Promise.resolve(),
   };
 }
 
@@ -610,9 +611,9 @@ describe("installation_repositories", () => {
 });
 
 describe("events with no processor yet", () => {
-  it("acknowledges ping, workflow_run and pull_request without error", async () => {
+  it("acknowledges ping and pull_request without error", async () => {
     const deps = testDeps();
-    for (const event of ["ping", "workflow_run", "pull_request"]) {
+    for (const event of ["ping", "pull_request"]) {
       await expect(submit(deps, event, undefined, { zen: "..." })).resolves.toBeDefined();
     }
   });
@@ -641,5 +642,393 @@ describe("failures", () => {
     expect(delivery.processedAt).toBeNull();
     expect(delivery.error).not.toBeNull();
     expect(delivery.error).not.toContain(INSTALLATION_TOKEN);
+  });
+});
+
+describe("workflow_run (SPEC §2 step 4, §2.1)", () => {
+  const CI_YAML = "on: [push, pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n";
+  const DEPLOY_YAML =
+    "on: push\njobs:\n  deploy:\n    environment: production\n    runs-on: ubuntu-latest\n";
+
+  interface Watched {
+    installationId: bigint;
+    orgId: string;
+    repoId: string;
+    fullName: string;
+    githubRepoId: bigint;
+    ci: bigint;
+    lint: bigint;
+    deploy: bigint;
+  }
+
+  function recordingDeps() {
+    const scheduled: { orgId: string; failureId: string; at: Date }[] = [];
+    const deps: WebhookProcessorDeps = {
+      ...testDeps(),
+      scheduleWindowClose: (orgId, failureId, at) => {
+        scheduled.push({ orgId, failureId, at });
+        return Promise.resolve();
+      },
+    };
+    return { deps, scheduled };
+  }
+
+  /** An installed org with one enabled repo: CI and Lint watched (CI-looking), Deploy not. */
+  async function watchedRepo(deps: WebhookProcessorDeps): Promise<Watched> {
+    mockInstallationToken();
+    const login = `org-${randomUUID().slice(0, 8)}`;
+    const repo: RepoFixture = {
+      githubRepoId: githubId(),
+      fullName: `${login}/app`,
+      defaultBranch: "main",
+    };
+    const [ci, lint, deploy] = [githubId(), githubId(), githubId()];
+    mockInstallationRepositories([repo]);
+    mockWorkflowsFor(repo.fullName, [
+      { githubWorkflowId: ci, path: ".github/workflows/ci.yml", name: "CI", content: CI_YAML },
+      {
+        githubWorkflowId: lint,
+        path: ".github/workflows/lint.yml",
+        name: "Lint",
+        content: CI_YAML,
+      },
+      {
+        githubWorkflowId: deploy,
+        path: ".github/workflows/deploy.yml",
+        name: "Deploy",
+        content: DEPLOY_YAML,
+      },
+    ]);
+    const installationId = githubId();
+    await submit(
+      deps,
+      "installation",
+      "created",
+      installationPayload({
+        installation: {
+          id: Number(installationId),
+          account: { id: Number(githubId()), login, type: "Organization" },
+        },
+      }),
+    );
+    // From here on, only the GitHub calls a test mocks itself are allowed.
+    github.resetHandlers();
+    const org = await db.organization.findUniqueOrThrow({ where: { installationId } });
+    const system = await forSystem(db, org.id, "test");
+    const stored = present(
+      await system.repositories.findByGithubId(repo.githubRepoId),
+      "synced repository",
+    );
+    await system.repositories.setEnabled(stored.id, true);
+    return {
+      installationId,
+      orgId: org.id,
+      repoId: stored.id,
+      fullName: repo.fullName,
+      githubRepoId: repo.githubRepoId,
+      ci,
+      lint,
+      deploy,
+    };
+  }
+
+  function runPayload(w: Watched, run: Record<string, unknown> = {}) {
+    const repository = { id: Number(w.githubRepoId), full_name: w.fullName };
+    const id = Number(githubId());
+    return {
+      action: "completed",
+      installation: { id: Number(w.installationId) },
+      repository,
+      workflow_run: {
+        id,
+        run_attempt: 1,
+        workflow_id: Number(w.ci),
+        name: "CI",
+        path: ".github/workflows/ci.yml",
+        head_sha: HEAD_SHA,
+        head_branch: "feature/checkout",
+        event: "push",
+        status: "completed",
+        conclusion: "failure",
+        html_url: `https://github.com/${w.fullName}/actions/runs/${String(id)}`,
+        repository,
+        head_repository: repository,
+        ...run,
+      },
+    };
+  }
+
+  function repoApi(w: Watched): string {
+    return `https://api.github.com/repos/${w.fullName}`;
+  }
+
+  function mockJobs(w: Watched, jobs: { name: string; conclusion: string; failedStep?: string }[]) {
+    github.use(
+      http.get(`${repoApi(w)}/actions/runs/:runId/attempts/:attempt/jobs`, ({ params }) =>
+        HttpResponse.json({
+          total_count: jobs.length,
+          jobs: jobs.map((job, index) => ({
+            id: 7000 + index,
+            run_id: Number(params.runId),
+            run_attempt: Number(params.attempt),
+            name: job.name,
+            status: "completed",
+            conclusion: job.conclusion,
+            html_url: null,
+            steps: [
+              { name: "Set up job", number: 1, conclusion: "success" },
+              { name: job.failedStep ?? "Run", number: 2, conclusion: job.conclusion },
+            ],
+          })),
+        }),
+      ),
+    );
+  }
+
+  /** `GET /actions/runs?head_sha=`: the commit's runs, for the early window close. */
+  function mockRunsForSha(w: Watched, runs: { workflowId: bigint; status: string }[]) {
+    const repository = { id: Number(w.githubRepoId), full_name: w.fullName };
+    github.use(
+      http.get(`${repoApi(w)}/actions/runs`, () =>
+        HttpResponse.json({
+          total_count: runs.length,
+          workflow_runs: runs.map((run, index) => ({
+            id: 9000 + index,
+            run_attempt: 1,
+            workflow_id: Number(run.workflowId),
+            name: "run",
+            path: ".github/workflows/x.yml",
+            head_sha: HEAD_SHA,
+            head_branch: "feature/checkout",
+            event: "push",
+            status: run.status,
+            conclusion: run.status === "completed" ? "failure" : null,
+            html_url: "https://github.com/x",
+            repository,
+            head_repository: repository,
+          })),
+        }),
+      ),
+    );
+  }
+
+  async function failureOf(w: Watched, headSha = HEAD_SHA) {
+    const system = await forSystem(db, w.orgId, "test");
+    return system.failures.findBySha(w.repoId, headSha);
+  }
+
+  it("records a failed run of a watched workflow: its failed jobs, and the window's timer", async () => {
+    const { deps, scheduled } = recordingDeps();
+    const w = await watchedRepo(deps);
+    mockJobs(w, [
+      { name: "test", conclusion: "failure", failedStep: "Test" },
+      { name: "build", conclusion: "success" },
+    ]);
+    // Lint hasn't finished for this commit: the window stays open.
+    mockRunsForSha(w, [
+      { workflowId: w.ci, status: "completed" },
+      { workflowId: w.lint, status: "in_progress" },
+    ]);
+    const payload = runPayload(w);
+
+    await submit(deps, "workflow_run", "completed", payload);
+
+    const failure = present(await failureOf(w), "failure");
+    expect(failure).toMatchObject({
+      status: "DETECTED",
+      headBranch: "feature/checkout",
+      windowClosedAt: null,
+    });
+    expect(failure.runs).toMatchObject([
+      {
+        runId: BigInt(payload.workflow_run.id),
+        workflowName: "CI",
+        workflowPath: ".github/workflows/ci.yml",
+        conclusion: "failure",
+        jobs: [{ name: "test", failedStep: "Test" }],
+      },
+    ]);
+    expect(scheduled).toEqual([
+      { orgId: w.orgId, failureId: failure.id, at: failure.windowClosesAt },
+    ]);
+  });
+
+  it("closes the window early once every watched run of the commit has completed", async () => {
+    const { deps } = recordingDeps();
+    const w = await watchedRepo(deps);
+    mockJobs(w, [{ name: "test", conclusion: "failure" }]);
+    mockRunsForSha(w, [
+      { workflowId: w.ci, status: "completed" },
+      { workflowId: w.lint, status: "in_progress" },
+    ]);
+    await submit(deps, "workflow_run", "completed", runPayload(w));
+    expect((await failureOf(w))?.windowClosedAt).toBeNull();
+
+    mockRunsForSha(w, [
+      { workflowId: w.ci, status: "completed" },
+      { workflowId: w.lint, status: "completed" },
+      // An unwatched workflow still running doesn't hold the window open.
+      { workflowId: w.deploy, status: "in_progress" },
+    ]);
+    await submit(
+      deps,
+      "workflow_run",
+      "completed",
+      runPayload(w, {
+        workflow_id: Number(w.lint),
+        path: ".github/workflows/lint.yml",
+        conclusion: "success",
+      }),
+    );
+
+    expect((await failureOf(w))?.windowClosedAt).toBeInstanceOf(Date);
+  });
+
+  it("makes the failure FLAKY when the failed run passes on a re-run", async () => {
+    const { deps } = recordingDeps();
+    const w = await watchedRepo(deps);
+    mockJobs(w, [{ name: "test", conclusion: "failure" }]);
+    mockRunsForSha(w, [{ workflowId: w.ci, status: "completed" }]);
+    const failed = runPayload(w);
+    await submit(deps, "workflow_run", "completed", failed);
+
+    await submit(deps, "workflow_run", "completed", {
+      ...failed,
+      workflow_run: { ...failed.workflow_run, run_attempt: 2, conclusion: "success" },
+    });
+
+    const failure = present(await failureOf(w), "failure");
+    expect(failure.status).toBe("FLAKY");
+    expect(failure.runs).toMatchObject([{ runAttempt: 2, conclusion: "success" }]);
+  });
+
+  it("records a timed-out run as timed_out", async () => {
+    const { deps } = recordingDeps();
+    const w = await watchedRepo(deps);
+    mockJobs(w, [{ name: "test", conclusion: "timed_out" }]);
+    mockRunsForSha(w, [{ workflowId: w.ci, status: "completed" }]);
+
+    await submit(deps, "workflow_run", "completed", runPayload(w, { conclusion: "timed_out" }));
+
+    expect((await failureOf(w))?.runs).toMatchObject([
+      { conclusion: "timed_out", jobs: [{ name: "test" }] },
+    ]);
+  });
+
+  it("discovers a workflow added after the repository was synced, and watches it if it looks like CI", async () => {
+    const { deps } = recordingDeps();
+    const w = await watchedRepo(deps);
+    const [tests, release] = [githubId(), githubId()];
+    mockInstallationToken();
+    mockWorkflowsFor(w.fullName, [
+      { githubWorkflowId: w.ci, path: ".github/workflows/ci.yml", name: "CI", content: CI_YAML },
+      {
+        githubWorkflowId: tests,
+        path: ".github/workflows/tests.yml",
+        name: "Tests",
+        content: CI_YAML,
+      },
+      {
+        githubWorkflowId: release,
+        path: ".github/workflows/release.yml",
+        name: "Release",
+        content: CI_YAML,
+      },
+    ]);
+    mockJobs(w, [{ name: "unit", conclusion: "failure" }]);
+    mockRunsForSha(w, [{ workflowId: tests, status: "completed" }]);
+
+    await submit(
+      deps,
+      "workflow_run",
+      "completed",
+      runPayload(w, {
+        workflow_id: Number(tests),
+        name: "Tests",
+        path: ".github/workflows/tests.yml",
+      }),
+    );
+    await submit(
+      deps,
+      "workflow_run",
+      "completed",
+      runPayload(w, {
+        workflow_id: Number(release),
+        name: "Release",
+        path: ".github/workflows/release.yml",
+        head_sha: "e".repeat(40),
+      }),
+    );
+
+    const workflows = await db.repoWorkflow.findMany({ where: { repoId: w.repoId } });
+    expect(workflows.find((wf) => wf.githubWorkflowId === tests)?.selected).toBe(true);
+    expect(workflows.find((wf) => wf.githubWorkflowId === release)?.selected).toBe(false);
+    expect((await failureOf(w))?.runs).toMatchObject([
+      { workflowPath: ".github/workflows/tests.yml" },
+    ]);
+    await expect(failureOf(w, "e".repeat(40))).resolves.toBeNull();
+  });
+
+  it("ignores a failure of a workflow that isn't watched", async () => {
+    const { deps } = recordingDeps();
+    const w = await watchedRepo(deps);
+    mockInstallationToken();
+
+    await submit(
+      deps,
+      "workflow_run",
+      "completed",
+      runPayload(w, { workflow_id: Number(w.deploy), path: ".github/workflows/deploy.yml" }),
+    );
+
+    await expect(failureOf(w)).resolves.toBeNull();
+  });
+
+  // No GitHub mocks are registered: any GitHub call would fail the delivery.
+  it.each([
+    ["a run from a fork", { head_repository: { id: 1, full_name: "someone/app" } }],
+    ["a run without a head repository (fails closed)", { head_repository: null }],
+    ["a run on a PipeHeal branch", { head_branch: "pipeheal/abc123-1" }],
+    ["a run of the healer workflow", { path: ".github/workflows/pipeheal.yml" }],
+  ])("ignores %s without calling GitHub", async (_case, run) => {
+    const { deps, scheduled } = recordingDeps();
+    const w = await watchedRepo(deps);
+
+    await submit(deps, "workflow_run", "completed", runPayload(w, run));
+
+    await expect(failureOf(w)).resolves.toBeNull();
+    expect(scheduled).toEqual([]);
+  });
+
+  it("ignores unfinished runs, and passing runs of commits that never failed, without calling GitHub", async () => {
+    const { deps } = recordingDeps();
+    const w = await watchedRepo(deps);
+
+    await submit(deps, "workflow_run", "requested", {
+      ...runPayload(w, { status: "queued", conclusion: null }),
+      action: "requested",
+    });
+    await submit(deps, "workflow_run", "completed", runPayload(w, { conclusion: "success" }));
+    await submit(deps, "workflow_run", "completed", runPayload(w, { conclusion: "cancelled" }));
+
+    await expect(failureOf(w)).resolves.toBeNull();
+  });
+
+  it("ignores a disabled repository, a suspended organization and an unknown installation", async () => {
+    const { deps } = recordingDeps();
+    const w = await watchedRepo(deps);
+    const system = await forSystem(db, w.orgId, "test");
+
+    await system.repositories.setEnabled(w.repoId, false);
+    await submit(deps, "workflow_run", "completed", runPayload(w));
+    await system.repositories.setEnabled(w.repoId, true);
+    await db.organization.update({ where: { id: w.orgId }, data: { status: "SUSPENDED" } });
+    await submit(deps, "workflow_run", "completed", runPayload(w));
+    await submit(deps, "workflow_run", "completed", {
+      ...runPayload(w),
+      installation: { id: Number(githubId()) },
+    });
+
+    await expect(failureOf(w)).resolves.toBeNull();
   });
 });

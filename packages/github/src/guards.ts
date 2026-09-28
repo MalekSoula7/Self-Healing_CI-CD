@@ -9,6 +9,9 @@ export class GuardError extends Error {
 /** Branches the App creates and writes to (SPEC §9). */
 export const HEAL_BRANCH_PREFIX = "pipeheal/";
 
+/** The healer workflow's fixed path (SPEC §5.3): its own runs are never failures to heal. */
+export const HEALER_WORKFLOW_PATH = ".github/workflows/pipeheal.yml";
+
 const HEAL_BRANCH = /^pipeheal\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
 export function isHealBranch(branch: string): boolean {
