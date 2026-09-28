@@ -527,6 +527,63 @@ describe("audit", () => {
     expect(await latestAudit(a)).toMatchObject({ action: "repository.readded" });
   });
 
+  it("discovers a workflow's triggers and environment use, and keeps them when a later sync can't tell", async () => {
+    const workflowId = githubId();
+
+    const [discovered] = await a.system.workflows.syncInstalled(a.repo.id, [
+      {
+        githubWorkflowId: workflowId,
+        path: ".github/workflows/ci.yml",
+        name: "CI",
+        triggers: ["push", "pull_request"],
+        usesEnvironment: false,
+      },
+    ]);
+    expect(discovered).toMatchObject({ triggers: ["push", "pull_request"], usesEnvironment: false });
+    expect(await latestAudit(a)).toMatchObject({ action: "workflow.discovered" });
+
+    // A later sync that can't fetch the file's content (undefined) keeps the known facts.
+    const [unchanged] = await a.system.workflows.syncInstalled(a.repo.id, [
+      { githubWorkflowId: workflowId, path: ".github/workflows/ci.yml", name: "CI" },
+    ]);
+    expect(unchanged).toMatchObject({ triggers: ["push", "pull_request"], usesEnvironment: false });
+
+    // A sync that *can* fetch it updates the stored facts and writes one audit row.
+    const countBeforeUpdate = await auditCount(a);
+    const [updated] = await a.system.workflows.syncInstalled(a.repo.id, [
+      {
+        githubWorkflowId: workflowId,
+        path: ".github/workflows/ci.yml",
+        name: "CI",
+        triggers: ["workflow_dispatch"],
+        usesEnvironment: true,
+      },
+    ]);
+    expect(updated).toMatchObject({ triggers: ["workflow_dispatch"], usesEnvironment: true });
+    expect(await auditCount(a)).toBe(countBeforeUpdate + 1);
+    expect(await latestAudit(a)).toMatchObject({ action: "workflow.updated" });
+  });
+
+  it("applies the CI-looking pre-selection only at discovery, never on a later sync", async () => {
+    const workflowId = githubId();
+    const workflow = { githubWorkflowId: workflowId, path: ".github/workflows/ci.yml", name: "CI" };
+
+    const [discovered] = await a.system.workflows.syncInstalled(a.repo.id, [
+      { ...workflow, selected: true },
+    ]);
+    expect(discovered).toMatchObject({ selected: true });
+
+    // An admin then turns it off on /[org]/repos/[repo]...
+    await a.system.workflows.setSelected(present(discovered, "discovered workflow").id, false);
+
+    // ...and a later sync passing `selected: true` again (the heuristic re-run on new facts)
+    // must not flip the admin's choice back.
+    const [resynced] = await a.system.workflows.syncInstalled(a.repo.id, [
+      { ...workflow, selected: true },
+    ]);
+    expect(resynced).toMatchObject({ selected: false });
+  });
+
   it("records installs, reinstalls, renames and status changes", async () => {
     const githubAccountId = githubId();
     const login = uniqueLogin();

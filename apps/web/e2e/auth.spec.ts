@@ -11,6 +11,34 @@ test("a signed-out visitor of an org page is sent to sign-in, and back afterward
   await expect(page.locator('input[name="next"]')).toHaveValue("/acme/repos?tab=all");
 });
 
+test("a signed-out visitor of a repo's workflow picker is sent to sign-in, and back afterwards", async ({
+  page,
+}) => {
+  await page.goto("/acme/repos/00000000-0000-0000-0000-000000000000");
+
+  await expect(page).toHaveURL(
+    /\/login\?next=%2Facme%2Frepos%2F00000000-0000-0000-0000-000000000000$/,
+  );
+});
+
+test("a signed-out visitor of onboarding is sent to sign-in, and back afterwards", async ({
+  page,
+}) => {
+  await page.goto("/onboarding");
+
+  await expect(page).toHaveURL(/\/login\?next=%2Fonboarding$/);
+});
+
+test("a signed-out visitor of the post-install callback is sent to sign-in, keeping the query", async ({
+  page,
+}) => {
+  await page.goto("/onboarding/installed?installation_id=123&setup_action=install");
+
+  await expect(page).toHaveURL(
+    /\/login\?next=%2Fonboarding%2Finstalled%3Finstallation_id%3D123%26setup_action%3Dinstall$/,
+  );
+});
+
 for (const next of ["//evil.example/steal", "/.//evil.example", "/%2e%2e//evil.example"]) {
   test(`sign-in never sends the user to another site afterwards (next=${next})`, async ({
     page,

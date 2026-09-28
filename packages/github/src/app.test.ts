@@ -462,6 +462,34 @@ describe("files and comparisons", () => {
   });
 });
 
+describe("branches", () => {
+  it("returns the commit SHA a branch points at", async () => {
+    let path = "";
+    mockServer.use(
+      http.get(`${REPO}/git/ref/*`, ({ request }) => {
+        path = decodeURIComponent(new URL(request.url).pathname);
+        return HttpResponse.json({ ref: "refs/heads/main", object: { sha: SHA_A, type: "commit" } });
+      }),
+    );
+
+    await expect((await repo()).getBranchSha("main")).resolves.toBe(SHA_A);
+
+    expect(path).toBe("/repos/octo-org/app/git/ref/heads/main");
+  });
+
+  it("returns null for a branch that doesn't exist", async () => {
+    mockServer.use(
+      http.get(`${REPO}/git/ref/*`, () => HttpResponse.json({ message: "Not Found" }, { status: 404 })),
+    );
+
+    await expect((await repo()).getBranchSha("no-such-branch")).resolves.toBeNull();
+  });
+
+  it("refuses an invalid branch name before calling GitHub", async () => {
+    await expect((await repo()).getBranchSha("../etc")).rejects.toThrow(GuardError);
+  });
+});
+
 describe("actions", () => {
   it("lists workflows", async () => {
     mockServer.use(

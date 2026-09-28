@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { githubLoginSchema, installedRepositorySchema } from "./inputs";
+import { githubLoginSchema, installedRepositorySchema, installedWorkflowSchema } from "./inputs";
 import { hasRole } from "./scope";
 
 describe("githubLoginSchema", () => {
@@ -39,6 +39,36 @@ describe("installedRepositorySchema", () => {
     { ...repo, extra: true },
   ])("rejects %o", (input) => {
     expect(installedRepositorySchema.safeParse(input).success).toBe(false);
+  });
+});
+
+describe("installedWorkflowSchema", () => {
+  const workflow = { githubWorkflowId: 1n, path: ".github/workflows/ci.yml", name: "CI" };
+
+  it("accepts a workflow with known facts, and without them", () => {
+    expect(
+      installedWorkflowSchema.parse({ ...workflow, triggers: ["push"], usesEnvironment: false }),
+    ).toEqual({ ...workflow, triggers: ["push"], usesEnvironment: false });
+    expect(installedWorkflowSchema.parse(workflow)).toEqual(workflow);
+  });
+
+  it("accepts the CI-looking heuristic's suggested selection", () => {
+    expect(installedWorkflowSchema.parse({ ...workflow, selected: true })).toEqual({
+      ...workflow,
+      selected: true,
+    });
+  });
+
+  it.each([
+    { ...workflow, githubWorkflowId: 0n },
+    { ...workflow, path: "" },
+    { ...workflow, name: "" },
+    { ...workflow, triggers: Array.from({ length: 51 }, () => "push") },
+    { ...workflow, usesEnvironment: "yes" },
+    { ...workflow, selected: "yes" },
+    { ...workflow, extra: true },
+  ])("rejects %o", (input) => {
+    expect(installedWorkflowSchema.safeParse(input).success).toBe(false);
   });
 });
 

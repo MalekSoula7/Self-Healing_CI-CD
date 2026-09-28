@@ -33,6 +33,14 @@ export const installedWorkflowSchema = z.strictObject({
   // Repo-relative POSIX path, e.g. ".github/workflows/ci.yml".
   path: z.string().min(1).max(500),
   name: z.string().min(1).max(255),
+  // Both undefined when the workflow file couldn't be fetched or parsed (SPEC §11, §6.2 step 8):
+  // callers keep any previously known facts rather than overwriting them with empty defaults.
+  triggers: z.array(z.string().min(1).max(100)).max(50).optional(),
+  usesEnvironment: z.boolean().optional(),
+  // The "CI-looking" heuristic's suggestion (SPEC §11), applied only the moment a workflow is
+  // first discovered (see syncInstalled): once a workflow exists, only the admin's own choice on
+  // /[org]/repos/[repo] can change `selected`, so this is ignored on every later sync.
+  selected: z.boolean().optional(),
 });
 export type InstalledWorkflow = z.infer<typeof installedWorkflowSchema>;
 

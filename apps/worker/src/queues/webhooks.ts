@@ -16,11 +16,14 @@ import {
   type GitHubApp,
   type InstallationEvent,
   type InstallationRepositoriesEvent,
+  type RepoClient,
+  type Workflow,
 } from "@pipeheal/github";
 import { redactText, webhookJobDataSchema, WEBHOOKS_QUEUE } from "@pipeheal/shared";
 import type { Logger } from "@pipeheal/shared/logger";
 import { Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
+import { isCiLooking, parseWorkflowYaml, type WorkflowFacts } from "./workflow-yaml";
 
 export interface WebhookProcessorDeps {
   db: Db;
@@ -73,16 +76,54 @@ async function syncRepositoriesAndWorkflows(
   }
 
   for (const repo of synced) {
-    const workflows = await client.repo(repo.fullName).listWorkflows();
+    const repoClient = client.repo(repo.fullName);
+    const workflows = await repoClient.listWorkflows();
+    const facts = await workflowFacts(repoClient, repo.defaultBranch, workflows, log);
     await system.workflows.syncInstalled(
       repo.id,
-      workflows.map((workflow) => ({
-        githubWorkflowId: workflow.id,
-        path: workflow.path,
-        name: workflow.name,
-      })),
+      workflows.map((workflow) => {
+        const known = facts.get(workflow.id);
+        return {
+          githubWorkflowId: workflow.id,
+          path: workflow.path,
+          name: workflow.name,
+          ...known,
+          // Only meaningful the moment a workflow is first discovered (syncInstalled ignores it
+          // afterward); omitted when facts couldn't be determined, so a brand-new workflow just
+          // starts unselected like any other unknown.
+          ...(known === undefined
+            ? {}
+            : { selected: isCiLooking({ ...known, name: workflow.name, path: workflow.path }) }),
+        };
+      }),
     );
   }
+}
+
+/**
+ * Each workflow's triggers and `environment:` use (SPEC §11's pre-selection heuristic, §6.2
+ * step 8's re-run guard), read from the file at the repo's default branch. Missing from the
+ * result for any workflow whose content couldn't be fetched or didn't parse: the caller then
+ * keeps whatever facts it already had, rather than overwriting them with empty defaults.
+ */
+async function workflowFacts(
+  repoClient: RepoClient,
+  defaultBranch: string,
+  workflows: readonly Workflow[],
+  log: Logger,
+): Promise<Map<bigint, WorkflowFacts>> {
+  const facts = new Map<bigint, WorkflowFacts>();
+  const headSha = await repoClient.getBranchSha(defaultBranch);
+  if (headSha === null) {
+    log.warn({ defaultBranch }, "default branch not found; keeping known workflow facts");
+    return facts;
+  }
+  for (const workflow of workflows) {
+    const file = await repoClient.getFileAtRef(workflow.path, headSha);
+    const parsed = file?.kind === "text" ? parseWorkflowYaml(file.content) : null;
+    if (parsed !== null) facts.set(workflow.id, parsed);
+  }
+  return facts;
 }
 
 async function removeAllRepositories(

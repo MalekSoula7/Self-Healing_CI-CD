@@ -3,11 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
-  getAccessToken: vi.fn(),
   authConfigured: true,
-  bind: vi.fn(),
-  listInstallations: vi.fn(),
-  listAdminOrgs: vi.fn(),
+  runOwnerBindingCheck: vi.fn(),
   warn: vi.fn(),
   info: vi.fn(),
 }));
@@ -18,16 +15,9 @@ vi.mock("@/lib/logger", () => ({
   getLogger: () => ({ child: () => ({ warn: mocks.warn, info: mocks.info }) }),
 }));
 vi.mock("@/lib/auth/server", () => ({
-  getAuth: () =>
-    mocks.authConfigured
-      ? { api: { getSession: mocks.getSession, getAccessToken: mocks.getAccessToken } }
-      : null,
+  getAuth: () => (mocks.authConfigured ? { api: { getSession: mocks.getSession } } : null),
 }));
-vi.mock("@/lib/auth/owner-binding", () => ({ bindVerifiedOwnerships: mocks.bind }));
-vi.mock("@pipeheal/github", () => ({
-  listUserInstallationIds: mocks.listInstallations,
-  listUserAdminOrgIds: mocks.listAdminOrgs,
-}));
+vi.mock("@/lib/auth/owner-binding", () => ({ runOwnerBindingCheck: mocks.runOwnerBindingCheck }));
 
 const { GET } = await import("./route");
 
@@ -40,54 +30,22 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.authConfigured = true;
   mocks.getSession.mockResolvedValue({ user: { id: "user-1" } });
-  mocks.bind.mockResolvedValue([]);
+  mocks.runOwnerBindingCheck.mockResolvedValue([]);
 });
 
 describe("GET /auth/complete", () => {
-  it("binds verified ownerships for the signed-in user, then continues on the app's own URL", async () => {
+  it("runs the owner-binding check for the signed-in user, then continues on the app's own URL", async () => {
     const response = await visit("/acme/repos");
 
-    expect(mocks.bind).toHaveBeenCalledWith(expect.anything(), "user-1");
+    expect(mocks.runOwnerBindingCheck).toHaveBeenCalledWith(
+      { fake: "db" },
+      expect.anything(),
+      expect.any(Headers),
+      "user-1",
+      expect.anything(),
+    );
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe("https://pipeheal.example/acme/repos");
-  });
-
-  it("wires the user's own decrypted token and a bounded GitHub call", async () => {
-    await visit("/");
-    const [deps] = mocks.bind.mock.calls[0] as [
-      {
-        getAccessToken: (accountId: string) => Promise<string>;
-        listInstallationIds: (token: string) => Promise<bigint[]>;
-        listAdminOrgIds: (token: string) => Promise<bigint[]>;
-      },
-    ];
-    mocks.getAccessToken.mockResolvedValue({ accessToken: "ghu_decrypted" });
-    mocks.listInstallations.mockResolvedValue([1n]);
-    mocks.listAdminOrgs.mockResolvedValue([2n]);
-
-    await expect(deps.getAccessToken("account-row")).resolves.toBe("ghu_decrypted");
-    await deps.listInstallationIds("ghu_decrypted");
-    await deps.listAdminOrgIds("ghu_decrypted");
-
-    expect(mocks.getAccessToken).toHaveBeenCalledWith(
-      expect.objectContaining({ body: { accountId: "account-row" } }),
-    );
-    for (const call of [mocks.listInstallations, mocks.listAdminOrgs]) {
-      expect(call).toHaveBeenCalledWith(
-        "ghu_decrypted",
-        expect.objectContaining({ retries: 1, timeoutMs: 5_000 }),
-      );
-    }
-  });
-
-  it("still signs the user in when the check fails, and logs no token", async () => {
-    mocks.bind.mockRejectedValue(new Error("GitHub is down"));
-
-    const response = await visit("/acme");
-
-    expect(response.headers.get("location")).toBe("https://pipeheal.example/acme");
-    expect(mocks.warn).toHaveBeenCalledOnce();
-    expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain("ghu_");
   });
 
   it.each([
@@ -107,7 +65,7 @@ describe("GET /auth/complete", () => {
     const response = await visit("/acme");
 
     expect(response.headers.get("location")).toBe("https://pipeheal.example/login?next=%2Facme");
-    expect(mocks.bind).not.toHaveBeenCalled();
+    expect(mocks.runOwnerBindingCheck).not.toHaveBeenCalled();
   });
 
   it("sends everyone to sign-in when sign-in isn't configured", async () => {
@@ -116,6 +74,6 @@ describe("GET /auth/complete", () => {
     const response = await visit("/acme");
 
     expect(response.headers.get("location")).toBe("https://pipeheal.example/login?next=%2Facme");
-    expect(mocks.bind).not.toHaveBeenCalled();
+    expect(mocks.runOwnerBindingCheck).not.toHaveBeenCalled();
   });
 });

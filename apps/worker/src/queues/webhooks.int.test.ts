@@ -75,25 +75,51 @@ function mockInstallationRepositories(repos: RepoFixture[]) {
   );
 }
 
-function mockWorkflowsFor(
-  fullName: string,
-  workflows: { githubWorkflowId: bigint; path: string; name: string }[],
-) {
+const DEFAULT_WORKFLOW_YAML = "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
+const HEAD_SHA = "f".repeat(40);
+
+interface WorkflowFixture {
+  githubWorkflowId: bigint;
+  path: string;
+  name: string;
+  /** The file's content at the default branch; defaults to a plain push-triggered workflow. */
+  content?: string;
+}
+
+function mockWorkflowsFor(fullName: string, workflows: WorkflowFixture[]) {
   const [owner, repo] = fullName.split("/");
+  const base = `https://api.github.com/repos/${present(owner, "owner")}/${present(repo, "repo")}`;
   github.use(
-    http.get(
-      `https://api.github.com/repos/${present(owner, "owner")}/${present(repo, "repo")}/actions/workflows`,
-      () =>
-        HttpResponse.json({
-          total_count: workflows.length,
-          workflows: workflows.map((w) => ({
-            id: Number(w.githubWorkflowId),
-            name: w.name,
-            path: w.path,
-            state: "active",
-          })),
-        }),
+    http.get(`${base}/actions/workflows`, () =>
+      HttpResponse.json({
+        total_count: workflows.length,
+        workflows: workflows.map((w) => ({
+          id: Number(w.githubWorkflowId),
+          name: w.name,
+          path: w.path,
+          state: "active",
+        })),
+      }),
     ),
+    http.get(`${base}/git/ref/*`, () =>
+      HttpResponse.json({ ref: "refs/heads/main", object: { sha: HEAD_SHA, type: "commit" } }),
+    ),
+    http.get(`${base}/contents/*`, ({ request }) => {
+      const path = decodeURIComponent(new URL(request.url).pathname).replace(
+        `/repos/${present(owner, "owner")}/${present(repo, "repo")}/contents/`,
+        "",
+      );
+      const workflow = workflows.find((w) => w.path === path);
+      if (workflow === undefined) return HttpResponse.json({ message: "Not Found" }, { status: 404 });
+      const content = workflow.content ?? DEFAULT_WORKFLOW_YAML;
+      return HttpResponse.json({
+        type: "file",
+        path,
+        size: Buffer.byteLength(content),
+        encoding: "base64",
+        content: Buffer.from(content).toString("base64"),
+      });
+    }),
   );
 }
 
@@ -225,9 +251,90 @@ describe("installation.created", () => {
     expect(storedApp).toMatchObject({ defaultBranch: "main", enabled: false });
 
     const workflows = await db.repoWorkflow.findMany({ where: { repoId: storedApp.id } });
+    // Push-triggered, no environment, not deploy/release/publish-named: CI-looking, so it's
+    // pre-selected on discovery (SPEC §11).
     expect(workflows).toMatchObject([
-      { path: ".github/workflows/ci.yml", name: "CI", selected: false },
+      { path: ".github/workflows/ci.yml", name: "CI", selected: true },
     ]);
+  });
+
+  it("fetches each workflow's file to record its triggers and environment use", async () => {
+    mockInstallationToken();
+    const login = `org-${randomUUID().slice(0, 8)}`;
+    const repo: RepoFixture = { githubRepoId: githubId(), fullName: `${login}/app`, defaultBranch: "main" };
+    mockInstallationRepositories([repo]);
+    mockWorkflowsFor(repo.fullName, [
+      {
+        githubWorkflowId: githubId(),
+        path: ".github/workflows/ci.yml",
+        name: "CI",
+        content: "on: [push, pull_request]\njobs:\n  build:\n    runs-on: ubuntu-latest\n",
+      },
+      {
+        githubWorkflowId: githubId(),
+        path: ".github/workflows/deploy.yml",
+        name: "Deploy",
+        content: "on: workflow_dispatch\njobs:\n  deploy:\n    environment: production\n    runs-on: ubuntu-latest\n",
+      },
+    ]);
+    const deps = testDeps();
+    const payload = installationPayload({
+      installation: {
+        id: Number(githubId()),
+        account: { id: Number(githubId()), login, type: "Organization" },
+      },
+    });
+
+    await submit(deps, "installation", "created", payload);
+
+    const org = await db.organization.findUniqueOrThrow({
+      where: { installationId: BigInt(payload.installation.id) },
+    });
+    const stored = await db.repoWorkflow.findMany({
+      where: { orgId: org.id },
+      orderBy: { path: "asc" },
+    });
+    expect(stored).toMatchObject([
+      { path: ".github/workflows/ci.yml", triggers: ["push", "pull_request"], usesEnvironment: false },
+      { path: ".github/workflows/deploy.yml", triggers: ["workflow_dispatch"], usesEnvironment: true },
+    ]);
+  });
+
+  it("keeps previously known triggers when the default branch can't be found on a later sync", async () => {
+    mockInstallationToken();
+    const login = `org-${randomUUID().slice(0, 8)}`;
+    const repo: RepoFixture = { githubRepoId: githubId(), fullName: `${login}/app`, defaultBranch: "main" };
+    mockInstallationRepositories([repo]);
+    const workflow = { githubWorkflowId: githubId(), path: ".github/workflows/ci.yml", name: "CI" };
+    mockWorkflowsFor(repo.fullName, [workflow]);
+    const deps = testDeps();
+    const created = installationPayload({
+      installation: { id: Number(githubId()), account: { id: Number(githubId()), login, type: "Organization" } },
+    });
+    await submit(deps, "installation", "created", created);
+    const org = await db.organization.findUniqueOrThrow({
+      where: { installationId: BigInt(created.installation.id) },
+    });
+    await expect(
+      db.repoWorkflow.findFirst({ where: { orgId: org.id } }),
+    ).resolves.toMatchObject({ triggers: ["push"] });
+
+    // Re-sync, but this time the default branch can't be resolved (e.g. GitHub briefly errors).
+    github.use(
+      http.get(`https://api.github.com/repos/${login}/app/git/ref/*`, () =>
+        HttpResponse.json({ message: "Not Found" }, { status: 404 }),
+      ),
+    );
+    await submit(deps, "installation_repositories", "added", {
+      action: "added",
+      installation: { id: created.installation.id, account: { id: 1, login, type: "Organization" } },
+      repositories_added: [{ id: Number(repo.githubRepoId), full_name: repo.fullName }],
+      repositories_removed: [],
+    });
+
+    await expect(
+      db.repoWorkflow.findFirst({ where: { orgId: org.id } }),
+    ).resolves.toMatchObject({ triggers: ["push"] });
   });
 
   it("is idempotent: processing the same delivery twice creates nothing extra", async () => {

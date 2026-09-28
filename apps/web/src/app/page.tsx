@@ -22,18 +22,30 @@ export default async function HomePage() {
           </Button>
         </div>
       ) : memberships.length === 0 ? (
-        <p>You don&apos;t belong to an organization yet. Install the GitHub App to get started.</p>
+        <div className="flex flex-col gap-3">
+          <p>You don&apos;t belong to an organization yet.</p>
+          <div>
+            <Button asChild>
+              <Link href="/onboarding">Install GitHub App</Link>
+            </Button>
+          </div>
+        </div>
       ) : (
-        <ul className="flex flex-col gap-2">
-          {memberships.map(({ org, role }) => (
-            <li key={org.id}>
-              <Link href={`/${org.slug}`} className="underline">
-                {org.login}
-              </Link>{" "}
-              <span className="text-sm text-muted-foreground">({role.toLowerCase()})</span>
-            </li>
-          ))}
-        </ul>
+        <div className="flex flex-col gap-4">
+          <ul className="flex flex-col gap-2">
+            {memberships.map(({ org, role }) => (
+              <li key={org.id}>
+                <Link href={`/${org.slug}`} className="underline">
+                  {org.login}
+                </Link>{" "}
+                <span className="text-sm text-muted-foreground">({role.toLowerCase()})</span>
+              </li>
+            ))}
+          </ul>
+          <Link href="/onboarding" className="text-sm text-muted-foreground underline">
+            Install PipeHeal on another account
+          </Link>
+        </div>
       )}
     </main>
   );

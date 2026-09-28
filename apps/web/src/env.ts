@@ -38,6 +38,9 @@ export const webEnvSchema = z
     // Independent of sign-in: the webhook route (P1.6) works whether or not sign-in is
     // configured. Unset in development, it answers 503 instead of failing to start.
     GITHUB_WEBHOOK_SECRET: webhookSecretSchema.optional(),
+    // The App's public page is github.com/apps/<slug>; the install link is built from it
+    // (P1.7). Unset in development, /onboarding says installing isn't configured yet.
+    GITHUB_APP_SLUG: nonEmpty.optional(),
   })
   .superRefine((env, ctx) => {
     const missing = SIGN_IN_KEYS.filter((key) => env[key] === undefined);
@@ -72,6 +75,7 @@ const productionSchema = z.object({
   GITHUB_CLIENT_ID: nonEmpty,
   GITHUB_CLIENT_SECRET: nonEmpty,
   GITHUB_WEBHOOK_SECRET: webhookSecretSchema,
+  GITHUB_APP_SLUG: nonEmpty,
 });
 
 export type WebEnv = z.output<typeof webEnvSchema>;
@@ -101,6 +105,13 @@ export function githubSignInConfig(env: WebEnv): GitHubSignInConfig | null {
   const clientSecret = env.GITHUB_CLIENT_SECRET;
   if (secret === undefined || clientId === undefined || clientSecret === undefined) return null;
   return { secret, clientId, clientSecret };
+}
+
+/** Where "Install GitHub App" sends the user, or null when GITHUB_APP_SLUG isn't set. */
+export function githubAppInstallUrl(env: WebEnv): string | null {
+  return env.GITHUB_APP_SLUG === undefined
+    ? null
+    : `https://github.com/apps/${env.GITHUB_APP_SLUG}/installations/new`;
 }
 
 let cached: WebEnv | undefined;

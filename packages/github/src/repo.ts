@@ -452,6 +452,21 @@ export function repoClient(octokit: Octokit, fullName: string) {
         : { kind: "text", content: text, bytes: bytes.byteLength };
     },
 
+    /** The commit SHA a branch currently points at, or null if the branch doesn't exist. */
+    async getBranchSha(branch: string): Promise<string | null> {
+      assertBranchName(branch);
+      try {
+        const { data } = await octokit.request("GET /repos/{owner}/{repo}/git/ref/{ref}", {
+          ...where,
+          ref: `heads/${branch}`,
+        });
+        return sha.parse(z.object({ object: z.object({ sha }) }).parse(data).object.sha);
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
+
     async listWorkflows(): Promise<Workflow[]> {
       const workflows: unknown[] = await octokit.paginate(
         "GET /repos/{owner}/{repo}/actions/workflows",

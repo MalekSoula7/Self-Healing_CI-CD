@@ -65,6 +65,11 @@ function requireId(value: string, kind: string): string {
   return id;
 }
 
+/** Trigger names come from the workflow file's own `on:` order, stable across identical content. */
+function triggersEqual(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((trigger, index) => trigger === b[index]);
+}
+
 function requireRole(ctx: ScopeContext, minimum: Role): void {
   if (!hasRole(ctx.role, minimum)) throw new ForbiddenError(`requires the ${minimum} role`);
 }
@@ -273,7 +278,9 @@ function buildSystemScope(ctx: ScopeContext) {
 
       /**
        * Upserts the workflows GitHub reports for one repository of this org (at most
-       * SYNC_BATCH_LIMIT). New ones start unselected; onboarding (P1.7) chooses which to watch.
+       * SYNC_BATCH_LIMIT). A newly discovered workflow starts `selected` as given (the
+       * "CI-looking" heuristic's suggestion, SPEC §11); once a workflow exists, only the admin's
+       * choice on /[org]/repos/[repo] can change it — a later sync never touches `selected`.
        */
       async syncInstalled(repoId: string, workflows: readonly InstalledWorkflow[]) {
         const id = requireId(repoId, "repository");
@@ -303,14 +310,24 @@ function buildSystemScope(ctx: ScopeContext) {
               results.push(created);
               continue;
             }
-            const changed = existing.path !== workflow.path || existing.name !== workflow.name;
+            const { triggers, usesEnvironment } = workflow;
+            const changed =
+              existing.path !== workflow.path ||
+              existing.name !== workflow.name ||
+              (triggers !== undefined && !triggersEqual(existing.triggers, triggers)) ||
+              (usesEnvironment !== undefined && existing.usesEnvironment !== usesEnvironment);
             if (!changed) {
               results.push(existing);
               continue;
             }
             const updated = await tx.repoWorkflow.update({
               where: { id: existing.id },
-              data: { path: workflow.path, name: workflow.name },
+              data: {
+                path: workflow.path,
+                name: workflow.name,
+                ...(triggers === undefined ? {} : { triggers }),
+                ...(usesEnvironment === undefined ? {} : { usesEnvironment }),
+              },
             });
             await writeAudit(tx, orgId, actor, {
               action: "workflow.updated",

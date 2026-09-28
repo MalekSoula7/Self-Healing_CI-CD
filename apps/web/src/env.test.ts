@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { EnvValidationError } from "@pipeheal/shared";
 import { describe, expect, it } from "vitest";
-import { githubSignInConfig, loadWebEnv, webEnvSchema } from "./env";
+import { githubAppInstallUrl, githubSignInConfig, loadWebEnv, webEnvSchema } from "./env";
 
 const signIn = {
   BETTER_AUTH_SECRET: "x".repeat(32),
@@ -15,6 +15,7 @@ const production = {
   DATABASE_URL: "postgresql://app:pw@db.internal:5432/pipeheal?sslmode=verify-full",
   REDIS_URL: "rediss://cache.internal:6380",
   GITHUB_WEBHOOK_SECRET: "w".repeat(32),
+  GITHUB_APP_SLUG: "pipeheal-dev",
   ...signIn,
 };
 
@@ -39,6 +40,13 @@ describe("web env", () => {
       REDIS_URL: "redis://localhost:6379",
     });
     expect(githubSignInConfig(env)).toBeNull();
+    expect(githubAppInstallUrl(env)).toBeNull();
+  });
+
+  it("builds the install URL from GITHUB_APP_SLUG", () => {
+    expect(githubAppInstallUrl(loadWebEnv({ GITHUB_APP_SLUG: "pipeheal-dev" }))).toBe(
+      "https://github.com/apps/pipeheal-dev/installations/new",
+    );
   });
 
   it("turns GitHub sign-in on when its three settings are set", () => {
@@ -71,6 +79,7 @@ describe("web env", () => {
       "APP_URL",
       "BETTER_AUTH_SECRET",
       "DATABASE_URL",
+      "GITHUB_APP_SLUG",
       "GITHUB_CLIENT_ID",
       "GITHUB_CLIENT_SECRET",
       "GITHUB_WEBHOOK_SECRET",
