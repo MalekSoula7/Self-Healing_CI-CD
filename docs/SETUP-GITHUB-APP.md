@@ -34,7 +34,7 @@ Open **the sandbox organization** → **Settings** → **Developer settings** �
 | Expire user authorization tokens | **checked** (the default; PipeHeal refreshes them) |
 | Request user authorization (OAuth) during installation | **unchecked** (sign-in has its own flow, and this option disables the Setup URL) |
 | Enable Device Flow | unchecked |
-| Setup URL | `http://localhost:3000/onboarding/installed` (built in P1.7; a 404 until then) |
+| Setup URL | `http://localhost:3000/onboarding/installed` |
 | Redirect on update | **checked** |
 | Webhook: Active | **checked** |
 | Webhook URL | your smee.io URL from step 2 |
