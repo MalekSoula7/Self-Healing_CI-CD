@@ -89,8 +89,9 @@ describe("migrations", () => {
     expect(applied.map((row) => row.migration_name)).toEqual(migrationDirs);
   });
 
-  // Catches a schema.prisma change committed without its migration.
-  it("produce exactly the database described by schema.prisma", () => {
+  // Catches a schema.prisma change committed without its migration. Runs the Prisma CLI (and its
+  // schema engine) as a subprocess: 3-5 s on Windows under a full test run, over Vitest's default.
+  it("produce exactly the database described by schema.prisma", { timeout: 30_000 }, () => {
     const diff = runPrisma(
       [
         "migrate",

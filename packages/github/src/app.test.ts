@@ -490,6 +490,17 @@ describe("branches", () => {
     await expect((await repo()).getBranchSha("no-such-branch")).resolves.toBeNull();
   });
 
+  // Seen on a real installation: a repository created without any commit.
+  it("returns null for an empty repository, which GitHub answers with 409", async () => {
+    mockServer.use(
+      http.get(`${REPO}/git/ref/*`, () =>
+        HttpResponse.json({ message: "Git Repository is empty." }, { status: 409 }),
+      ),
+    );
+
+    await expect((await repo()).getBranchSha("main")).resolves.toBeNull();
+  });
+
   it("refuses an invalid branch name before calling GitHub", async () => {
     await expect((await repo()).getBranchSha("../etc")).rejects.toThrow(GuardError);
   });

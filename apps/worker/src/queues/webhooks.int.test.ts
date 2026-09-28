@@ -361,6 +361,58 @@ describe("installation.created", () => {
     });
   });
 
+  // Seen on a real installation: GitHub answers 409 "Git Repository is empty." for any ref of a
+  // repository without commits. That must not fail the delivery (and every other repo in it).
+  it("syncs an empty repository (no commits, no workflows) without failing the delivery", async () => {
+    mockInstallationToken();
+    const login = `org-${randomUUID().slice(0, 8)}`;
+    const empty: RepoFixture = {
+      githubRepoId: githubId(),
+      fullName: `${login}/empty`,
+      defaultBranch: "main",
+    };
+    const app: RepoFixture = {
+      githubRepoId: githubId(),
+      fullName: `${login}/app`,
+      defaultBranch: "main",
+    };
+    mockInstallationRepositories([empty, app]);
+    mockWorkflowsFor(empty.fullName, []);
+    mockWorkflowsFor(app.fullName, [
+      { githubWorkflowId: githubId(), path: ".github/workflows/ci.yml", name: "CI" },
+    ]);
+    github.use(
+      http.get(`https://api.github.com/repos/${login}/empty/git/ref/*`, () =>
+        HttpResponse.json({ message: "Git Repository is empty." }, { status: 409 }),
+      ),
+    );
+    const deps = testDeps();
+    const payload = installationPayload({
+      installation: {
+        id: Number(githubId()),
+        account: { id: Number(githubId()), login, type: "Organization" },
+      },
+    });
+
+    const { deliveryId } = await submit(deps, "installation", "created", payload);
+
+    await expect(
+      db.webhookDelivery.findUniqueOrThrow({ where: { deliveryId } }),
+    ).resolves.toMatchObject({ error: null, processedAt: expect.any(Date) as Date });
+    const org = await db.organization.findUniqueOrThrow({
+      where: { installationId: BigInt(payload.installation.id) },
+    });
+    const repos = await db.repository.findMany({
+      where: { orgId: org.id },
+      include: { workflows: true },
+      orderBy: { fullName: "asc" },
+    });
+    expect(repos.map((repo) => [repo.fullName, repo.workflows.length])).toEqual([
+      [app.fullName, 1],
+      [empty.fullName, 0],
+    ]);
+  });
+
   it("is idempotent: processing the same delivery twice creates nothing extra", async () => {
     mockInstallationToken();
     const login = `org-${randomUUID().slice(0, 8)}`;

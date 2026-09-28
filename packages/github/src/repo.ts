@@ -452,7 +452,10 @@ export function repoClient(octokit: Octokit, fullName: string) {
         : { kind: "text", content: text, bytes: bytes.byteLength };
     },
 
-    /** The commit SHA a branch currently points at, or null if the branch doesn't exist. */
+    /**
+     * The commit SHA a branch currently points at, or null if the branch doesn't exist. That
+     * includes an empty repository (no commits yet), which GitHub answers with 409, not 404.
+     */
     async getBranchSha(branch: string): Promise<string | null> {
       assertBranchName(branch);
       try {
@@ -462,7 +465,9 @@ export function repoClient(octokit: Octokit, fullName: string) {
         });
         return sha.parse(z.object({ object: z.object({ sha }) }).parse(data).object.sha);
       } catch (error) {
-        if (isNotFound(error)) return null;
+        if (isNotFound(error) || (error instanceof GitHubApiError && error.status === 409)) {
+          return null;
+        }
         throw error;
       }
     },

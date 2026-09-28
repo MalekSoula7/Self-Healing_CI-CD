@@ -45,7 +45,8 @@ When a failure can't or shouldn't be fixed by a code change (infrastructure, mis
 ### 2.2 Recovering missed events and stuck states
 
 GitHub does not redeliver failed webhook deliveries on its own, and every waiting state can hang. The `maintenance` queue runs a periodic reconciler:
-- It lists failed deliveries with the App webhook deliveries API (`GET /app/hook/deliveries`) and redelivers them (`POST /app/hook/deliveries/{id}/attempts`). Delivery-ID idempotency makes this safe.
+- It lists failed deliveries with the App webhook deliveries API (`GET /app/hook/deliveries`) and redelivers them (`POST /app/hook/deliveries/{id}/attempts`). Delivery-ID idempotency makes this safe: a redelivery of an already processed delivery is acknowledged and dropped.
+- A delivery we accepted (2xx) but whose processing the worker gave up on never shows as failed at GitHub. Redelivering it (GitHub's "Redeliver" button, for now) reruns it: the webhook route retries its failed job with fresh attempts, or re-enqueues it if the job was pruned, and leaves a job still in progress alone (P1 checkpoint follow-up). Processors are idempotent. Finding these automatically (unprocessed `WebhookDelivery` rows with an `error`) belongs with the reconciler (P5.3).
 - It enforces a timeout on every non-terminal state. Defaults (tune later):
 
 | State | Timeout | Then |

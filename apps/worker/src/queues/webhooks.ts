@@ -113,6 +113,7 @@ async function workflowFacts(
   log: Logger,
 ): Promise<Map<bigint, WorkflowFacts>> {
   const facts = new Map<bigint, WorkflowFacts>();
+  if (workflows.length === 0) return facts;
   const headSha = await repoClient.getBranchSha(defaultBranch);
   if (headSha === null) {
     log.warn({ defaultBranch }, "default branch not found; keeping known workflow facts");

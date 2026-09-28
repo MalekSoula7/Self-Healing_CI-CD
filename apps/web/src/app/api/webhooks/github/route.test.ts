@@ -6,6 +6,7 @@ interface Mocks {
   webhookSecret: string | undefined;
   recordWebhookDelivery: ReturnType<typeof vi.fn>;
   enqueueWebhookJob: ReturnType<typeof vi.fn>;
+  requeueWebhookJob: ReturnType<typeof vi.fn>;
   warn: ReturnType<typeof vi.fn>;
   info: ReturnType<typeof vi.fn>;
 }
@@ -14,6 +15,7 @@ const mocks = vi.hoisted((): Mocks => ({
   webhookSecret: "w".repeat(32),
   recordWebhookDelivery: vi.fn(),
   enqueueWebhookJob: vi.fn(),
+  requeueWebhookJob: vi.fn(),
   warn: vi.fn(),
   info: vi.fn(),
 }));
@@ -23,7 +25,10 @@ vi.mock("@/lib/db", () => ({ getDb: () => ({ fake: "db" }) }));
 vi.mock("@/lib/logger", () => ({
   getLogger: () => ({ child: () => ({ warn: mocks.warn, info: mocks.info }) }),
 }));
-vi.mock("@/lib/queue", () => ({ enqueueWebhookJob: mocks.enqueueWebhookJob }));
+vi.mock("@/lib/queue", () => ({
+  enqueueWebhookJob: mocks.enqueueWebhookJob,
+  requeueWebhookJob: mocks.requeueWebhookJob,
+}));
 vi.mock("@pipeheal/db", () => ({ recordWebhookDelivery: mocks.recordWebhookDelivery }));
 
 const { POST } = await import("./route");
@@ -57,8 +62,9 @@ function post(
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.webhookSecret = SECRET;
-  mocks.recordWebhookDelivery.mockResolvedValue({ id: "row-1", isNew: true });
+  mocks.recordWebhookDelivery.mockResolvedValue({ id: "row-1", isNew: true, processed: false });
   mocks.enqueueWebhookJob.mockResolvedValue(undefined);
+  mocks.requeueWebhookJob.mockResolvedValue("retried");
 });
 
 describe("POST /api/webhooks/github", () => {
@@ -162,13 +168,29 @@ describe("POST /api/webhooks/github", () => {
     expect(mocks.recordWebhookDelivery).not.toHaveBeenCalled();
   });
 
-  it("acknowledges a redelivered delivery ID without enqueueing again", async () => {
-    mocks.recordWebhookDelivery.mockResolvedValue({ id: "row-1", isNew: false });
+  it("acknowledges a redelivery of an already processed delivery without running it again", async () => {
+    mocks.recordWebhookDelivery.mockResolvedValue({ id: "row-1", isNew: false, processed: true });
 
     const response = await post(JSON.stringify({ action: "created" }));
 
     expect(response.status).toBe(200);
     expect(mocks.enqueueWebhookJob).not.toHaveBeenCalled();
+    expect(mocks.requeueWebhookJob).not.toHaveBeenCalled();
+  });
+
+  it("hands a redelivery of an unprocessed delivery to the requeue (rerun if the worker gave up)", async () => {
+    mocks.recordWebhookDelivery.mockResolvedValue({ id: "row-1", isNew: false, processed: false });
+
+    const response = await post(JSON.stringify({ action: "created", installation: { id: 42 } }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.enqueueWebhookJob).not.toHaveBeenCalled();
+    expect(mocks.requeueWebhookJob).toHaveBeenCalledWith({
+      deliveryId: "72d3162e-cc78-11e3-81ab-4c9367dc0958",
+      event: "installation",
+      action: "created",
+      payload: { action: "created", installation: { id: 42 } },
+    });
   });
 
   it("handles a payload without an action or installation (e.g. ping)", async () => {

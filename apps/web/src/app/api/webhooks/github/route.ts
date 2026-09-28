@@ -10,7 +10,7 @@ import { z } from "zod";
 import { webEnv } from "@/env";
 import { getDb } from "@/lib/db";
 import { getLogger } from "@/lib/logger";
-import { enqueueWebhookJob } from "@/lib/queue";
+import { enqueueWebhookJob, requeueWebhookJob } from "@/lib/queue";
 
 // A light peek at fields present on most event payloads, for delivery bookkeeping only. The
 // worker validates the full, event-specific shape before acting on anything (CLAUDE.md).
@@ -54,14 +54,23 @@ export async function POST(request: NextRequest): Promise<Response> {
     peek?.installation === undefined ? undefined : BigInt(peek.installation.id);
 
   const db = getDb();
-  const { isNew } = await recordWebhookDelivery(db, { deliveryId, event, action, installationId });
+  const { isNew, processed } = await recordWebhookDelivery(db, {
+    deliveryId,
+    event,
+    action,
+    installationId,
+  });
+  const job = webhookJobDataSchema.parse({ deliveryId, event, action, payload });
   if (isNew) {
-    await enqueueWebhookJob(webhookJobDataSchema.parse({ deliveryId, event, action, payload }));
+    await enqueueWebhookJob(job);
     logger.info({ deliveryId, event, action }, "webhook enqueued");
+  } else if (processed) {
+    logger.info({ deliveryId, event }, "webhook redelivery: already processed");
   } else {
-    // GitHub redelivery, or a retry that raced the first request: already handled (or in
-    // progress). Never enqueue twice.
-    logger.info({ deliveryId, event }, "webhook redelivery: already recorded");
+    // GitHub redelivery (manual, or the reconciler) of one the worker hasn't finished: rerun it
+    // if the worker gave up, never queue it twice.
+    const outcome = await requeueWebhookJob(job);
+    logger.info({ deliveryId, event, outcome }, "webhook redelivery: not processed yet");
   }
 
   return NextResponse.json({ received: true });
