@@ -72,6 +72,16 @@ export const failedRunInputSchema = z.strictObject({
 });
 export type FailedRunInput = z.infer<typeof failedRunInputSchema>;
 
+/**
+ * What triage learned about one failed job (SPEC §6.2). `errorWindow` must already be redacted.
+ * `redactions` (counts per kind, no content) only goes to the audit log.
+ */
+export const jobTriageInputSchema = z.strictObject({
+  errorWindow: z.string().max(200_000),
+  redactions: z.record(z.string().regex(/^[a-z-]{1,40}$/), z.int().nonnegative()).optional(),
+});
+export type JobTriageInput = z.infer<typeof jobTriageInputSchema>;
+
 /** A later attempt of a run that passed (SPEC §2.1 re-runs). */
 export const passedRunInputSchema = z.strictObject({
   runId: githubIdSchema,

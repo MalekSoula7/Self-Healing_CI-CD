@@ -39,12 +39,16 @@ async function watchedWorkflow(
   return workflow?.selected === true ? workflow : null;
 }
 
-/** SPEC §2.1: the window closes early once every watched run of the commit has completed. */
+/**
+ * SPEC §2.1: the window closes early once every watched run of the commit has completed; triage
+ * starts then (SPEC §2 step 5).
+ */
 async function closeWindowIfComplete(
   system: SystemScope,
   repoClient: RepoClient,
   repo: Repository,
   failure: PipelineFailure,
+  startTriage: () => Promise<void>,
   log: Logger,
 ): Promise<void> {
   if (failure.windowClosedAt !== null) return;
@@ -62,6 +66,7 @@ async function closeWindowIfComplete(
       { failureId: failure.id },
       "collection window closed early: every watched run completed",
     );
+    await startTriage();
   }
 }
 
@@ -149,10 +154,22 @@ export async function processWorkflowRunEvent(
       })),
     });
     log.info({ failureId: failure.id, outcome, runId: String(run.id) }, "failed run recorded");
+    const next = { orgId, failureId: failure.id, installationId: event.installation.id };
     if (failure.windowClosedAt === null) {
       // Every time, not only when opened: a retried job must still get its timer (idempotent).
-      await deps.scheduleWindowClose(orgId, failure.id, failure.windowClosesAt);
-      await closeWindowIfComplete(system, repoClient, repo, failure, log);
+      await deps.failureJobs.scheduleWindowClose(next, failure.windowClosesAt);
+      await closeWindowIfComplete(
+        system,
+        repoClient,
+        repo,
+        failure,
+        () => deps.failureJobs.enqueueTriage(next),
+        log,
+      );
+    } else if (outcome !== "unchanged") {
+      // Attached after the window closed (a late arrival, or a newer failed attempt): its jobs
+      // still need triage (SPEC §2.1).
+      await deps.failureJobs.enqueueTriage(next, `${String(run.id)}-${String(run.runAttempt)}`);
     }
     return;
   }
@@ -166,5 +183,15 @@ export async function processWorkflowRunEvent(
       log.info({ failureId: passed.failure.id, outcome: passed.outcome }, "re-run passed");
     }
   }
-  if (existing !== null) await closeWindowIfComplete(system, repoClient, repo, existing, log);
+  if (existing !== null) {
+    const next = { orgId, failureId: existing.id, installationId: event.installation.id };
+    await closeWindowIfComplete(
+      system,
+      repoClient,
+      repo,
+      existing,
+      () => deps.failureJobs.enqueueTriage(next),
+      log,
+    );
+  }
 }

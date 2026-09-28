@@ -159,6 +159,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@pipeheal/agent-core':
+        specifier: workspace:*
+        version: link:../../packages/agent-core
       '@pipeheal/db':
         specifier: workspace:*
         version: link:../../packages/db

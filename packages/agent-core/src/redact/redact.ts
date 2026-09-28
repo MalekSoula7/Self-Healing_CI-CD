@@ -118,8 +118,10 @@ const RULES: readonly Rule[] = [
     pattern: ASSIGNMENT,
     replace: (m) => {
       const value = m.group(4) || m.group(5) || m.group(6);
-      // Already redacted, masked by GitHub (***), or a small number (a count, not a secret).
+      // Already redacted, masked by GitHub (***), a small number (a count) or a boolean-like
+      // setting (actions/checkout prints `persist-credentials: true`): none of these is a secret.
       if (isMarker(value) || /^\*+$/.test(value) || /^\d{1,15}$/.test(value)) return null;
+      if (/^(?:true|false|null|none|yes|no|on|off)$/i.test(value)) return null;
       const quote = m.has(4) ? '"' : m.has(5) ? "'" : "";
       const key = `${m.group(1)}${m.group(2)}${m.group(1)}`;
       return `${key}${m.group(3)}${quote}${marker("assignment")}${quote}`;

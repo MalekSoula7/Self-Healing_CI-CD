@@ -1,20 +1,50 @@
-// The `failures` queue: timed steps of a failure's life. For now, closing the collection window
-// when its time is up (SPEC §2.1); triage (P2.2+) starts from here once the window has closed.
+// The `failures` queue: the timed and GitHub-heavy steps of a failure's life (SPEC §2.1, §6.2).
+// `close-window` closes the collection window when its time is up, then queues `triage`, which
+// fetches, cleans and redacts the failed jobs' logs. Triage calls GitHub, so its jobs are paced
+// per installation like webhook jobs.
 import { NotFoundError, forSystem, type Db } from "@pipeheal/db";
+import type { GitHubApp } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
-import { Queue, UnrecoverableError, Worker } from "bullmq";
+import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import type { Redis } from "ioredis";
 import { z } from "zod";
+import {
+  assertNotPaused,
+  delayWhenRateLimited,
+  pauseIfRateLimited,
+  type InstallationPacing,
+} from "../pacing";
+import { triageFailure, type FailureTarget } from "./triage";
 
 export const FAILURES_QUEUE = "failures";
 
-const closeWindowDataSchema = z.strictObject({ orgId: z.uuid(), failureId: z.uuid() });
-export type CloseWindowData = z.infer<typeof closeWindowDataSchema>;
+// Job data is JSON: the installation ID travels as a string.
+const targetSchema = z
+  .strictObject({ orgId: z.uuid(), failureId: z.uuid(), installationId: z.string().regex(/^\d+$/) })
+  .transform(({ installationId, ...ids }) => ({ ...ids, installationId: BigInt(installationId) }));
+type FailureJobData = z.input<typeof targetSchema>;
+type FailureJobName = "close-window" | "triage";
 
-export type FailuresQueue = Queue<CloseWindowData, void, "close-window">;
+export type FailuresQueue = Queue<FailureJobData, void, FailureJobName>;
 
-/** Schedules closing a failure's window at `at`. Idempotent: one job per failure. */
-export type ScheduleWindowClose = (orgId: string, failureId: string, at: Date) => Promise<void>;
+/** How the webhook processor and the queue itself schedule a failure's next steps. */
+export interface FailureJobs {
+  /** Closes the window at `at`. Idempotent: one job per failure. */
+  scheduleWindowClose: (target: FailureTarget, at: Date) => Promise<void>;
+  /**
+   * Triages the failure's jobs not triaged yet. Idempotent per `key`: the window closing uses
+   * none; a run attached after that (a late arrival, or a newer failed attempt) passes its own.
+   */
+  enqueueTriage: (target: FailureTarget, key?: string) => Promise<void>;
+}
+
+export interface FailuresDeps {
+  db: Db;
+  githubApp: GitHubApp | null;
+  logger: Logger;
+  pacing: InstallationPacing;
+  jobs: FailureJobs;
+}
 
 interface QueueJob {
   id?: string | undefined;
@@ -22,23 +52,31 @@ interface QueueJob {
   data: unknown;
 }
 
-export async function processFailuresJob(
-  job: QueueJob,
-  deps: { db: Db; logger: Logger },
-): Promise<void> {
-  if (job.name !== "close-window") {
+export async function processFailuresJob(job: QueueJob, deps: FailuresDeps): Promise<void> {
+  if (job.name !== "close-window" && job.name !== "triage") {
     throw new UnrecoverableError(`unknown failures job "${job.name}"`);
   }
-  const { orgId, failureId } = closeWindowDataSchema.parse(job.data);
-  const log = deps.logger.child({ jobId: job.id, failureId });
+  const target = targetSchema.parse(job.data);
+  const log = deps.logger.child({ jobId: job.id, failureId: target.failureId });
   try {
-    const system = await forSystem(deps.db, orgId, "collection-window");
-    const failure = await system.failures.closeWindow(failureId);
-    log.info({ closedAt: failure.windowClosedAt }, "collection window closed");
+    if (job.name === "close-window") {
+      const system = await forSystem(deps.db, target.orgId, "collection-window");
+      const failure = await system.failures.closeWindow(target.failureId);
+      log.info({ closedAt: failure.windowClosedAt }, "collection window closed");
+      await deps.jobs.enqueueTriage(target);
+      return;
+    }
+    await assertNotPaused(deps.pacing, target.installationId);
+    try {
+      await triageFailure(deps, target, log);
+    } catch (error) {
+      await pauseIfRateLimited(deps.pacing, target.installationId, error);
+      throw error;
+    }
   } catch (error) {
-    // The organization or failure is gone (uninstalled, deleted): nothing left to close.
+    // The organization or failure is gone (uninstalled, deleted): nothing left to do.
     if (!(error instanceof NotFoundError)) throw error;
-    log.info("collection window: failure no longer exists");
+    log.info("failure no longer exists");
   }
 }
 
@@ -63,27 +101,37 @@ export function createFailuresQueue(
   return queue;
 }
 
-export function scheduleWindowClose(queue: FailuresQueue): ScheduleWindowClose {
-  return async (orgId, failureId, at) => {
-    await queue.add(
-      "close-window",
-      { orgId, failureId },
-      // Custom job IDs can't contain ":" in BullMQ.
-      { jobId: `close-window-${failureId}`, delay: Math.max(0, at.getTime() - Date.now()) },
-    );
+function jobData(target: FailureTarget): FailureJobData {
+  return { ...target, installationId: String(target.installationId) };
+}
+
+// Custom job IDs can't contain ":" in BullMQ.
+export function failureJobs(queue: FailuresQueue): FailureJobs {
+  return {
+    async scheduleWindowClose(target, at) {
+      await queue.add("close-window", jobData(target), {
+        jobId: `close-window-${target.failureId}`,
+        delay: Math.max(0, at.getTime() - Date.now()),
+      });
+    },
+    async enqueueTriage(target, key) {
+      await queue.add("triage", jobData(target), {
+        jobId: `triage-${target.failureId}${key === undefined ? "" : `-${key}`}`,
+      });
+    },
   };
 }
 
 export function createFailuresWorker(
   connection: Redis,
-  deps: { db: Db; logger: Logger },
+  deps: FailuresDeps,
   prefix?: string,
 ): Worker {
-  const worker = new Worker(FAILURES_QUEUE, (job: QueueJob) => processFailuresJob(job, deps), {
-    connection,
-    prefix,
-    concurrency: 5,
-  });
+  const worker = new Worker(
+    FAILURES_QUEUE,
+    delayWhenRateLimited((job: Job) => processFailuresJob(job, deps)),
+    { connection, prefix, concurrency: 5 },
+  );
   worker.on("failed", (job, error) => {
     deps.logger.error({ jobId: job?.id, error: error.message }, "failures job failed");
   });

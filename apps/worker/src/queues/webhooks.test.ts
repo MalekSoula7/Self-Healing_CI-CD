@@ -22,9 +22,14 @@ const unreachableDeps: WebhookProcessorDeps = {
     },
   ) as never,
   logger: createLogger({ level: "silent", service: "test" }),
-  scheduleWindowClose: () => {
-    throw new Error("scheduleWindowClose must not be called");
-  },
+  failureJobs: new Proxy(
+    {},
+    {
+      get: () => {
+        throw new Error("failureJobs must not be touched");
+      },
+    },
+  ) as never,
   pacing: new Proxy(
     {},
     {

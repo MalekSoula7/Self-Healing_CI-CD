@@ -112,7 +112,10 @@ describe("webhooks worker with a rate-limited installation", () => {
         db,
         githubApp: null,
         logger,
-        scheduleWindowClose: () => Promise.resolve(),
+        failureJobs: {
+          scheduleWindowClose: () => Promise.resolve(),
+          enqueueTriage: () => Promise.resolve(),
+        },
         pacing,
       },
       prefix,

@@ -135,7 +135,10 @@ function testDeps(): WebhookProcessorDeps {
       log: createLogger({ level: "silent", service: "test" }),
     }),
     logger: createLogger({ level: "silent", service: "test" }),
-    scheduleWindowClose: () => Promise.resolve(),
+    failureJobs: {
+      scheduleWindowClose: () => Promise.resolve(),
+      enqueueTriage: () => Promise.resolve(),
+    },
     pacing: {
       record: () => undefined,
       pause: () => Promise.resolve(),
@@ -669,14 +672,21 @@ describe("workflow_run (SPEC §2 step 4, §2.1)", () => {
 
   function recordingDeps() {
     const scheduled: { orgId: string; failureId: string; at: Date }[] = [];
+    const triaged: { failureId: string; installationId: bigint; key: string | undefined }[] = [];
     const deps: WebhookProcessorDeps = {
       ...testDeps(),
-      scheduleWindowClose: (orgId, failureId, at) => {
-        scheduled.push({ orgId, failureId, at });
-        return Promise.resolve();
+      failureJobs: {
+        scheduleWindowClose: ({ orgId, failureId }, at) => {
+          scheduled.push({ orgId, failureId, at });
+          return Promise.resolve();
+        },
+        enqueueTriage: ({ failureId, installationId }, key) => {
+          triaged.push({ failureId, installationId, key });
+          return Promise.resolve();
+        },
       },
     };
-    return { deps, scheduled };
+    return { deps, scheduled, triaged };
   }
 
   /** An installed org with one enabled repo: CI and Lint watched (CI-looking), Deploy not. */
@@ -824,7 +834,7 @@ describe("workflow_run (SPEC §2 step 4, §2.1)", () => {
   }
 
   it("records a failed run of a watched workflow: its failed jobs, and the window's timer", async () => {
-    const { deps, scheduled } = recordingDeps();
+    const { deps, scheduled, triaged } = recordingDeps();
     const w = await watchedRepo(deps);
     mockJobs(w, [
       { name: "test", conclusion: "failure", failedStep: "Test" },
@@ -857,10 +867,12 @@ describe("workflow_run (SPEC §2 step 4, §2.1)", () => {
     expect(scheduled).toEqual([
       { orgId: w.orgId, failureId: failure.id, at: failure.windowClosesAt },
     ]);
+    // Lint is still running: triage waits for the window to close.
+    expect(triaged).toEqual([]);
   });
 
-  it("closes the window early once every watched run of the commit has completed", async () => {
-    const { deps } = recordingDeps();
+  it("closes the window early once every watched run of the commit has completed, and starts triage", async () => {
+    const { deps, triaged } = recordingDeps();
     const w = await watchedRepo(deps);
     mockJobs(w, [{ name: "test", conclusion: "failure" }]);
     mockRunsForSha(w, [
@@ -887,7 +899,35 @@ describe("workflow_run (SPEC §2 step 4, §2.1)", () => {
       }),
     );
 
-    expect((await failureOf(w))?.windowClosedAt).toBeInstanceOf(Date);
+    const failure = present(await failureOf(w), "failure");
+    expect(failure.windowClosedAt).toBeInstanceOf(Date);
+    expect(triaged).toEqual([
+      { failureId: failure.id, installationId: w.installationId, key: undefined },
+    ]);
+  });
+
+  it("triages a failed run that arrives after the window closed, under its own key", async () => {
+    const { deps, triaged } = recordingDeps();
+    const w = await watchedRepo(deps);
+    mockJobs(w, [{ name: "test", conclusion: "failure" }]);
+    mockRunsForSha(w, [{ workflowId: w.ci, status: "completed" }]);
+    await submit(deps, "workflow_run", "completed", runPayload(w));
+    const late = runPayload(w, { workflow_id: Number(w.lint), path: ".github/workflows/lint.yml" });
+
+    await submit(deps, "workflow_run", "completed", late);
+
+    const failure = present(await failureOf(w), "failure");
+    expect(
+      failure.runs.find((r) => r.workflowPath === ".github/workflows/lint.yml")?.lateArrival,
+    ).toBe(true);
+    expect(triaged).toEqual([
+      { failureId: failure.id, installationId: w.installationId, key: undefined },
+      {
+        failureId: failure.id,
+        installationId: w.installationId,
+        key: `${String(late.workflow_run.id)}-1`,
+      },
+    ]);
   });
 
   it("makes the failure FLAKY when the failed run passes on a re-run", async () => {

@@ -84,6 +84,8 @@ interface Tenant {
   /** An open failure of `repo`, with one failed run and job. */
   failure: PipelineFailure;
   failureRun: FailedRunInput;
+  /** The failure's one failed job. */
+  failedJobId: string;
   admin: User;
   member: User;
   system: SystemScope;
@@ -131,10 +133,11 @@ async function createTenant(): Promise<Tenant> {
     },
   });
   const failureRun = failedRun();
-  const { failure } = await system.failures.recordFailedRun(
+  const { failure, run } = await system.failures.recordFailedRun(
     present(repo, "repository").id,
     failureRun,
   );
+  const failedJob = await db.failedJob.findFirstOrThrow({ where: { failedRunId: run.id } });
   return {
     org,
     installerGithubId,
@@ -142,6 +145,7 @@ async function createTenant(): Promise<Tenant> {
     workflow,
     failure,
     failureRun,
+    failedJobId: failedJob.id,
     admin,
     member,
     system,
@@ -245,6 +249,11 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
   },
   "failures.closeWindow": async () => {
     await expect(a.system.failures.closeWindow(b.failure.id)).rejects.toThrow(NotFoundError);
+  },
+  "failures.recordJobTriage": async () => {
+    await expect(
+      a.system.failures.recordJobTriage(b.failedJobId, { errorWindow: "planted" }),
+    ).rejects.toThrow(NotFoundError);
   },
   "members.list": async () => {
     const members = await a.asAdmin.members.list();
@@ -426,6 +435,21 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
         action: "failure.flaky",
         target: `failure:${a.failure.id}`,
         metadata: { from: "DETECTED", to: "FLAKY" },
+      },
+    ];
+  },
+  "failures.recordJobTriage": async () => {
+    await a.system.failures.recordJobTriage(a.failedJobId, {
+      errorWindow: "error TS2305",
+      redactions: { "github-token": 2 },
+    });
+    return [
+      {
+        actorType: "SYSTEM",
+        actorId: "test",
+        action: "failure.job_triaged",
+        target: `failure:${a.failure.id}`,
+        metadata: { failedJobId: a.failedJobId, redactions: { "github-token": 2 } },
       },
     ];
   },
@@ -1122,6 +1146,25 @@ describe("failures (SPEC §2.1)", () => {
     await expect(db.failedJob.count({ where: { failedRun: { runId: run.runId } } })).resolves.toBe(
       1,
     );
+  });
+
+  it("stores a job's redacted error window, visible to members, with only counts in the audit", async () => {
+    await a.system.failures.recordJobTriage(a.failedJobId, {
+      errorWindow: "src/receipt.ts(1,25): error TS2305",
+      redactions: { jwt: 1 },
+    });
+
+    const stored = await a.asMember.failures.get(a.failure.id);
+    expect(stored?.runs[0]?.jobs[0]?.errorWindow).toBe("src/receipt.ts(1,25): error TS2305");
+    const entry = await db.auditLog.findFirst({
+      where: { orgId: a.org.id, action: "failure.job_triaged" },
+    });
+    expect(JSON.stringify(entry?.metadata)).not.toContain("TS2305");
+    await expect(
+      a.system.failures.recordJobTriage(a.failedJobId, {
+        errorWindow: "x".repeat(200_001),
+      }),
+    ).rejects.toThrow(ZodError);
   });
 
   it("rejects malformed runs before touching the database", async () => {

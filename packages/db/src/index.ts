@@ -12,6 +12,7 @@ export type {
   PassedRunInput,
   InstalledRepository,
   InstalledWorkflow,
+  JobTriageInput,
   WebhookDeliveryInput,
 } from "./inputs";
 export {

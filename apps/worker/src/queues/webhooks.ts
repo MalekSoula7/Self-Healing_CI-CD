@@ -10,7 +10,6 @@ import {
   type Db,
 } from "@pipeheal/db";
 import {
-  GitHubApiError,
   installationEventSchema,
   installationRepositoriesEventSchema,
   toAccountType,
@@ -21,11 +20,17 @@ import {
 } from "@pipeheal/github";
 import { redactText, webhookJobDataSchema, WEBHOOKS_QUEUE } from "@pipeheal/shared";
 import type { Logger } from "@pipeheal/shared/logger";
-import { DelayedError, Queue, Worker, type Job } from "bullmq";
+import { Queue, Worker, type Job } from "bullmq";
 import type { Redis } from "ioredis";
 import { z } from "zod";
-import { RateLimitedError, type InstallationPacing } from "../pacing";
-import type { ScheduleWindowClose } from "./failures";
+import {
+  RateLimitedError,
+  assertNotPaused,
+  delayWhenRateLimited,
+  pauseIfRateLimited,
+  type InstallationPacing,
+} from "../pacing";
+import type { FailureJobs } from "./failures";
 import { processWorkflowRunEvent } from "./workflow-runs";
 import { syncRepoWorkflows } from "./workflow-sync";
 
@@ -34,8 +39,8 @@ export interface WebhookProcessorDeps {
   /** Null when the GitHub App isn't configured yet: repository/workflow sync is skipped. */
   githubApp: GitHubApp | null;
   logger: Logger;
-  /** Closes a failure's collection window when its time is up (SPEC §2.1). */
-  scheduleWindowClose: ScheduleWindowClose;
+  /** Schedules a failure's collection window close and its triage (SPEC §2.1, §6.2). */
+  failureJobs: FailureJobs;
   /** Per-installation GitHub quota: jobs of a rate-limited installation wait (P2.1). */
   pacing: InstallationPacing;
 }
@@ -182,10 +187,7 @@ export async function processWebhookJob(job: QueueJob, deps: WebhookProcessorDep
   const { deliveryId, event, payload } = webhookJobDataSchema.parse(job.data);
   const log = deps.logger.child({ deliveryId, event, jobId: job.id });
   const installationId = installationOfSchema.safeParse(payload).data?.installation.id;
-  if (installationId !== undefined) {
-    const until = await deps.pacing.pausedUntil(installationId);
-    if (until !== null) throw new RateLimitedError(until);
-  }
+  if (installationId !== undefined) await assertNotPaused(deps.pacing, installationId);
   try {
     switch (event) {
       case "installation":
@@ -208,10 +210,15 @@ export async function processWebhookJob(job: QueueJob, deps: WebhookProcessorDep
     }
     await markWebhookDeliveryProcessed(deps.db, deliveryId);
   } catch (error) {
-    if (error instanceof GitHubApiError && error.retryAt !== null && installationId !== undefined) {
-      await deps.pacing.pause(installationId, error.retryAt);
-      log.warn({ until: error.retryAt }, "GitHub rate-limited this installation; delaying");
-      throw new RateLimitedError(error.retryAt);
+    if (installationId !== undefined) {
+      try {
+        await pauseIfRateLimited(deps.pacing, installationId, error);
+      } catch (paused) {
+        if (paused instanceof RateLimitedError) {
+          log.warn({ until: paused.until }, "GitHub rate-limited this installation; delaying");
+        }
+        throw paused;
+      }
     }
     const message = error instanceof Error ? error.message : String(error);
     await markWebhookDeliveryFailed(deps.db, deliveryId, redactText(message));
@@ -250,16 +257,7 @@ export function createWebhooksWorker(
 ): Worker {
   const worker = new Worker(
     WEBHOOKS_QUEUE,
-    async (job: Job, token?: string) => {
-      try {
-        await processWebhookJob(job, deps);
-      } catch (error) {
-        if (!(error instanceof RateLimitedError) || token === undefined) throw error;
-        // Back in the queue until the quota resets, without spending one of the job's attempts.
-        await job.moveToDelayed(error.until.getTime(), token);
-        throw new DelayedError();
-      }
-    },
+    delayWhenRateLimited((job: Job) => processWebhookJob(job, deps)),
     { connection, prefix, concurrency: 5 },
   );
   worker.on("failed", (job, error) => {

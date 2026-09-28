@@ -2,8 +2,9 @@
 // because its queue is process-wide: one busy tenant would slow every tenant. Instead each
 // installation's quota, as GitHub reports it, is kept in Redis, and that installation's jobs wait
 // for the reset once it runs low or GitHub rate-limits it. Other installations are unaffected.
-import type { RateLimitState } from "@pipeheal/github";
+import { GitHubApiError, type RateLimitState } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
+import { DelayedError, type Job } from "bullmq";
 import type { Redis } from "ioredis";
 import { z } from "zod";
 
@@ -77,4 +78,38 @@ export class RateLimitedError extends Error {
   constructor(readonly until: Date) {
     super(`GitHub rate limit: waiting until ${until.toISOString()}`);
   }
+}
+
+/** Before a job calls GitHub for an installation: throws RateLimitedError while it's paused. */
+export async function assertNotPaused(pacing: InstallationPacing, installationId: bigint) {
+  const until = await pacing.pausedUntil(installationId);
+  if (until !== null) throw new RateLimitedError(until);
+}
+
+/** A rate-limited GitHub error pauses the installation and becomes a RateLimitedError. */
+export async function pauseIfRateLimited(
+  pacing: InstallationPacing,
+  installationId: bigint,
+  error: unknown,
+): Promise<void> {
+  if (error instanceof GitHubApiError && error.retryAt !== null) {
+    await pacing.pause(installationId, error.retryAt);
+    throw new RateLimitedError(error.retryAt);
+  }
+}
+
+/**
+ * Wraps a BullMQ processor: a RateLimitedError puts the job back in the delayed set until the
+ * quota resets, without spending one of its attempts.
+ */
+export function delayWhenRateLimited(process: (job: Job) => Promise<void>) {
+  return async (job: Job, token?: string): Promise<void> => {
+    try {
+      await process(job);
+    } catch (error) {
+      if (!(error instanceof RateLimitedError) || token === undefined) throw error;
+      await job.moveToDelayed(error.until.getTime(), token);
+      throw new DelayedError();
+    }
+  };
 }

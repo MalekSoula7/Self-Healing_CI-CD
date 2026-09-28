@@ -4,7 +4,7 @@ import { createLogger } from "@pipeheal/shared/logger";
 import { loadWorkerEnv } from "./env";
 import { redisPacing } from "./pacing";
 import { buildGateway } from "./gateway/server";
-import { createFailuresQueue, createFailuresWorker, scheduleWindowClose } from "./queues/failures";
+import { createFailuresQueue, createFailuresWorker, failureJobs } from "./queues/failures";
 import { createMaintenanceQueue, createMaintenanceWorker } from "./queues/maintenance";
 import { createWebhooksQueue, createWebhooksWorker } from "./queues/webhooks";
 import { createRedis, pingRedis } from "./redis";
@@ -34,13 +34,14 @@ async function main(): Promise<void> {
           },
         });
   const failuresQueue = createFailuresQueue(redis, logger);
-  const failuresWorker = createFailuresWorker(redis, { db, logger });
+  const jobs = failureJobs(failuresQueue);
+  const failuresWorker = createFailuresWorker(redis, { db, githubApp, logger, pacing, jobs });
   const webhooksQueue = createWebhooksQueue(redis, logger);
   const webhooksWorker = createWebhooksWorker(redis, {
     db,
     githubApp,
     logger,
-    scheduleWindowClose: scheduleWindowClose(failuresQueue),
+    failureJobs: jobs,
     pacing,
   });
 

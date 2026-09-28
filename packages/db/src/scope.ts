@@ -18,11 +18,13 @@ import {
   idSchema,
   installedRepositorySchema,
   installedWorkflowSchema,
+  jobTriageInputSchema,
   passedRunInputSchema,
   type AuditPage,
   type FailedRunInput,
   type InstalledRepository,
   type InstalledWorkflow,
+  type JobTriageInput,
   type PassedRunInput,
 } from "./inputs";
 
@@ -528,6 +530,30 @@ function buildSystemScope(ctx: ScopeContext) {
             metadata: { from: failure.status, to: "FLAKY" },
           });
           return { failure: flaky, outcome: "flaky" as const };
+        });
+      },
+
+      /** Stores what triage found for one failed job (SPEC §6.2). */
+      async recordJobTriage(failedJobId: string, input: JobTriageInput) {
+        const id = requireId(failedJobId, "failed job");
+        const { errorWindow, redactions } = jobTriageInputSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const job = await tx.failedJob.findFirst({
+            where: { id, orgId },
+            include: { failedRun: { select: { failureId: true } } },
+          });
+          if (job === null) throw new NotFoundError("failed job not found");
+          const updated = await tx.failedJob.update({ where: { id }, data: { errorWindow } });
+          await writeAudit(tx, orgId, actor, {
+            action: "failure.job_triaged",
+            target: auditTarget("failure", job.failedRun.failureId),
+            metadata: {
+              failedJobId: id,
+              githubJobId: String(job.githubJobId),
+              ...(redactions === undefined ? {} : { redactions }),
+            },
+          });
+          return updated;
         });
       },
 
