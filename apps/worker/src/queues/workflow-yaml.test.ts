@@ -88,7 +88,12 @@ describe("parseWorkflowYaml", () => {
 });
 
 describe("isCiLooking", () => {
-  const ci = { triggers: ["push"], usesEnvironment: false, name: "CI", path: ".github/workflows/ci.yml" };
+  const ci = {
+    triggers: ["push"],
+    usesEnvironment: false,
+    name: "CI",
+    path: ".github/workflows/ci.yml",
+  };
 
   it("is true for a plain push-triggered workflow with no environment", () => {
     expect(isCiLooking(ci)).toBe(true);
@@ -111,8 +116,10 @@ describe("isCiLooking", () => {
     { ...ci, name: "Release" },
     { ...ci, name: "Publish package" },
     { ...ci, path: ".github/workflows/deploy.yml" },
-  ])("is false when the name or path looks like a deploy/release/publish workflow: %o", (workflow) => {
-    expect(isCiLooking(workflow)).toBe(false);
-  });
-
+  ])(
+    "is false when the name or path looks like a deploy/release/publish workflow: %o",
+    (workflow) => {
+      expect(isCiLooking(workflow)).toBe(false);
+    },
+  );
 });

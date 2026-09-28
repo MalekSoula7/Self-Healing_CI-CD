@@ -13,8 +13,8 @@ export default async function OnboardingPage() {
     <main className="mx-auto flex max-w-2xl flex-col gap-6 px-6 py-24">
       <h1 className="text-2xl font-semibold tracking-tight">Install the GitHub App</h1>
       <p className="text-muted-foreground">
-        PipeHeal watches the repositories you choose during installation, and only the workflows
-        you select afterward.
+        PipeHeal watches the repositories you choose during installation, and only the workflows you
+        select afterward.
       </p>
       {installUrl === null ? (
         <p className="text-sm text-muted-foreground">

@@ -87,8 +87,7 @@ async function createTenant(): Promise<Tenant> {
   const [repo] = await system.repositories.syncInstalled([
     { githubRepoId: githubId(), fullName: `${login}/app`, defaultBranch: "main" },
   ]);
-  // `workflows.syncInstalled` (P1.6) discovers rows; pre-selection and the picker are P1.7, so
-  // test setup still creates one directly.
+  // A known workflow row, created directly: setup, not the helper under test.
   const workflow = await db.repoWorkflow.create({
     data: {
       orgId: org.id,
@@ -238,12 +237,174 @@ function helperNames(scope: object, prefix = ""): string[] {
   });
 }
 
+function allHelperNames(): string[] {
+  return [
+    ...helperNames(a.system),
+    ...helperNames(installs).map((name) => `installations.${name}`),
+  ];
+}
+
+// P1.8: every helper that changes data records who did it, what changed, in which org and when.
+// Each mutating helper has a case here (a real change to tenant A, returning the entries it must
+// write, oldest first); every other helper is listed as read-only. A meta-test fails when a
+// helper is added to neither list.
+const readOnlyHelpers = [
+  "repositories.list",
+  "repositories.get",
+  "repositories.findByGithubId",
+  "workflows.listForRepo",
+  "members.list",
+  "audit.list",
+  "installations.findByInstallationId",
+  "installations.ownerCandidates",
+];
+
+const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
+  "repositories.setEnabled": async () => {
+    await a.asAdmin.repositories.setEnabled(a.repo.id, true);
+    return [
+      {
+        actorType: "USER",
+        actorId: a.admin.id,
+        action: "repository.enabled",
+        target: `repository:${a.repo.id}`,
+      },
+    ];
+  },
+  "repositories.syncInstalled": async () => {
+    const fullName = `${a.org.login}/renamed`;
+    await a.system.repositories.syncInstalled([
+      { githubRepoId: a.repo.githubRepoId, fullName, defaultBranch: "main" },
+    ]);
+    return [
+      {
+        actorType: "SYSTEM",
+        actorId: "test",
+        action: "repository.updated",
+        target: `repository:${a.repo.id}`,
+        metadata: { fullName, changes: { fullName: { from: a.repo.fullName, to: fullName } } },
+      },
+    ];
+  },
+  "repositories.markRemoved": async () => {
+    await a.system.repositories.markRemoved([a.repo.githubRepoId]);
+    return [
+      {
+        actorType: "SYSTEM",
+        actorId: "test",
+        action: "repository.removed",
+        target: `repository:${a.repo.id}`,
+      },
+    ];
+  },
+  "workflows.setSelected": async () => {
+    await a.asAdmin.workflows.setSelected(a.workflow.id, true);
+    return [
+      {
+        actorType: "USER",
+        actorId: a.admin.id,
+        action: "workflow.selected",
+        target: `workflow:${a.workflow.id}`,
+        metadata: { repoId: a.repo.id },
+      },
+    ];
+  },
+  "workflows.syncInstalled": async () => {
+    await a.system.workflows.syncInstalled(a.repo.id, [
+      { githubWorkflowId: a.workflow.githubWorkflowId, path: a.workflow.path, name: "Checks" },
+    ]);
+    return [
+      {
+        actorType: "SYSTEM",
+        actorId: "test",
+        action: "workflow.updated",
+        target: `workflow:${a.workflow.id}`,
+        metadata: { repoId: a.repo.id, changes: { name: { from: "CI", to: "Checks" } } },
+      },
+    ];
+  },
+  "installations.upsert": async () => {
+    const login = uniqueLogin();
+    await installs.upsert({
+      githubAccountId: a.org.githubAccountId,
+      login,
+      accountType: "ORG",
+      installationId: a.org.installationId,
+    });
+    return [
+      {
+        actorType: "SYSTEM",
+        actorId: "test",
+        action: "organization.updated",
+        target: `organization:${a.org.id}`,
+        metadata: { changes: { login: { from: a.org.login, to: login } } },
+      },
+    ];
+  },
+  "installations.setStatus": async () => {
+    await installs.setStatus(a.org.installationId, "SUSPENDED");
+    return [
+      {
+        actorType: "SYSTEM",
+        actorId: "test",
+        action: "organization.suspended",
+        target: `organization:${a.org.id}`,
+        metadata: { from: "ACTIVE", to: "SUSPENDED" },
+      },
+    ];
+  },
+  "installations.bindVerifiedOwner": async () => {
+    const user = await createUser();
+    await installs.bindVerifiedOwner(
+      { userId: user.id, githubUserId: a.installerGithubId },
+      adminOf(a),
+    );
+    return [
+      {
+        actorType: "SYSTEM",
+        actorId: "test",
+        action: "member.owner_verified",
+        target: `user:${user.id}`,
+      },
+    ];
+  },
+};
+
+async function auditIds(tenant: Tenant): Promise<Set<string>> {
+  const entries = await db.auditLog.findMany({
+    where: { orgId: tenant.org.id },
+    select: { id: true },
+  });
+  return new Set(entries.map((entry) => entry.id));
+}
+
+describe("audit coverage (P1.8)", () => {
+  it("classifies every helper as either mutating (with an audit case) or read-only", () => {
+    expect([...Object.keys(auditCases), ...readOnlyHelpers].sort()).toEqual(
+      allHelperNames().sort(),
+    );
+  });
+
+  it.each(Object.keys(auditCases))("%s records who, what, where and when", async (name) => {
+    const before = await auditIds(a);
+    const startedAt = Date.now();
+
+    const expected = await present(auditCases[name], "case")();
+
+    const written = (
+      await db.auditLog.findMany({ where: { orgId: a.org.id }, orderBy: { id: "asc" } })
+    ).filter((entry) => !before.has(entry.id));
+    expect(written).toMatchObject(expected);
+    for (const entry of written) {
+      // The database's clock stamps `createdAt`: allow for skew against this process's clock.
+      expect(Math.abs(entry.createdAt.getTime() - startedAt)).toBeLessThan(60_000);
+    }
+  });
+});
+
 describe("tenant isolation", () => {
   it("has a cross-org case for every helper", () => {
-    const helpers = [
-      ...helperNames(a.system),
-      ...helperNames(installs).map((name) => `installations.${name}`),
-    ];
+    const helpers = allHelperNames();
     // The member scope is a subset of the system scope.
     expect(helperNames(a.asAdmin).every((name) => helpers.includes(name))).toBe(true);
     expect(Object.keys(crossOrgCases).sort()).toEqual(helpers.sort());
@@ -539,7 +700,10 @@ describe("audit", () => {
         usesEnvironment: false,
       },
     ]);
-    expect(discovered).toMatchObject({ triggers: ["push", "pull_request"], usesEnvironment: false });
+    expect(discovered).toMatchObject({
+      triggers: ["push", "pull_request"],
+      usesEnvironment: false,
+    });
     expect(await latestAudit(a)).toMatchObject({ action: "workflow.discovered" });
 
     // A later sync that can't fetch the file's content (undefined) keeps the known facts.
@@ -628,18 +792,33 @@ describe("audit", () => {
       slug: newLogin.toLowerCase(),
       installerGithubId: 42n,
     });
-    expect(await latestAudit(tenant)).toMatchObject({ action: "organization.updated" });
+    const renameEntry = await latestAudit(tenant);
+    expect(renameEntry?.action).toBe("organization.updated");
+    expect(renameEntry?.metadata).toEqual({
+      installationId: String(input.installationId),
+      changes: { login: { from: login, to: newLogin } },
+    });
 
     await installs.setStatus(input.installationId, "UNINSTALLED");
     expect(await latestAudit(tenant)).toMatchObject({ action: "organization.uninstalled" });
+    const newInstallationId = githubId();
     const reinstalled = await installs.upsert({
       ...input,
       login: newLogin,
-      installationId: githubId(),
+      installationId: newInstallationId,
       installerGithubId: 43n,
     });
     expect(reinstalled).toMatchObject({ id: org.id, status: "ACTIVE", installerGithubId: 43n });
-    expect(await latestAudit(tenant)).toMatchObject({ action: "organization.reinstalled" });
+    const reinstallEntry = await latestAudit(tenant);
+    expect(reinstallEntry?.action).toBe("organization.reinstalled");
+    expect(reinstallEntry?.metadata).toEqual({
+      installationId: String(newInstallationId),
+      changes: {
+        status: { from: "UNINSTALLED", to: "ACTIVE" },
+        installationId: { from: String(input.installationId), to: String(newInstallationId) },
+        installerGithubId: { from: "42", to: "43" },
+      },
+    });
 
     await expect(installs.setStatus(githubId(), "SUSPENDED")).resolves.toBeNull();
   });

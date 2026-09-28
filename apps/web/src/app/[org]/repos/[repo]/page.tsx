@@ -17,8 +17,8 @@ export default async function RepoWorkflowsPage({ params }: PageProps<"/[org]/re
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">{repo.fullName}</h1>
         <p className="text-muted-foreground">
-          Choose which workflows PipeHeal watches. CI-looking workflows start pre-selected; you
-          can change any of them below (SPEC §11).
+          Choose which workflows PipeHeal watches. CI-looking workflows start pre-selected; you can
+          change any of them below (SPEC §11).
         </p>
       </div>
       {workflows.length === 0 ? (
@@ -29,10 +29,7 @@ export default async function RepoWorkflowsPage({ params }: PageProps<"/[org]/re
           <input type="hidden" name="repoId" value={repoId} />
           <ul className="flex flex-col gap-2">
             {workflows.map((workflow) => (
-              <li
-                key={workflow.id}
-                className="flex items-center gap-3 rounded-md border px-4 py-3"
-              >
+              <li key={workflow.id} className="flex items-center gap-3 rounded-md border px-4 py-3">
                 <input
                   type="checkbox"
                   id={`workflow-${workflow.id}`}

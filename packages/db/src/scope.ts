@@ -6,9 +6,10 @@
 //   ADMIN changes repositories and workflows. SYSTEM (the worker) acts with OWNER rights.
 // - Every mutation writes its audit row in the same transaction. A no-op writes nothing.
 import { z } from "zod";
-import { auditTarget, writeAudit, type Actor } from "./audit";
+import { auditChanges, auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
 import { ConflictError, ForbiddenError, NotFoundError } from "./errors";
+import type { RepoWorkflow } from "./generated/prisma/client";
 import type { AccountType, OrgStatus, Role } from "./generated/prisma/enums";
 import {
   auditPageSchema,
@@ -68,6 +69,16 @@ function requireId(value: string, kind: string): string {
 /** Trigger names come from the workflow file's own `on:` order, stable across identical content. */
 function triggersEqual(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((trigger, index) => trigger === b[index]);
+}
+
+/** What a workflow sync can change, as recorded in its audit entry (never `selected`). */
+function workflowFacts(workflow: RepoWorkflow) {
+  return {
+    path: workflow.path,
+    name: workflow.name,
+    triggers: workflow.triggers,
+    usesEnvironment: workflow.usesEnvironment,
+  };
 }
 
 function requireRole(ctx: ScopeContext, minimum: Role): void {
@@ -238,7 +249,13 @@ function buildSystemScope(ctx: ScopeContext) {
             await writeAudit(tx, orgId, actor, {
               action: readded ? "repository.readded" : "repository.updated",
               target: auditTarget("repository", existing.id),
-              metadata: { fullName: updated.fullName },
+              metadata: {
+                fullName: updated.fullName,
+                changes: auditChanges(
+                  { fullName: existing.fullName, defaultBranch: existing.defaultBranch },
+                  { fullName: updated.fullName, defaultBranch: updated.defaultBranch },
+                ),
+              },
             });
             results.push(updated);
           }
@@ -332,7 +349,11 @@ function buildSystemScope(ctx: ScopeContext) {
             await writeAudit(tx, orgId, actor, {
               action: "workflow.updated",
               target: auditTarget("workflow", existing.id),
-              metadata: { repoId: id, path: updated.path },
+              metadata: {
+                repoId: id,
+                path: updated.path,
+                changes: auditChanges(workflowFacts(existing), workflowFacts(updated)),
+              },
             });
             results.push(updated);
           }

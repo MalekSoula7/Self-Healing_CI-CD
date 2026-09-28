@@ -76,9 +76,9 @@ describe("runOwnerBindingCheck", () => {
     mocks.listInstallations.mockResolvedValue([org.installationId]);
     mocks.listAdminOrgs.mockResolvedValue([org.githubAccountId]);
 
-    await expect(runOwnerBindingCheck(db, fakeAuth(), new Headers(), userId, logger)).resolves.toEqual(
-      [org.id],
-    );
+    await expect(
+      runOwnerBindingCheck(db, fakeAuth(), new Headers(), userId, logger),
+    ).resolves.toEqual([org.id]);
 
     for (const call of [mocks.listInstallations, mocks.listAdminOrgs]) {
       expect(call).toHaveBeenCalledWith(
@@ -122,9 +122,9 @@ describe("runOwnerBindingCheck", () => {
   it("doesn't call GitHub when there's no candidate (almost every sign-in)", async () => {
     const userId = await createUser(githubId());
 
-    await expect(runOwnerBindingCheck(db, fakeAuth(), new Headers(), userId, logger)).resolves.toEqual(
-      [],
-    );
+    await expect(
+      runOwnerBindingCheck(db, fakeAuth(), new Headers(), userId, logger),
+    ).resolves.toEqual([]);
 
     expect(mocks.getAccessToken).not.toHaveBeenCalled();
     expect(mocks.listInstallations).not.toHaveBeenCalled();

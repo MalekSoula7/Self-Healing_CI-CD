@@ -468,7 +468,10 @@ describe("branches", () => {
     mockServer.use(
       http.get(`${REPO}/git/ref/*`, ({ request }) => {
         path = decodeURIComponent(new URL(request.url).pathname);
-        return HttpResponse.json({ ref: "refs/heads/main", object: { sha: SHA_A, type: "commit" } });
+        return HttpResponse.json({
+          ref: "refs/heads/main",
+          object: { sha: SHA_A, type: "commit" },
+        });
       }),
     );
 
@@ -479,7 +482,9 @@ describe("branches", () => {
 
   it("returns null for a branch that doesn't exist", async () => {
     mockServer.use(
-      http.get(`${REPO}/git/ref/*`, () => HttpResponse.json({ message: "Not Found" }, { status: 404 })),
+      http.get(`${REPO}/git/ref/*`, () =>
+        HttpResponse.json({ message: "Not Found" }, { status: 404 }),
+      ),
     );
 
     await expect((await repo()).getBranchSha("no-such-branch")).resolves.toBeNull();

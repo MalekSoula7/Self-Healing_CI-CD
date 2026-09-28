@@ -42,7 +42,7 @@ Acceptance: fresh clone → `docker compose up -d && pnpm i && pnpm dev` works; 
 - [x] **CHECKPOINT 1a [HUMAN]**: Malek creates a GitHub sandbox organization, registers the dev GitHub App, fills `.env`.
 - [x] **P1.6** Webhook route: HMAC verification, delivery-ID idempotency, enqueue, fast 2xx. Processors for `installation` and `installation_repositories` → upsert `Organization` (org or personal account), `Repository`, `RepoWorkflow`; the installing user becomes the OWNER candidate, confirmed on sign-in (SPEC §5.2).
 - [x] **P1.7** Onboarding UI: "Install GitHub App" → post-install callback → repo list with enable toggles → per-repo workflow selection with CI-looking workflows pre-selected (SPEC §11).
-- [ ] **P1.8** Audit log entries for every mutation (who, what, when).
+- [x] **P1.8** Audit log entries for every mutation (who, what, when).
 
 Acceptance: installing the App on the sandbox org shows the org and repos in the dashboard; removing a repo from the installation disables it; tenant isolation tests pass.
 

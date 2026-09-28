@@ -2,8 +2,9 @@
 // input only: signed webhooks (worker) and sign-ins GitHub confirmed (web, OWNER binding). They
 // are the only way an Organization row is created or changes status, and an OWNER is bound.
 import { z } from "zod";
-import { auditTarget, writeAudit, type Actor } from "./audit";
+import { auditChanges, auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
+import type { Organization } from "./generated/prisma/client";
 import type { OrgStatus } from "./generated/prisma/enums";
 import { githubIdSchema, installationInputSchema, type InstallationInput } from "./inputs";
 
@@ -22,6 +23,17 @@ const ownerEvidenceSchema = z.strictObject({
 });
 /** What GitHub confirmed, with the user's own token, at sign-in (SPEC §5.2, D10). */
 export type OwnerEvidence = z.infer<typeof ownerEvidenceSchema>;
+
+/** What an installation update can change, as recorded in its audit entry. */
+function organizationFacts(org: Organization) {
+  return {
+    login: org.login,
+    accountType: org.accountType,
+    status: org.status,
+    installationId: org.installationId,
+    installerGithubId: org.installerGithubId,
+  };
+}
 
 const STATUS_ACTIONS: Record<OrgStatus, string> = {
   ACTIVE: "organization.activated",
@@ -86,7 +98,10 @@ export function installations(db: Db, component: string) {
         await writeAudit(tx, existing.id, actor, {
           action: reinstalled ? "organization.reinstalled" : "organization.updated",
           target: auditTarget("organization", existing.id),
-          metadata: { installationId: String(updated.installationId) },
+          metadata: {
+            installationId: String(updated.installationId),
+            changes: auditChanges(organizationFacts(existing), organizationFacts(updated)),
+          },
         });
         return updated;
       });
