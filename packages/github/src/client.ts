@@ -44,6 +44,8 @@ export class GitHubApiError extends Error {
     /** GitHub's x-github-request-id, for support requests. */
     readonly requestId: string | null,
     githubMessage: string | null,
+    /** Set when GitHub rate-limited the call: when trying again makes sense. */
+    readonly retryAt: Date | null = null,
   ) {
     super(
       `GitHub answered ${String(status)} to ${route}${githubMessage === null ? "" : `: ${githubMessage}`}`,
@@ -57,17 +59,59 @@ function field(value: unknown, key: string): unknown {
     : undefined;
 }
 
+/** An installation's primary REST quota, as GitHub reports it on every response. */
+export interface RateLimitState {
+  remaining: number;
+  resetAt: Date;
+}
+
+function header(headers: unknown, name: string): number | null {
+  const value = Number(field(headers, name));
+  return field(headers, name) === undefined || !Number.isFinite(value) ? null : value;
+}
+
+/** The quota in a response's `x-ratelimit-*` headers, or null if they're absent. */
+export function rateLimitState(headers: unknown): RateLimitState | null {
+  const remaining = header(headers, "x-ratelimit-remaining");
+  const reset = header(headers, "x-ratelimit-reset");
+  return remaining === null || reset === null
+    ? null
+    : { remaining, resetAt: new Date(reset * 1000) };
+}
+
+// GitHub's docs: without a retry-after, wait at least a minute after a secondary rate limit.
+const SECONDARY_LIMIT_WAIT_MS = 60_000;
+
+/**
+ * When a rate-limited call (403 or 429) makes sense again, or null if it wasn't rate-limited:
+ * `retry-after` first, then the exhausted primary quota's reset, then a secondary limit's minute.
+ */
+function retryAt(status: number, headers: unknown, message: unknown): Date | null {
+  if (status !== 403 && status !== 429) return null;
+  const retryAfter = header(headers, "retry-after");
+  if (retryAfter !== null) return new Date(Date.now() + retryAfter * 1000);
+  const quota = rateLimitState(headers);
+  if (quota?.remaining === 0) return quota.resetAt;
+  if (status === 429 || (typeof message === "string" && /rate limit/i.test(message))) {
+    return new Date(Date.now() + SECONDARY_LIMIT_WAIT_MS);
+  }
+  return null;
+}
+
 export function toGitHubApiError(error: unknown, method: string, url: string): GitHubApiError {
-  const status = field(error, "status");
+  const rawStatus = field(error, "status");
+  const status = typeof rawStatus === "number" ? rawStatus : 500;
   const response = field(error, "response");
-  const requestId = field(field(response, "headers"), "x-github-request-id");
+  const headers = field(response, "headers");
+  const requestId = field(headers, "x-github-request-id");
   const message = field(field(response, "data"), "message");
   return new GitHubApiError(
-    typeof status === "number" ? status : 500,
+    status,
     `${method} ${url}`,
     typeof requestId === "string" ? requestId : null,
     // GitHub's own short explanation ("Reference already exists"), never the request.
     typeof message === "string" ? message.slice(0, 200) : null,
+    retryAt(status, headers, message),
   );
 }
 
@@ -89,6 +133,9 @@ export function pipehealOctokit(requestTimeoutMs?: number): typeof Octokit {
       }
     });
     octokit.hook.error("request", (error, options) => {
+      // Already converted by an inner request (e.g. the installation token fetch that a call
+      // triggered): keep it, with its route, message and retryAt, rather than lose them.
+      if (error instanceof GitHubApiError) throw error;
       throw toGitHubApiError(error, options.method, options.url);
     });
   });
@@ -101,6 +148,9 @@ export function octokitOptions(options: GitHubClientOptions) {
     ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
     retry: {
       retries: options.retries ?? 3,
+      // The plugin's defaults plus 429: retrying at once after "too many requests" only digs
+      // deeper. The worker pauses the installation's jobs until `retryAt` instead.
+      doNotRetry: [400, 401, 403, 404, 410, 422, 429, 451],
       ...(options.retryAfterMs === undefined ? {} : { retryAfterBaseValue: options.retryAfterMs }),
     },
     throttle: { enabled: false },

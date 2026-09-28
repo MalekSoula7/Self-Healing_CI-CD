@@ -53,8 +53,8 @@ Acceptance: installing the App on the sandbox org shows the org and repos in the
 ## Phase 2: Detection & triage (no fixing yet)
 
 - [x] **P2.0** `examples/demo-node` (TypeScript + Vitest + ESLint) and `examples/demo-python` (pytest + ruff + mypy), each with a CI workflow emitting JUnit XML, plus `scripts/break.ts <scenario>` (TypeScript via `tsx`, no bash) that introduces each eval scenario from SPEC §14 on a new branch.
-- [ ] **CHECKPOINT 2a [HUMAN]**: Malek pushes the demo repos to the sandbox org and installs the App on them.
-- [ ] **P2.1** `workflow_run` processor: filters from SPEC §2 step 4, one `PipelineFailure` per repo + head SHA with `FailedRun`/`FailedJob`, collection window, late arrivals and re-runs (SPEC §2.1). Forks are detected by repository ID (`WorkflowRun.fromFork`, fail closed). GitHub calls are paced per installation in the worker's queues (octokit's process-wide throttling is off, P1.4 review).
+- [x] **CHECKPOINT 2a [HUMAN]**: Malek pushes the demo repos to the sandbox org and installs the App on them.
+- [x] **P2.1** `workflow_run` processor: filters from SPEC §2 step 4, one `PipelineFailure` per repo + head SHA with `FailedRun`/`FailedJob`, collection window, late arrivals and re-runs (SPEC §2.1). Forks are detected by repository ID (`WorkflowRun.fromFork`, fail closed). GitHub calls are paced per installation in the worker's queues (octokit's process-wide throttling is off, P1.4 review).
 - [ ] **P2.2** Log fetch + clean + redact (`packages/agent-core/redact`). Fixture tests with planted fake secrets of every type in SPEC §6.2.
 - [ ] **P2.3** Error-window extractor and signal parsers for tsc, eslint, jest/vitest, pytest, mypy, ruff, pip/npm install errors. Real log samples in `packages/agent-core/fixtures/logs/`, test-first.
 - [ ] **P2.4** Heuristic classifier + `TRIAGE_MODEL` fallback with zod-validated JSON and one retry. Cost recorded.

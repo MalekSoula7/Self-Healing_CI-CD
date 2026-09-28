@@ -1007,3 +1007,111 @@ describe("resilience and errors", () => {
     expect(everything).not.toContain("octo-org");
   });
 });
+
+describe("rate limits", () => {
+  const RESET = Math.floor(Date.now() / 1000) + 1800;
+
+  it("tells the caller each installation's remaining quota after every response", async () => {
+    const reported: { installationId: bigint; remaining: number; resetAt: Date }[] = [];
+    const app = createGitHubApp({
+      appId: 1234,
+      privateKey,
+      retries: 0,
+      onRateLimit: (installationId, state) => reported.push({ installationId, ...state }),
+    });
+    mockServer.use(
+      http.get(`${REPO}/actions/workflows`, () =>
+        HttpResponse.json(
+          { total_count: 0, workflows: [] },
+          { headers: { "x-ratelimit-remaining": "4321", "x-ratelimit-reset": String(RESET) } },
+        ),
+      ),
+    );
+
+    await (await app.installation(42n)).repo("octo-org/app").listWorkflows();
+
+    expect(reported).toEqual([
+      { installationId: 42n, remaining: 4321, resetAt: new Date(RESET * 1000) },
+    ]);
+  });
+
+  async function failure(status: number, headers: Record<string, string>, message: string) {
+    let calls = 0;
+    mockServer.use(
+      http.get(`${REPO}/actions/workflows`, () => {
+        calls += 1;
+        return HttpResponse.json({ message }, { status, headers });
+      }),
+    );
+    const error = await (await repo({ retries: 2 })).listWorkflows().then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    if (!(error instanceof GitHubApiError)) throw new Error("expected a GitHubApiError");
+    return { error, calls };
+  }
+
+  it("says when to retry after the primary quota runs out, and doesn't retry at once", async () => {
+    const { error, calls } = await failure(
+      403,
+      { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(RESET) },
+      "API rate limit exceeded for installation ID 42.",
+    );
+
+    expect(error.retryAt).toEqual(new Date(RESET * 1000));
+    expect(calls).toBe(1);
+  });
+
+  it("honors retry-after on a 429, and doesn't retry it at once", async () => {
+    const before = Date.now();
+    const { error, calls } = await failure(429, { "retry-after": "30" }, "Too many requests");
+
+    expect(error.status).toBe(429);
+    expect(error.retryAt?.getTime()).toBeGreaterThanOrEqual(before + 30_000);
+    expect(error.retryAt?.getTime()).toBeLessThan(before + 31_000);
+    expect(calls).toBe(1);
+  });
+
+  it("waits a minute after a secondary rate limit that gives no retry-after", async () => {
+    const before = Date.now();
+    const { error } = await failure(403, {}, "You have exceeded a secondary rate limit.");
+
+    expect(error.retryAt?.getTime()).toBeGreaterThanOrEqual(before + 60_000);
+  });
+
+  it("keeps the rate limit of the installation token fetch a call triggered", async () => {
+    mockServer.use(
+      http.post(`${API}/app/installations/:installationId/access_tokens`, () =>
+        HttpResponse.json(
+          { message: "API rate limit exceeded" },
+          {
+            status: 403,
+            headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(RESET) },
+          },
+        ),
+      ),
+    );
+
+    const error: unknown = await (await createApp().installation(42n)).listRepositories().then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+
+    expect(error).toBeInstanceOf(GitHubApiError);
+    expect(error).toMatchObject({
+      status: 403,
+      route: "POST /app/installations/{installation_id}/access_tokens",
+      retryAt: new Date(RESET * 1000),
+    });
+  });
+
+  it("doesn't treat a plain 403 (missing permission) as a rate limit", async () => {
+    const { error } = await failure(
+      403,
+      { "x-ratelimit-remaining": "4000", "x-ratelimit-reset": String(RESET) },
+      "Resource not accessible by integration",
+    );
+
+    expect(error.retryAt).toBeNull();
+  });
+});

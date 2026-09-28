@@ -3,7 +3,13 @@
 // demand and caches them in memory until shortly before they expire; they are never stored.
 import { App } from "octokit";
 import { z } from "zod";
-import { octokitOptions, pipehealOctokit, type GitHubClientOptions } from "./client";
+import {
+  octokitOptions,
+  pipehealOctokit,
+  rateLimitState,
+  type GitHubClientOptions,
+  type RateLimitState,
+} from "./client";
 import { GuardError } from "./guards";
 import { repoClient } from "./repo";
 
@@ -13,6 +19,8 @@ export interface GitHubAppConfig extends GitHubClientOptions {
   privateKey: string;
   /** Time limit for each request, each page and retry separately. Default 30 s. */
   requestTimeoutMs?: number;
+  /** Told the installation's remaining quota after each response (the worker paces with it). */
+  onRateLimit?: (installationId: bigint, state: RateLimitState) => void;
 }
 
 const installedRepositorySchema = z.object({
@@ -35,6 +43,13 @@ export function createGitHubApp(config: GitHubAppConfig) {
     /** A client acting as one installation of the App. */
     async installation(installationId: bigint) {
       const octokit = await app.getInstallationOctokit(Number(installationId));
+      const { onRateLimit } = config;
+      if (onRateLimit !== undefined) {
+        octokit.hook.after("request", (response) => {
+          const state = rateLimitState(response.headers);
+          if (state !== null) onRateLimit(installationId, state);
+        });
+      }
       return {
         /** Repositories the installation can access (P1.6 sync). */
         async listRepositories() {

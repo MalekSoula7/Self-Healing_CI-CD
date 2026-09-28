@@ -8,6 +8,7 @@ import { createLogger } from "@pipeheal/shared/logger";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { RateLimitedError } from "../pacing";
 import { processWebhookJob, type WebhookProcessorDeps } from "./webhooks";
 
 const db = createTestDb();
@@ -135,6 +136,11 @@ function testDeps(): WebhookProcessorDeps {
     }),
     logger: createLogger({ level: "silent", service: "test" }),
     scheduleWindowClose: () => Promise.resolve(),
+    pacing: {
+      record: () => undefined,
+      pause: () => Promise.resolve(),
+      pausedUntil: () => Promise.resolve(null),
+    },
   };
 }
 
@@ -1030,5 +1036,84 @@ describe("workflow_run (SPEC §2 step 4, §2.1)", () => {
     });
 
     await expect(failureOf(w)).resolves.toBeNull();
+  });
+});
+
+describe("GitHub rate limits", () => {
+  function delivery(payload: unknown) {
+    const deliveryId = randomUUID();
+    return {
+      deliveryId,
+      job: {
+        id: deliveryId,
+        data: { deliveryId, event: "installation", action: "created", payload },
+      },
+    };
+  }
+
+  it("pauses the installation when GitHub rate-limits it, without failing the delivery", async () => {
+    const reset = Math.floor(Date.now() / 1000) + 900;
+    github.use(
+      http.post("https://api.github.com/app/installations/:id/access_tokens", () =>
+        HttpResponse.json(
+          { message: "API rate limit exceeded" },
+          {
+            status: 403,
+            headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+          },
+        ),
+      ),
+    );
+    const paused: { installationId: bigint; until: Date }[] = [];
+    const deps: WebhookProcessorDeps = {
+      ...testDeps(),
+      pacing: {
+        record: () => undefined,
+        pausedUntil: () => Promise.resolve(null),
+        pause: (installationId, until) => {
+          paused.push({ installationId, until });
+          return Promise.resolve();
+        },
+      },
+    };
+    const payload = installationPayload();
+    const { deliveryId, job } = delivery(payload);
+    await recordWebhookDelivery(db, { deliveryId, event: "installation", action: "created" });
+
+    await expect(processWebhookJob(job, deps)).rejects.toBeInstanceOf(RateLimitedError);
+
+    expect(paused).toEqual([
+      { installationId: BigInt(payload.installation.id), until: new Date(reset * 1000) },
+    ]);
+    await expect(
+      db.webhookDelivery.findUniqueOrThrow({ where: { deliveryId } }),
+    ).resolves.toMatchObject({
+      processedAt: null,
+      error: null,
+    });
+  });
+
+  it("doesn't start a delivery for an installation that is paused", async () => {
+    const until = new Date(Date.now() + 60_000);
+    const deps: WebhookProcessorDeps = {
+      ...testDeps(),
+      pacing: {
+        record: () => undefined,
+        pause: () => Promise.resolve(),
+        pausedUntil: () => Promise.resolve(until),
+      },
+    };
+    const payload = installationPayload();
+    const { deliveryId, job } = delivery(payload);
+    await recordWebhookDelivery(db, { deliveryId, event: "installation", action: "created" });
+
+    // No GitHub mocks: a call would fail the test with a different error.
+    await expect(processWebhookJob(job, deps)).rejects.toMatchObject({
+      name: "RateLimitedError",
+      until,
+    });
+    await expect(
+      db.organization.findUnique({ where: { installationId: BigInt(payload.installation.id) } }),
+    ).resolves.toBeNull();
   });
 });

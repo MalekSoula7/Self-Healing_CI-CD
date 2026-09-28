@@ -10,6 +10,7 @@ import {
   type Db,
 } from "@pipeheal/db";
 import {
+  GitHubApiError,
   installationEventSchema,
   installationRepositoriesEventSchema,
   toAccountType,
@@ -20,8 +21,10 @@ import {
 } from "@pipeheal/github";
 import { redactText, webhookJobDataSchema, WEBHOOKS_QUEUE } from "@pipeheal/shared";
 import type { Logger } from "@pipeheal/shared/logger";
-import { Queue, Worker } from "bullmq";
+import { DelayedError, Queue, Worker, type Job } from "bullmq";
 import type { Redis } from "ioredis";
+import { z } from "zod";
+import { RateLimitedError, type InstallationPacing } from "../pacing";
 import type { ScheduleWindowClose } from "./failures";
 import { processWorkflowRunEvent } from "./workflow-runs";
 import { syncRepoWorkflows } from "./workflow-sync";
@@ -33,7 +36,14 @@ export interface WebhookProcessorDeps {
   logger: Logger;
   /** Closes a failure's collection window when its time is up (SPEC §2.1). */
   scheduleWindowClose: ScheduleWindowClose;
+  /** Per-installation GitHub quota: jobs of a rate-limited installation wait (P2.1). */
+  pacing: InstallationPacing;
 }
+
+// Every event we process carries the installation it's for.
+const installationOfSchema = z.object({
+  installation: z.object({ id: z.number().int().positive().transform(BigInt) }),
+});
 
 interface QueueJob {
   id?: string | undefined;
@@ -164,11 +174,18 @@ async function processInstallationRepositoriesEvent(
 
 /**
  * Processes one webhook delivery. Marks it processed on success; on failure records a redacted
- * error and rethrows, so BullMQ retries with its configured backoff.
+ * error and rethrows, so BullMQ retries with its configured backoff. A delivery for an
+ * installation GitHub is rate-limiting throws RateLimitedError instead: not a failure, the
+ * worker delays the job until the installation's quota resets.
  */
 export async function processWebhookJob(job: QueueJob, deps: WebhookProcessorDeps): Promise<void> {
   const { deliveryId, event, payload } = webhookJobDataSchema.parse(job.data);
   const log = deps.logger.child({ deliveryId, event, jobId: job.id });
+  const installationId = installationOfSchema.safeParse(payload).data?.installation.id;
+  if (installationId !== undefined) {
+    const until = await deps.pacing.pausedUntil(installationId);
+    if (until !== null) throw new RateLimitedError(until);
+  }
   try {
     switch (event) {
       case "installation":
@@ -191,6 +208,11 @@ export async function processWebhookJob(job: QueueJob, deps: WebhookProcessorDep
     }
     await markWebhookDeliveryProcessed(deps.db, deliveryId);
   } catch (error) {
+    if (error instanceof GitHubApiError && error.retryAt !== null && installationId !== undefined) {
+      await deps.pacing.pause(installationId, error.retryAt);
+      log.warn({ until: error.retryAt }, "GitHub rate-limited this installation; delaying");
+      throw new RateLimitedError(error.retryAt);
+    }
     const message = error instanceof Error ? error.message : String(error);
     await markWebhookDeliveryFailed(deps.db, deliveryId, redactText(message));
     throw error;
@@ -226,11 +248,20 @@ export function createWebhooksWorker(
   deps: Omit<WebhookProcessorDeps, "logger"> & { logger: Logger },
   prefix?: string,
 ): Worker {
-  const worker = new Worker(WEBHOOKS_QUEUE, (job: QueueJob) => processWebhookJob(job, deps), {
-    connection,
-    prefix,
-    concurrency: 5,
-  });
+  const worker = new Worker(
+    WEBHOOKS_QUEUE,
+    async (job: Job, token?: string) => {
+      try {
+        await processWebhookJob(job, deps);
+      } catch (error) {
+        if (!(error instanceof RateLimitedError) || token === undefined) throw error;
+        // Back in the queue until the quota resets, without spending one of the job's attempts.
+        await job.moveToDelayed(error.until.getTime(), token);
+        throw new DelayedError();
+      }
+    },
+    { connection, prefix, concurrency: 5 },
+  );
   worker.on("failed", (job, error) => {
     deps.logger.error(
       { jobId: job?.id, event: job?.name, error: error.message },

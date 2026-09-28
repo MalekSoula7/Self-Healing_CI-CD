@@ -25,6 +25,14 @@ const unreachableDeps: WebhookProcessorDeps = {
   scheduleWindowClose: () => {
     throw new Error("scheduleWindowClose must not be called");
   },
+  pacing: new Proxy(
+    {},
+    {
+      get: () => {
+        throw new Error("pacing must not be touched");
+      },
+    },
+  ) as never,
 };
 
 describe("processWebhookJob", () => {

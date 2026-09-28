@@ -6,7 +6,13 @@ export {
   type GitHubAppConfig,
   type InstallationClient,
 } from "./app";
-export { GitHubApiError, USER_AGENT, type GitHubClientOptions, type GitHubLog } from "./client";
+export {
+  GitHubApiError,
+  USER_AGENT,
+  type GitHubClientOptions,
+  type GitHubLog,
+  type RateLimitState,
+} from "./client";
 export {
   PrivateKeyError,
   decodePrivateKey,

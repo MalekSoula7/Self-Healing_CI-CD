@@ -2,6 +2,7 @@ import { createDb } from "@pipeheal/db";
 import { createGitHubApp, type GitHubApp } from "@pipeheal/github";
 import { createLogger } from "@pipeheal/shared/logger";
 import { loadWorkerEnv } from "./env";
+import { redisPacing } from "./pacing";
 import { buildGateway } from "./gateway/server";
 import { createFailuresQueue, createFailuresWorker, scheduleWindowClose } from "./queues/failures";
 import { createMaintenanceQueue, createMaintenanceWorker } from "./queues/maintenance";
@@ -15,6 +16,7 @@ async function main(): Promise<void> {
 
   const db = createDb(env.DATABASE_URL);
   const redis = createRedis(env.REDIS_URL, logger);
+  const pacing = redisPacing(redis, logger);
   const maintenanceQueue = createMaintenanceQueue(redis, logger);
   const maintenanceWorker = createMaintenanceWorker(redis, logger);
 
@@ -27,6 +29,9 @@ async function main(): Promise<void> {
           appId: env.GITHUB_APP_ID,
           privateKey: env.GITHUB_APP_PRIVATE_KEY,
           log: logger,
+          onRateLimit: (installationId, state) => {
+            pacing.record(installationId, state);
+          },
         });
   const failuresQueue = createFailuresQueue(redis, logger);
   const failuresWorker = createFailuresWorker(redis, { db, logger });
@@ -36,6 +41,7 @@ async function main(): Promise<void> {
     githubApp,
     logger,
     scheduleWindowClose: scheduleWindowClose(failuresQueue),
+    pacing,
   });
 
   const gateway = buildGateway({ logger, checks: { redis: () => pingRedis(redis) } });
