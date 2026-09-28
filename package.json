@@ -12,6 +12,7 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "dev:webhooks": "tsx --env-file-if-exists=.env scripts/dev-webhooks.ts",
+    "break": "tsx scripts/break.ts",
     "typecheck": "tsc -p tsconfig.json && turbo run typecheck",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",

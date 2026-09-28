@@ -7,5 +7,7 @@ pnpm-lock.yaml
 **/playwright-report
 **/test-results
 **/generated
+# Standalone demo repos, formatted by their own conventions (and scripts/break.ts matches their text).
+examples/
 # Markdown is hand-formatted (tables in docs/ would be re-aligned on every edit).
 **/*.md

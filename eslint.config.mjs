@@ -48,6 +48,8 @@ export default defineConfig(
     "**/test-results/**",
     "**/generated/**",
     "**/next-env.d.ts",
+    // Standalone demo repos with their own lint setup (they get pushed to their own repositories).
+    "examples/**",
   ]),
   {
     linterOptions: {

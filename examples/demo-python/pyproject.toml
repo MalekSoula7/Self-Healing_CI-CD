@@ -1,0 +1,22 @@
+[project]
+name = "pipeheal-demo-python"
+version = "1.0.0"
+description = "A small invoicing module, used to try PipeHeal on real CI failures."
+requires-python = ">=3.13"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+strict = true
+files = ["billing", "tests"]
