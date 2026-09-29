@@ -59,6 +59,20 @@ function failedRun(overrides: Partial<FailedRunInput> = {}): FailedRunInput {
   };
 }
 
+function modelCall() {
+  return {
+    purpose: "triage",
+    model: "claude-haiku-4-5-20251001",
+    promptVersion: "triage-v1",
+    inputTokens: 1200,
+    outputTokens: 80,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0.0016,
+    outcome: "valid" as const,
+  };
+}
+
 function uniqueLogin(): string {
   return `T${randomUUID().replaceAll("-", "").slice(0, 20)}`;
 }
@@ -253,6 +267,20 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
   "failures.recordJobTriage": async () => {
     await expect(
       a.system.failures.recordJobTriage(b.failedJobId, { errorWindow: "planted" }),
+    ).rejects.toThrow(NotFoundError);
+  },
+  "failures.recordModelCall": async () => {
+    await expect(a.system.failures.recordModelCall(b.failure.id, modelCall())).rejects.toThrow(
+      NotFoundError,
+    );
+  },
+  "failures.recordTriage": async () => {
+    await expect(
+      a.system.failures.recordTriage(b.failure.id, {
+        category: "config",
+        confidence: 1,
+        summary: "planted",
+      }),
     ).rejects.toThrow(NotFoundError);
   },
   "members.list": async () => {
@@ -450,6 +478,40 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
         action: "failure.job_triaged",
         target: `failure:${a.failure.id}`,
         metadata: { failedJobId: a.failedJobId, redactions: { "github-token": 2 } },
+      },
+    ];
+  },
+  "failures.recordModelCall": async () => {
+    await a.system.failures.recordModelCall(a.failure.id, modelCall());
+    return [
+      {
+        actorType: "SYSTEM",
+        actorId: "test",
+        action: "failure.model_called",
+        target: `failure:${a.failure.id}`,
+        metadata: {
+          purpose: "triage",
+          model: "claude-haiku-4-5-20251001",
+          outcome: "valid",
+          inputTokens: 1200,
+          outputTokens: 80,
+          costUsd: "0.001600",
+        },
+      },
+    ];
+  },
+  "failures.recordTriage": async () => {
+    await a.system.failures.recordTriage(a.failure.id, {
+      category: "typecheck",
+      confidence: 0.95,
+      summary: "tsc: TS2305",
+    });
+    return [
+      {
+        actorType: "SYSTEM",
+        action: "failure.triaged",
+        target: `failure:${a.failure.id}`,
+        metadata: { category: "typecheck", confidence: 0.95, status: "TRIAGED" },
       },
     ];
   },
@@ -1163,6 +1225,51 @@ describe("failures (SPEC §2.1)", () => {
     await expect(
       a.system.failures.recordJobTriage(a.failedJobId, {
         errorWindow: "x".repeat(200_001),
+      }),
+    ).rejects.toThrow(ZodError);
+  });
+
+  it("stores a job's classification and the failure's, and TRIAGED only moves on from DETECTED", async () => {
+    await a.system.failures.recordJobTriage(a.failedJobId, {
+      errorWindow: "error TS2305",
+      classification: { category: "typecheck", confidence: 0.95, summary: "tsc: TS2305" },
+    });
+    const triaged = await a.system.failures.recordTriage(a.failure.id, {
+      category: "typecheck",
+      confidence: 0.95,
+      summary: "tsc: TS2305",
+    });
+
+    expect(triaged).toMatchObject({ status: "TRIAGED", category: "TYPECHECK", confidence: 0.95 });
+    const stored = await a.asMember.failures.get(a.failure.id);
+    expect(stored?.runs[0]?.jobs[0]).toMatchObject({
+      category: "TYPECHECK",
+      summary: "tsc: TS2305",
+    });
+
+    await db.pipelineFailure.update({ where: { id: a.failure.id }, data: { status: "FLAKY" } });
+    await expect(
+      a.system.failures.recordTriage(a.failure.id, {
+        category: "test",
+        confidence: 0.9,
+        summary: "x",
+      }),
+    ).resolves.toMatchObject({ status: "FLAKY", category: "TEST" });
+  });
+
+  it("records a model call's tokens and cost exactly", async () => {
+    const call = await a.system.failures.recordModelCall(a.failure.id, {
+      ...modelCall(),
+      cacheReadTokens: 4000,
+      costUsd: 0.0123456,
+    });
+
+    expect(call).toMatchObject({ orgId: a.org.id, failureId: a.failure.id, cacheReadTokens: 4000 });
+    expect(call.costUsd.toString()).toBe("0.012346");
+    await expect(
+      a.system.failures.recordModelCall(a.failure.id, {
+        ...modelCall(),
+        outcome: "maybe" as "valid",
       }),
     ).rejects.toThrow(ZodError);
   });

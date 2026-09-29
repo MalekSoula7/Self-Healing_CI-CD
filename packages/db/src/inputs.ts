@@ -106,9 +106,48 @@ export const jobSignalsSchema = z.strictObject({
 });
 export type JobSignals = z.infer<typeof jobSignalsSchema>;
 
+/** SPEC §6.1's triage categories, as triage names them. */
+export const triageCategorySchema = z.enum([
+  "compile",
+  "typecheck",
+  "lint",
+  "test",
+  "dependency",
+  "build",
+  "infra",
+  "config",
+  "flaky",
+  "unknown",
+]);
+export type TriageCategory = z.infer<typeof triageCategorySchema>;
+
+/** A classification: for one failed job, or the failure as a whole. */
+export const classificationSchema = z.strictObject({
+  category: triageCategorySchema,
+  confidence: z.number().min(0).max(1),
+  /** Built from redacted text only. */
+  summary: z.string().min(1).max(1_000),
+});
+export type ClassificationInput = z.infer<typeof classificationSchema>;
+
+/** One model call and its cost (SPEC §7.5, §13). */
+export const modelCallInputSchema = z.strictObject({
+  purpose: z.string().regex(/^[a-z][a-z-]{0,39}$/),
+  model: z.string().min(1).max(100),
+  promptVersion: z.string().min(1).max(50),
+  inputTokens: z.int().nonnegative(),
+  outputTokens: z.int().nonnegative(),
+  cacheReadTokens: z.int().nonnegative(),
+  cacheWriteTokens: z.int().nonnegative(),
+  costUsd: z.number().nonnegative().max(1_000),
+  outcome: z.enum(["valid", "invalid", "error"]),
+});
+export type ModelCallInput = z.infer<typeof modelCallInputSchema>;
+
 export const jobTriageInputSchema = z.strictObject({
   errorWindow: z.string().max(200_000),
   signals: jobSignalsSchema.optional(),
+  classification: classificationSchema.optional(),
   redactions: z.record(z.string().regex(/^[a-z-]{1,40}$/), z.int().nonnegative()).optional(),
 });
 export type JobTriageInput = z.infer<typeof jobTriageInputSchema>;

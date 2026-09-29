@@ -10,23 +10,39 @@ import { auditChanges, auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
 import { ConflictError, ForbiddenError, NotFoundError } from "./errors";
 import type { RepoWorkflow } from "./generated/prisma/client";
-import type { AccountType, FailureStatus, OrgStatus, Role } from "./generated/prisma/enums";
+import type {
+  AccountType,
+  FailureCategory,
+  FailureStatus,
+  OrgStatus,
+  Role,
+} from "./generated/prisma/enums";
 import {
   auditPageSchema,
+  classificationSchema,
   failedRunInputSchema,
   githubIdSchema,
   idSchema,
   installedRepositorySchema,
   installedWorkflowSchema,
   jobTriageInputSchema,
+  modelCallInputSchema,
   passedRunInputSchema,
   type AuditPage,
+  type ClassificationInput,
   type FailedRunInput,
   type InstalledRepository,
   type InstalledWorkflow,
   type JobTriageInput,
+  type ModelCallInput,
   type PassedRunInput,
+  type TriageCategory,
 } from "./inputs";
+
+/** Triage's category names (SPEC §6.1) as the database enum. */
+function toCategory(category: TriageCategory): FailureCategory {
+  return category.toUpperCase() as FailureCategory;
+}
 
 /** SPEC §2.1: the first failed run for a commit opens a window this long to collect the rest. */
 export const COLLECTION_WINDOW_MS = 5 * 60 * 1000;
@@ -536,7 +552,8 @@ function buildSystemScope(ctx: ScopeContext) {
       /** Stores what triage found for one failed job (SPEC §6.2). */
       async recordJobTriage(failedJobId: string, input: JobTriageInput) {
         const id = requireId(failedJobId, "failed job");
-        const { errorWindow, signals, redactions } = jobTriageInputSchema.parse(input);
+        const { errorWindow, signals, classification, redactions } =
+          jobTriageInputSchema.parse(input);
         return db.$transaction(async (tx) => {
           const job = await tx.failedJob.findFirst({
             where: { id, orgId },
@@ -545,7 +562,17 @@ function buildSystemScope(ctx: ScopeContext) {
           if (job === null) throw new NotFoundError("failed job not found");
           const updated = await tx.failedJob.update({
             where: { id },
-            data: { errorWindow, ...(signals === undefined ? {} : { signals }) },
+            data: {
+              errorWindow,
+              ...(signals === undefined ? {} : { signals }),
+              ...(classification === undefined
+                ? {}
+                : {
+                    category: toCategory(classification.category),
+                    confidence: classification.confidence,
+                    summary: classification.summary,
+                  }),
+            },
           });
           await writeAudit(tx, orgId, actor, {
             action: "failure.job_triaged",
@@ -553,8 +580,65 @@ function buildSystemScope(ctx: ScopeContext) {
             metadata: {
               failedJobId: id,
               githubJobId: String(job.githubJobId),
+              ...(classification === undefined
+                ? {}
+                : { category: classification.category, confidence: classification.confidence }),
               ...(redactions === undefined ? {} : { redactions }),
             },
+          });
+          return updated;
+        });
+      },
+
+      /** Records one model call made for this failure, with its tokens and cost (SPEC §13). */
+      async recordModelCall(failureId: string, input: ModelCallInput) {
+        const id = requireId(failureId, "failure");
+        const call = modelCallInputSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const failure = await tx.pipelineFailure.findFirst({ where: { id, orgId } });
+          if (failure === null) throw new NotFoundError("failure not found");
+          const created = await tx.modelCall.create({
+            data: { orgId, failureId: id, ...call, costUsd: call.costUsd.toFixed(6) },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "failure.model_called",
+            target: auditTarget("failure", id),
+            metadata: {
+              purpose: call.purpose,
+              model: call.model,
+              outcome: call.outcome,
+              inputTokens: call.inputTokens,
+              outputTokens: call.outputTokens,
+              costUsd: call.costUsd.toFixed(6),
+            },
+          });
+          return created;
+        });
+      },
+
+      /**
+       * The failure's category, from its jobs' (SPEC §6.2). A DETECTED failure becomes TRIAGED;
+       * any other status (FLAKY, or later stages) stays as it is.
+       */
+      async recordTriage(failureId: string, input: ClassificationInput) {
+        const id = requireId(failureId, "failure");
+        const { category, confidence, summary } = classificationSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const failure = await tx.pipelineFailure.findFirst({ where: { id, orgId } });
+          if (failure === null) throw new NotFoundError("failure not found");
+          const updated = await tx.pipelineFailure.update({
+            where: { id },
+            data: {
+              category: toCategory(category),
+              confidence,
+              summary,
+              ...(failure.status === "DETECTED" ? { status: "TRIAGED" as const } : {}),
+            },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "failure.triaged",
+            target: auditTarget("failure", id),
+            metadata: { category, confidence, status: updated.status },
           });
           return updated;
         });

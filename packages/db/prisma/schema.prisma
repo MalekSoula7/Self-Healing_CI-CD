@@ -133,6 +133,7 @@ model Organization {
   failures     PipelineFailure[]
   failedRuns   FailedRun[]
   failedJobs   FailedJob[]
+  modelCalls   ModelCall[]
 }
 
 enum Role {
@@ -278,7 +279,8 @@ model PipelineFailure {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
-  runs FailedRun[]
+  runs       FailedRun[]
+  modelCalls ModelCall[]
 
   @@unique([repoId, headSha])
   @@unique([orgId, id])
@@ -340,6 +342,31 @@ model FailedJob {
 
   @@unique([failedRunId, githubJobId])
   @@index([orgId, createdAt])
+}
+
+/// One model API call and what it cost (SPEC §7.5, §13): tokens and cost per call. P7.1 rolls
+/// these up into UsageRecord. Triage calls for now; heal attempts later.
+model ModelCall {
+  id               String          @id @default(uuid(7)) @db.Uuid
+  orgId            String          @db.Uuid
+  org              Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  failureId        String          @db.Uuid
+  failure          PipelineFailure @relation(fields: [orgId, failureId], references: [orgId, id], onDelete: Cascade)
+  /// What the call was for, e.g. "triage".
+  purpose          String
+  model            String
+  promptVersion    String
+  inputTokens      Int
+  outputTokens     Int
+  cacheReadTokens  Int             @default(0)
+  cacheWriteTokens Int             @default(0)
+  costUsd          Decimal         @db.Decimal(12, 6)
+  /// "valid", "invalid" (the output failed validation) or "error" (the API call failed).
+  outcome          String
+  createdAt        DateTime        @default(now())
+
+  @@index([orgId, createdAt])
+  @@index([failureId])
 }
 
 // ---------------------------------------------------------------------------------------------

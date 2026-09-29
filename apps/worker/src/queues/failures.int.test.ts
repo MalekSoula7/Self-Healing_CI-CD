@@ -12,6 +12,7 @@ import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { RateLimitedError, type InstallationPacing } from "../pacing";
+import type { TriageModel } from "../triage-model";
 import {
   createFailuresQueue,
   failureJobs,
@@ -79,6 +80,7 @@ function deps(overrides: Partial<FailuresDeps> = {}) {
     githubApp: createGitHubApp({ appId: 1234, privateKey, retries: 0 }),
     pacing: openPacing,
     jobs,
+    triageModel: null,
     ...overrides,
   };
   return { deps: all, triaged };
@@ -161,6 +163,41 @@ const LOG = [
   "2026-09-28T23:22:12.2223456Z Cleaning up orphan processes",
   "",
 ].join("\n");
+
+// Nothing here the heuristics recognize: TRIAGE_MODEL's job.
+const UNCLEAR_LOG = [
+  "2026-09-28T23:22:10.1102345Z ##[group]Run make",
+  "2026-09-28T23:22:10.1104567Z ##[endgroup]",
+  `2026-09-28T23:22:10.1112345Z token=${PLANTED_TOKEN}`,
+  "2026-09-28T23:22:12.1101234Z make: *** [all] Error 2",
+  "2026-09-28T23:22:12.1112345Z ##[error]Process completed with exit code 2.",
+  "",
+].join("\n");
+
+const MODEL_CALL = {
+  purpose: "triage",
+  model: "claude-haiku-4-5-20251001",
+  promptVersion: "triage-v1",
+  inputTokens: 900,
+  outputTokens: 60,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  costUsd: 0.0012,
+};
+
+/** A TriageModel that records one call and answers `answer` (null: no valid answer). */
+function fakeModel(answer: Awaited<ReturnType<TriageModel["classify"]>>) {
+  const inputs: Parameters<TriageModel["classify"]>[0][] = [];
+  const model: TriageModel & { inputs: typeof inputs } = {
+    inputs,
+    async classify(input, record) {
+      inputs.push(input);
+      await record({ ...MODEL_CALL, outcome: answer === null ? "invalid" : "valid" });
+      return answer;
+    },
+  };
+  return model;
+}
 
 describe("close-window job", () => {
   it("closes the collection window, then queues the failure's triage", async () => {
@@ -245,6 +282,75 @@ describe("triage job (SPEC §6.2 steps 1-3)", () => {
     expect(everything).not.toContain(PLANTED_TOKEN);
   });
 
+  it("classifies the job with heuristics, then the failure from its jobs (SPEC §6.2 step 6)", async () => {
+    const { target, repoFullName, githubJobId, failedRunId } = await openFailure();
+    mockToken();
+    mockLog(repoFullName, githubJobId, LOG);
+    const model = fakeModel(null);
+
+    await processFailuresJob(triageJob(target), deps({ triageModel: model }).deps);
+
+    expect(await jobOf(failedRunId)).toMatchObject({
+      category: "TYPECHECK",
+      confidence: 0.95,
+      summary:
+        "tsc TS2305: Module '\"./cart\"' has no exported member 'lineTotal'. (src/receipt.ts:1)",
+    });
+    expect(model.inputs).toEqual([]);
+    const failure = await db.pipelineFailure.findUniqueOrThrow({ where: { id: target.failureId } });
+    expect(failure).toMatchObject({ status: "TRIAGED", category: "TYPECHECK", confidence: 0.95 });
+    await expect(db.modelCall.count({ where: { failureId: target.failureId } })).resolves.toBe(0);
+  });
+
+  it("asks TRIAGE_MODEL when heuristics can't tell, with the redacted window, and records the call", async () => {
+    const { target, repoFullName, githubJobId, failedRunId } = await openFailure();
+    mockToken();
+    mockLog(repoFullName, githubJobId, UNCLEAR_LOG);
+    const model = fakeModel({
+      category: "build",
+      confidence: 0.6,
+      summary: "make's default target failed.",
+      suspectedFiles: ["Makefile"],
+    });
+
+    await processFailuresJob(triageJob(target), deps({ triageModel: model }).deps);
+
+    expect(model.inputs).toHaveLength(1);
+    expect(model.inputs[0]).toMatchObject({ workflowName: "CI", jobName: "check" });
+    expect(model.inputs[0]?.window).toContain("make: *** [all] Error 2");
+    expect(model.inputs[0]?.window).not.toContain(PLANTED_TOKEN);
+    expect(await jobOf(failedRunId)).toMatchObject({ category: "BUILD", confidence: 0.6 });
+    const failure = await db.pipelineFailure.findUniqueOrThrow({ where: { id: target.failureId } });
+    expect(failure).toMatchObject({ status: "TRIAGED", category: "BUILD" });
+    const calls = await db.modelCall.findMany({ where: { failureId: target.failureId } });
+    expect(calls).toMatchObject([
+      {
+        orgId: target.orgId,
+        purpose: "triage",
+        model: MODEL_CALL.model,
+        outcome: "valid",
+        inputTokens: 900,
+      },
+    ]);
+    expect(calls[0]?.costUsd.toString()).toBe("0.0012");
+  });
+
+  it("leaves the job unknown when heuristics can't tell and there's no model (or no answer)", async () => {
+    for (const triageModel of [null, fakeModel(null)]) {
+      const { target, repoFullName, githubJobId, failedRunId } = await openFailure();
+      mockToken();
+      mockLog(repoFullName, githubJobId, UNCLEAR_LOG);
+
+      await processFailuresJob(triageJob(target), deps({ triageModel }).deps);
+
+      expect(await jobOf(failedRunId)).toMatchObject({ category: "UNKNOWN", confidence: 0 });
+      const failure = await db.pipelineFailure.findUniqueOrThrow({
+        where: { id: target.failureId },
+      });
+      expect(failure).toMatchObject({ status: "TRIAGED", category: "UNKNOWN" });
+    }
+  });
+
   it("windows a long log to the failure and its end, and doesn't fetch a job it already triaged", async () => {
     const { target, repoFullName, githubJobId, failedRunId } = await openFailure();
     mockToken();
@@ -276,7 +382,7 @@ describe("triage job (SPEC §6.2 steps 1-3)", () => {
 
     await processFailuresJob(triageJob(target), deps().deps);
 
-    expect((await jobOf(failedRunId)).errorWindow).toBe("");
+    expect(await jobOf(failedRunId)).toMatchObject({ errorWindow: "", category: "UNKNOWN" });
   });
 
   it("waits, without calling GitHub, while the installation is paused", async () => {

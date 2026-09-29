@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { createDb } from "@pipeheal/db";
 import { createGitHubApp, type GitHubApp } from "@pipeheal/github";
 import { createLogger } from "@pipeheal/shared/logger";
@@ -9,6 +10,7 @@ import { createMaintenanceQueue, createMaintenanceWorker } from "./queues/mainte
 import { createWebhooksQueue, createWebhooksWorker } from "./queues/webhooks";
 import { createRedis, pingRedis } from "./redis";
 import { createShutdown } from "./shutdown";
+import { triageModel, type TriageModel } from "./triage-model";
 
 async function main(): Promise<void> {
   const env = loadWorkerEnv();
@@ -33,9 +35,27 @@ async function main(): Promise<void> {
             pacing.record(installationId, state);
           },
         });
+  // Optional in development only (env.ts); the env check guarantees TRIAGE_MODEL has a price.
+  const triagePrice = env.MODEL_PRICES?.[env.TRIAGE_MODEL];
+  const triage: TriageModel | null =
+    env.ANTHROPIC_API_KEY === undefined || triagePrice === undefined
+      ? null
+      : triageModel({
+          client: new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 2, timeout: 60_000 }),
+          model: env.TRIAGE_MODEL,
+          price: triagePrice,
+          logger,
+        });
   const failuresQueue = createFailuresQueue(redis, logger);
   const jobs = failureJobs(failuresQueue);
-  const failuresWorker = createFailuresWorker(redis, { db, githubApp, logger, pacing, jobs });
+  const failuresWorker = createFailuresWorker(redis, {
+    db,
+    githubApp,
+    logger,
+    pacing,
+    jobs,
+    triageModel: triage,
+  });
   const webhooksQueue = createWebhooksQueue(redis, logger);
   const webhooksWorker = createWebhooksWorker(redis, {
     db,
@@ -80,6 +100,7 @@ async function main(): Promise<void> {
   await gateway.listen({ host: env.GATEWAY_HOST, port: env.GATEWAY_PORT });
   await maintenanceQueue.add("ping", { requestedAt: new Date().toISOString() });
   if (githubApp === null) logger.warn("GitHub App not configured: webhook repo sync is disabled");
+  if (triage === null) logger.warn("ANTHROPIC_API_KEY not set: unclassified jobs stay unknown");
   logger.info("worker started");
 }
 

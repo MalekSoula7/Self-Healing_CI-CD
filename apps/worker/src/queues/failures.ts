@@ -14,7 +14,7 @@ import {
   pauseIfRateLimited,
   type InstallationPacing,
 } from "../pacing";
-import { triageFailure, type FailureTarget } from "./triage";
+import { triageFailure, type FailureTarget, type TriageDeps } from "./triage";
 
 export const FAILURES_QUEUE = "failures";
 
@@ -38,7 +38,7 @@ export interface FailureJobs {
   enqueueTriage: (target: FailureTarget, key?: string) => Promise<void>;
 }
 
-export interface FailuresDeps {
+export interface FailuresDeps extends TriageDeps {
   db: Db;
   githubApp: GitHubApp | null;
   logger: Logger;

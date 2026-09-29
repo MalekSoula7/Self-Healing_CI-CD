@@ -12,8 +12,11 @@ export type {
   PassedRunInput,
   InstalledRepository,
   InstalledWorkflow,
+  ClassificationInput,
   JobSignals,
   JobTriageInput,
+  ModelCallInput,
+  TriageCategory,
   WebhookDeliveryInput,
 } from "./inputs";
 export {
@@ -51,6 +54,7 @@ export {
   type FailedJob,
   type FailedRun,
   type Membership,
+  type ModelCall,
   type Organization,
   type PipelineFailure,
   type RepoWorkflow,
