@@ -1,0 +1,185 @@
+// zod schemas for everything the data helpers accept from callers (CLAUDE.md: validate every
+// external input). Callers pass values that came from users, webhooks or the GitHub API.
+import { z } from "zod";
+
+export const idSchema = z.uuid();
+
+/** GitHub numeric IDs are positive. */
+export const githubIdSchema = z.bigint().positive();
+
+/** GitHub account logins: alphanumerics and single hyphens, at most 39 characters. */
+export const githubLoginSchema = z.string().regex(/^[A-Za-z0-9](?:-?[A-Za-z0-9]){0,38}$/);
+
+export const installationInputSchema = z.strictObject({
+  githubAccountId: githubIdSchema,
+  login: githubLoginSchema,
+  accountType: z.enum(["ORG", "USER"]),
+  installationId: githubIdSchema,
+  /** The `installation` webhook's sender (OWNER candidate, SPEC §5.2). */
+  installerGithubId: githubIdSchema.optional(),
+});
+export type InstallationInput = z.infer<typeof installationInputSchema>;
+
+export const installedRepositorySchema = z.strictObject({
+  githubRepoId: githubIdSchema,
+  // owner/name; "." and ".." are not repository names (they would be path segments in API URLs).
+  fullName: z.string().regex(/^[A-Za-z0-9-]+\/(?!\.\.?$)[A-Za-z0-9._-]+$/),
+  defaultBranch: z.string().min(1).max(255),
+});
+export type InstalledRepository = z.infer<typeof installedRepositorySchema>;
+
+export const installedWorkflowSchema = z.strictObject({
+  githubWorkflowId: githubIdSchema,
+  // Repo-relative POSIX path, e.g. ".github/workflows/ci.yml".
+  path: z.string().min(1).max(500),
+  name: z.string().min(1).max(255),
+  // Both undefined when the workflow file couldn't be fetched or parsed (SPEC §11, §6.2 step 8):
+  // callers keep any previously known facts rather than overwriting them with empty defaults.
+  triggers: z.array(z.string().min(1).max(100)).max(50).optional(),
+  usesEnvironment: z.boolean().optional(),
+  // The "CI-looking" heuristic's suggestion (SPEC §11), applied only the moment a workflow is
+  // first discovered (see syncInstalled): once a workflow exists, only the admin's own choice on
+  // /[org]/repos/[repo] can change `selected`, so this is ignored on every later sync.
+  selected: z.boolean().optional(),
+});
+export type InstalledWorkflow = z.infer<typeof installedWorkflowSchema>;
+
+const shaSchema = z.string().regex(/^[0-9a-f]{40}$/);
+const githubUrlSchema = z.url({ protocol: /^https$/ }).max(2000);
+
+/** A failed job of a run's latest attempt, as GitHub lists it (SPEC §10 FailedJob). */
+export const failedJobInputSchema = z.strictObject({
+  githubJobId: githubIdSchema,
+  name: z.string().min(1).max(500),
+  failedStep: z.string().min(1).max(500).nullable(),
+  htmlUrl: githubUrlSchema.nullable(),
+});
+export type FailedJobInput = z.infer<typeof failedJobInputSchema>;
+
+/** A completed workflow run that failed, from a `workflow_run` webhook (SPEC §2.1). */
+export const failedRunInputSchema = z.strictObject({
+  headSha: shaSchema,
+  headBranch: z.string().min(1).max(255).nullable(),
+  runId: githubIdSchema,
+  runAttempt: z.int().positive(),
+  workflowId: githubIdSchema,
+  workflowName: z.string().min(1).max(255),
+  workflowPath: z.string().min(1).max(500),
+  conclusion: z.enum(["failure", "timed_out"]),
+  htmlUrl: githubUrlSchema.nullable(),
+  // GitHub caps a workflow run at 256 jobs.
+  jobs: z.array(failedJobInputSchema).max(256),
+});
+export type FailedRunInput = z.infer<typeof failedRunInputSchema>;
+
+/**
+ * What triage learned about one failed job (SPEC §6.2). `errorWindow` must already be redacted.
+ * `redactions` (counts per kind, no content) only goes to the audit log.
+ */
+const signalLocationSchema = z.strictObject({
+  path: z.string().min(1).max(500),
+  line: z.int().nonnegative(),
+  column: z.int().nonnegative().optional(),
+});
+
+/** Signals parsed from a failed job's redacted log (agent-core's `Signals`, SPEC §6.2 step 5). */
+export const jobSignalsSchema = z.strictObject({
+  failedStep: z.string().max(255).nullable(),
+  exitCode: z.int().nullable(),
+  tools: z.array(z.string().min(1).max(20)).max(20),
+  diagnostics: z
+    .array(
+      z.strictObject({
+        tool: z.string().min(1).max(20),
+        severity: z.enum(["error", "warning"]),
+        message: z.string().max(600),
+        code: z.string().max(100).optional(),
+        path: z.string().min(1).max(500).optional(),
+        line: z.int().nonnegative().optional(),
+        column: z.int().nonnegative().optional(),
+      }),
+    )
+    .max(50),
+  failingTests: z.array(z.string().min(1).max(1_000)).max(50),
+  locations: z.array(signalLocationSchema).max(50),
+  errorCodes: z.array(z.string().min(1).max(100)).max(50),
+});
+export type JobSignals = z.infer<typeof jobSignalsSchema>;
+
+/** SPEC §6.1's triage categories, as triage names them. */
+export const triageCategorySchema = z.enum([
+  "compile",
+  "typecheck",
+  "lint",
+  "test",
+  "dependency",
+  "build",
+  "infra",
+  "config",
+  "flaky",
+  "unknown",
+]);
+export type TriageCategory = z.infer<typeof triageCategorySchema>;
+
+/** A classification: for one failed job, or the failure as a whole. */
+export const classificationSchema = z.strictObject({
+  category: triageCategorySchema,
+  confidence: z.number().min(0).max(1),
+  /** Built from redacted text only. */
+  summary: z.string().min(1).max(1_000),
+});
+export type ClassificationInput = z.infer<typeof classificationSchema>;
+
+/** One model call and its cost (SPEC §7.5, §13). */
+export const modelCallInputSchema = z.strictObject({
+  purpose: z.string().regex(/^[a-z][a-z-]{0,39}$/),
+  model: z.string().min(1).max(100),
+  promptVersion: z.string().min(1).max(50),
+  inputTokens: z.int().nonnegative(),
+  outputTokens: z.int().nonnegative(),
+  cacheReadTokens: z.int().nonnegative(),
+  cacheWriteTokens: z.int().nonnegative(),
+  costUsd: z.number().nonnegative().max(1_000),
+  outcome: z.enum(["valid", "invalid", "error"]),
+});
+export type ModelCallInput = z.infer<typeof modelCallInputSchema>;
+
+export const jobTriageInputSchema = z.strictObject({
+  errorWindow: z.string().max(200_000),
+  signals: jobSignalsSchema.optional(),
+  classification: classificationSchema.optional(),
+  redactions: z.record(z.string().regex(/^[a-z-]{1,40}$/), z.int().nonnegative()).optional(),
+});
+export type JobTriageInput = z.infer<typeof jobTriageInputSchema>;
+
+/** A later attempt of a run that passed (SPEC §2.1 re-runs). */
+export const passedRunInputSchema = z.strictObject({
+  runId: githubIdSchema,
+  runAttempt: z.int().positive(),
+});
+export type PassedRunInput = z.infer<typeof passedRunInputSchema>;
+
+/**
+ * X-GitHub-Delivery header value. GitHub-shaped (UUID-looking), but the column is a plain
+ * String (not Postgres `uuid`), so this stays a loose length check rather than `z.uuid()`.
+ */
+export const deliveryIdSchema = z.string().min(1).max(100);
+
+export const webhookDeliverySchema = z.strictObject({
+  /** X-GitHub-Delivery header. Redeliveries reuse it. */
+  deliveryId: deliveryIdSchema,
+  event: z.string().min(1).max(100),
+  action: z.string().max(100).optional(),
+  installationId: githubIdSchema.optional(),
+});
+export type WebhookDeliveryInput = z.infer<typeof webhookDeliverySchema>;
+
+export const auditPageSchema = z.strictObject({
+  take: z.int().min(1).max(200).default(50),
+  /**
+   * Return entries older than this audit entry ID. IDs are UUIDv7: time-ordered, and Prisma
+   * generates them monotonically within a process (checked in P1.2), so ID order is write order.
+   */
+  before: idSchema.optional(),
+});
+export type AuditPage = z.input<typeof auditPageSchema>;

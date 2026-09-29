@@ -28,15 +28,21 @@ Before any work, read `docs/SPEC.md` (what and why) and `docs/PLAN.md` (in what 
 Created in Phase 0. Keep this section accurate whenever scripts change.
 - `docker compose up -d` - Postgres + Redis (needed by `pnpm dev` and `pnpm test`)
 - `pnpm dev` - web (:3000) + worker/gateway (:4000) via Turborepo; both read the root `.env`
+- `pnpm dev:webhooks` - relays GitHub webhooks from `SMEE_URL` to the local web app (setup: `docs/SETUP-GITHUB-APP.md`)
 - `pnpm build` - production builds
 - `pnpm test` - unit + integration tests with coverage (needs `docker compose up -d`)
 - `pnpm test:unit` - unit tests only, no infrastructure (what the Windows CI job runs)
 - `pnpm test:e2e` - Playwright against a production build on :3100 (once per machine: `pnpm --filter @pipeheal/web exec playwright install chromium`)
 - `pnpm typecheck` / `pnpm lint` / `pnpm format` / `pnpm format:check`
-- Not created yet: `pnpm db:migrate` / `pnpm db:studio` / `pnpm db:seed` (Phase 1), `pnpm heal:local` (Phase 4), `pnpm eval` (Phase 8)
+- `pnpm db:migrate [--name <name>]` - `prisma migrate dev` on the dev database, then regenerates the client (Prisma 7's `migrate dev` no longer does)
+- `pnpm db:generate` - regenerate the Prisma client (also runs on `pnpm install`; output in `packages/db/src/generated`, gitignored)
+- `pnpm db:seed` - idempotent demo data (org `pipeheal-demo`); refuses production and non-local databases
+- `pnpm db:studio` - Prisma Studio on the dev database
+- Not created yet: `pnpm heal:local` (Phase 4), `pnpm eval` (Phase 8)
 
 ## Testing conventions
 - Unit tests: `*.test.ts` next to the code. Integration tests (real Postgres/Redis): `*.int.test.ts`.
+- Integration tests run against a `pipeheal_test` database that is dropped, recreated and migrated once per run (local servers only). Get a client with `createTestDb()` from `@pipeheal/db/testing`, and use random IDs so test files stay independent.
 - Unit tests cannot reach the network: every request goes through msw and unmocked ones fail. Mock with `mockServer.use(...)` from `@pipeheal/shared/testing`.
 - Coverage thresholds (95%) apply to `packages/policy` and `packages/agent-core`; `pnpm test` fails below them.
 
@@ -45,12 +51,13 @@ Created in Phase 0. Keep this section accurate whenever scripts change.
 - No `any`, no `@ts-ignore`, no `eslint-disable`, no skipped tests. If you believe you need one, stop and explain why.
 - Never make a check pass by weakening a test, loosening config, or suppressing an error. (This is exactly what our product forbids its own agent from doing.)
 - Validate every external input with zod: env vars, webhooks, API bodies, runner messages, LLM tool calls and LLM JSON outputs.
-- Every query on tenant-owned tables goes through the org-scoped helpers in `packages/db`. No raw tenant queries without `orgId`.
+- Every query on tenant-owned tables goes through the org-scoped helpers in `packages/db` (`forMember` for signed-in users, `forSystem` / `installations` for the worker). They filter on `orgId`, check roles and write the audit row in the same transaction. A new helper needs a case in `packages/db/src/scope.int.test.ts` (a meta-test enforces it). No raw tenant queries without `orgId`.
 - Never log secrets, tokens, or raw customer logs. Log IDs and redacted excerpts only.
 - `packages/policy` and `packages/agent-core` parsers: write the test/fixture first, keep coverage >= 95%.
 - Adding a dependency requires a one-line justification in the commit message. Prefer what's already installed.
 - Conventional Commits (`feat(policy): ...`, `fix(worker): ...`). Small, focused commits.
 - Server code never trusts the runner: re-validate everything the runner sends.
+- Every org layout, page, route handler and server action calls `requireOrgMember` (`apps/web/src/lib/auth/session.ts`). `proxy.ts` only redirects visitors without a session cookie; it is never the check.
 
 ## Product invariants (the app must never violate these, whatever the config)
 - Never merge a PR. Never push to a branch the App did not create. Never force-push.

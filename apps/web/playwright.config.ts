@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { defineConfig, devices } from "@playwright/test";
 
 // End-to-end tests run against a production build on its own port, so they never collide with
@@ -28,6 +29,16 @@ export default defineConfig({
     command: `pnpm run build && pnpm exec next start --port ${String(port)}`,
     url: `${baseURL}/api/health`,
     reuseExistingServer: false,
+    // `next start` runs in production mode, which requires every setting (loopback hosts may use
+    // http and no TLS). Sign-in settings are throwaway values: e2e never reaches GitHub, and only
+    // covers signed-out pages, which never query the database (the e2e CI job has none).
+    env: {
+      APP_URL: baseURL,
+      DATABASE_URL: "postgresql://pipeheal:pipeheal@localhost:5432/pipeheal",
+      BETTER_AUTH_SECRET: randomBytes(32).toString("base64url"),
+      GITHUB_CLIENT_ID: "e2e-client-id",
+      GITHUB_CLIENT_SECRET: "e2e-not-a-secret",
+    },
     timeout: 180_000,
   },
 });

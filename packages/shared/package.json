@@ -6,6 +6,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./logger": "./src/logger.ts",
     "./testing": "./src/testing/index.ts"
   },
   "scripts": {
@@ -17,6 +18,7 @@
     "typescript": "catalog:"
   },
   "dependencies": {
+    "pino": "^10.3.1",
     "zod": "catalog:"
   }
 }

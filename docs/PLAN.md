@@ -29,20 +29,20 @@ Acceptance: fresh clone → `docker compose up -d && pnpm i && pnpm dev` works; 
 
 ## Phase 1: Tenancy, auth, GitHub App
 
-- [ ] **P1.0** Phase 0 security review follow-ups (before anything logs webhooks or holds secrets):
+- [x] **P1.0** Phase 0 security review follow-ups (before anything logs webhooks or holds secrets):
   - Move `createLogger` to `packages/shared` for web and worker. Redact keys case-insensitively at any depth (`authorization`, `cookie`, `x-api-key`, `*token*`, `*secret*`, `password`, `private_key`, `access_token`, `client_secret`, ...). Scrub string values too, including `msg` and error messages: GitHub tokens, `sk-ant-`, PEM blocks, JWTs, credentials in URLs, pre-signed query params.
   - Fastify `req` serializer without the query string and `err` serializer keeping type/message/code/stack only. Test through `app.inject` with `?token=`, an `authorization` header and a throwing route.
   - `import "server-only"` in `apps/web/src/env.ts`, plus a startup check and test that no `NEXT_PUBLIC_*` name looks like a secret. Required (not defaulted) URLs in production, https / rediss for non-loopback hosts.
   - Network guard gaps: a socket-level guard (`net`/`tls` connect, `dns`) blocking everything in unit tests and non-loopback in integration tests. Lint `@pipeheal/shared/testing` imports outside test files.
-- [ ] **P1.1** Prisma schema for `User` (plus Better Auth's tables), `Organization`, `Membership`, `Repository`, `RepoWorkflow`, `AuditLog`, `WebhookDelivery` (SPEC §10). Migration + seed script.
-- [ ] **P1.2** Org-scoped data helpers in `packages/db`. Tests proving a user of org A cannot read or write org B's rows through any helper.
-- [ ] **P1.3** Better Auth with GitHub provider; session carries `userId`; `proxy.ts` redirects signed-out users on `/[org]/**`; org membership check in every org layout, route handler and data helper (never the proxy alone). Verified-installer OWNER binding on sign-in (SPEC §5.2).
-- [ ] **P1.4** `packages/github`: App JWT, installation token cache, typed wrappers for the endpoints we use (list failed jobs, download job logs, compare commits, get file contents at ref, re-run failed jobs, dispatch workflow, Git Data API, create PR, comment, request reviewers). msw-based tests.
-- [ ] **P1.5** `docs/SETUP-GITHUB-APP.md`: exact permissions and events from SPEC §5.1, callback/webhook URLs, smee forwarding for local dev, which `.env` values come from where.
-- [ ] **CHECKPOINT 1a [HUMAN]**: Malek creates a GitHub sandbox organization, registers the dev GitHub App, fills `.env`.
-- [ ] **P1.6** Webhook route: HMAC verification, delivery-ID idempotency, enqueue, fast 2xx. Processors for `installation` and `installation_repositories` → upsert `Organization` (org or personal account), `Repository`, `RepoWorkflow`; the installing user becomes the OWNER candidate, confirmed on sign-in (SPEC §5.2).
-- [ ] **P1.7** Onboarding UI: "Install GitHub App" → post-install callback → repo list with enable toggles → per-repo workflow selection with CI-looking workflows pre-selected (SPEC §11).
-- [ ] **P1.8** Audit log entries for every mutation (who, what, when).
+- [x] **P1.1** Prisma schema for `User` (plus Better Auth's tables), `Organization`, `Membership`, `Repository`, `RepoWorkflow`, `AuditLog`, `WebhookDelivery` (SPEC §10). Migration + seed script.
+- [x] **P1.2** Org-scoped data helpers in `packages/db`. Tests proving a user of org A cannot read or write org B's rows through any helper.
+- [x] **P1.3** Better Auth with GitHub provider; session carries `userId`; `proxy.ts` redirects signed-out users on `/[org]/**`; org membership check in every org layout, route handler and data helper (never the proxy alone). Verified-installer OWNER binding on sign-in (SPEC §5.2).
+- [x] **P1.4** `packages/github`: App JWT, installation token cache, typed wrappers for the endpoints we use (list failed jobs, download job logs, compare commits, get file contents at ref, re-run failed jobs, dispatch workflow, Git Data API, create PR, comment, request reviewers). msw-based tests.
+- [x] **P1.5** `docs/SETUP-GITHUB-APP.md`: exact permissions and events from SPEC §5.1, callback/webhook URLs, smee forwarding for local dev, which `.env` values come from where.
+- [x] **CHECKPOINT 1a [HUMAN]**: Malek creates a GitHub sandbox organization, registers the dev GitHub App, fills `.env`.
+- [x] **P1.6** Webhook route: HMAC verification, delivery-ID idempotency, enqueue, fast 2xx. Processors for `installation` and `installation_repositories` → upsert `Organization` (org or personal account), `Repository`, `RepoWorkflow`; the installing user becomes the OWNER candidate, confirmed on sign-in (SPEC §5.2).
+- [x] **P1.7** Onboarding UI: "Install GitHub App" → post-install callback → repo list with enable toggles → per-repo workflow selection with CI-looking workflows pre-selected (SPEC §11).
+- [x] **P1.8** Audit log entries for every mutation (who, what, when).
 
 Acceptance: installing the App on the sandbox org shows the org and repos in the dashboard; removing a repo from the installation disables it; tenant isolation tests pass.
 
@@ -52,12 +52,12 @@ Acceptance: installing the App on the sandbox org shows the org and repos in the
 
 ## Phase 2: Detection & triage (no fixing yet)
 
-- [ ] **P2.0** `examples/demo-node` (TypeScript + Vitest + ESLint) and `examples/demo-python` (pytest + ruff + mypy), each with a CI workflow emitting JUnit XML, plus `scripts/break.ts <scenario>` (TypeScript via `tsx`, no bash) that introduces each eval scenario from SPEC §14 on a new branch.
-- [ ] **CHECKPOINT 2a [HUMAN]**: Malek pushes the demo repos to the sandbox org and installs the App on them.
-- [ ] **P2.1** `workflow_run` processor: filters from SPEC §2 step 4, one `PipelineFailure` per repo + head SHA with `FailedRun`/`FailedJob`, collection window, late arrivals and re-runs (SPEC §2.1).
-- [ ] **P2.2** Log fetch + clean + redact (`packages/agent-core/redact`). Fixture tests with planted fake secrets of every type in SPEC §6.2.
-- [ ] **P2.3** Error-window extractor and signal parsers for tsc, eslint, jest/vitest, pytest, mypy, ruff, pip/npm install errors. Real log samples in `packages/agent-core/fixtures/logs/`, test-first.
-- [ ] **P2.4** Heuristic classifier + `TRIAGE_MODEL` fallback with zod-validated JSON and one retry. Cost recorded.
+- [x] **P2.0** `examples/demo-node` (TypeScript + Vitest + ESLint) and `examples/demo-python` (pytest + ruff + mypy), each with a CI workflow emitting JUnit XML, plus `scripts/break.ts <scenario>` (TypeScript via `tsx`, no bash) that introduces each eval scenario from SPEC §14 on a new branch.
+- [x] **CHECKPOINT 2a [HUMAN]**: Malek pushes the demo repos to the sandbox org and installs the App on them.
+- [x] **P2.1** `workflow_run` processor: filters from SPEC §2 step 4, one `PipelineFailure` per repo + head SHA with `FailedRun`/`FailedJob`, collection window, late arrivals and re-runs (SPEC §2.1). Forks are detected by repository ID (`WorkflowRun.fromFork`, fail closed). GitHub calls are paced per installation in the worker's queues (octokit's process-wide throttling is off, P1.4 review).
+- [x] **P2.2** Log fetch + clean + redact (`packages/agent-core/redact`). Fixture tests with planted fake secrets of every type in SPEC §6.2.
+- [x] **P2.3** Error-window extractor and signal parsers for tsc, eslint, jest/vitest, pytest, mypy, ruff, pip/npm install errors. Real log samples in `packages/agent-core/fixtures/logs/`, test-first.
+- [x] **P2.4** Heuristic classifier + `TRIAGE_MODEL` fallback with zod-validated JSON and one retry. Cost recorded.
 - [ ] **P2.5** Last-green resolver + recent-changes fetcher with token-budget truncation.
 - [ ] **P2.6** Flaky check: re-run failed jobs once when `retryBeforeHeal` is on, with the guards in SPEC §6.2 step 8 (selected workflows only, never with `environment:`); link the re-run's result to the failure.
 - [ ] **P2.7** UI: failures list and detail page (category, summary, error window, signals, recent changes).
@@ -73,7 +73,7 @@ Acceptance: each `break.ts` scenario shows up within ~1 minute and has the right
 - [ ] **P3.1** `PolicyRules` zod schema, defaults, invariants as code (SPEC §8.2–8.3). Export types.
 - [ ] **P3.2** Diff model: build `Change { path, oldPath, status, isBinary, modeChanged, oldContent, newContent, hunks }` from old/new file contents. Tests.
 - [ ] **P3.3** Layer merge with provenance (SPEC §8.4). Property-based tests (fast-check): the merged policy is never less restrictive than any layer.
-- [ ] **P3.4** Static checks, one module per family (SPEC §8.5), each with allowed and forbidden fixtures in `packages/policy/fixtures/`. Test-first.
+- [ ] **P3.4** Static checks, one module per family (SPEC §8.5), each with allowed and forbidden fixtures in `packages/policy/fixtures/`. Test-first. INV-GITHUB-DIR and path rules use the same NTFS/HFS-aware normalizer as `packages/github`'s `assertWritablePath` (move it to `packages/shared`).
 - [ ] **P3.5** Behavioral checks: JUnit parser + inventory comparison (SPEC §8.6). Fixtures from Jest, Vitest and pytest reports.
 - [ ] **P3.6** Run the `policy-red-team` subagent. Turn every bypass it finds into a failing fixture, then fix the engine. Repeat until it finds nothing new.
 - [ ] **P3.7** `.pipeheal.yml` loader from the default branch, validated; errors shown in the UI, never crash the pipeline.
@@ -93,6 +93,7 @@ Acceptance: coverage ≥ 95% on `packages/policy`; all red-team fixtures rejecte
 - [ ] **P4.1b** Gateway hardening before it is reachable from runners (Phase 0 review L5): public `/livez` (no dependency checks) vs internal `/readyz`, `requestTimeout` ~150 s and `connectionTimeout`, small per-route body limits before auth, `@fastify/rate-limit`.
 - [ ] **P4.2** Gateway `POST /v1/session`: OIDC verification per SPEC §5.4. Tests with locally generated keys and JWTs, including every rejection path.
 - [ ] **P4.3** Gateway `POST /v1/step`: accept tool results, run the next model turn, return tool calls; persist `AgentEvent`s; enforce caps; idempotent on `stepSeq`.
+- [ ] **P4.3b** Reads that feed the model use installation tokens scoped to the one repository and read-only permissions (`repositoryIds` + `permissions`, P1.4 review).
 - [ ] **P4.4** `packages/agent-core`: prompt builder (SPEC §7.4, versioned), tool definitions, context assembler, loop controller with all stop conditions, cost accounting, prompt caching on the static prefix.
 - [ ] **P4.5** `packages/heal-action`: JavaScript action bundled to `dist/`. OIDC exchange, install, reproduce, baseline JUnit, tool executor (path-traversal protection, output truncation, commands only from config, args as arrays), final checks, submission upload.
 - [ ] **P4.6** Local mode: `pnpm heal:local --repo examples/demo-node --scenario <name>` runs the same executor inside a Linux Docker container against a local copy of the repo and a local gateway. A dev CLI creates a real attempt and session token; there is no auth bypass (SPEC §12). This is the main dev loop for agent work.
@@ -108,8 +109,8 @@ Acceptance: local mode fixes at least 4 of the 6 fixable demo scenarios; both tr
 ## Phase 5: PRs & verification loop (MVP complete)
 
 - [ ] **P5.1** Submission validation: fetch originals at `target_sha` from GitHub, recompute the diff, run static + behavioral + judge. Never use the runner's diff as truth.
-- [ ] **P5.2** Branch, commit and PR via Git Data API; PR body template (SPEC §9); label; reviewer request; draft rule; link comment on the originating PR.
-- [ ] **P5.3** Verification: map `workflow_run` on `pipeheal/*` to its attempt; `VERIFIED`, retry-with-feedback, or `NEEDS_HUMAN` + comment; `UNVERIFIED` timeouts and the delivery reconciler (SPEC §2.2).
+- [ ] **P5.2** Branch, commit and PR via Git Data API; PR body template (SPEC §9); label; reviewer request; draft rule; link comment on the originating PR. Record each `pipeheal/*` branch the App creates, with its last commit SHA, and only ever extend those (`commitFiles` already refuses a branch whose tip isn't the given parent).
+- [ ] **P5.3** Verification: map `workflow_run` on `pipeheal/*` to its attempt by the head SHA of the App's own commit, never by branch name alone, and ignore fork runs; `VERIFIED`, retry-with-feedback, or `NEEDS_HUMAN` + comment; `UNVERIFIED` timeouts and the delivery reconciler (SPEC §2.2).
 - [ ] **P5.4** Outcome tracking from `pull_request` closed events.
 - [ ] **P5.5** Concurrency and loop protection (SPEC §9.1), with tests for each case.
 - [ ] **P5.6** Failure detail timeline UI: attempts, iterations, tool calls, diff viewer, policy results, PR link, cost.

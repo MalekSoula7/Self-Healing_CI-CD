@@ -1,6 +1,6 @@
 import { Queue, UnrecoverableError, Worker } from "bullmq";
 import type { Redis } from "ioredis";
-import type { Logger } from "pino";
+import type { Logger } from "@pipeheal/shared/logger";
 import { z } from "zod";
 
 // The `maintenance` queue (SPEC §4) will host the reconciler and timeout sweeps (SPEC §2.2).

@@ -45,7 +45,8 @@ When a failure can't or shouldn't be fixed by a code change (infrastructure, mis
 ### 2.2 Recovering missed events and stuck states
 
 GitHub does not redeliver failed webhook deliveries on its own, and every waiting state can hang. The `maintenance` queue runs a periodic reconciler:
-- It lists failed deliveries with the App webhook deliveries API (`GET /app/hook/deliveries`) and redelivers them (`POST /app/hook/deliveries/{id}/attempts`). Delivery-ID idempotency makes this safe.
+- It lists failed deliveries with the App webhook deliveries API (`GET /app/hook/deliveries`) and redelivers them (`POST /app/hook/deliveries/{id}/attempts`). Delivery-ID idempotency makes this safe: a redelivery of an already processed delivery is acknowledged and dropped.
+- A delivery we accepted (2xx) but whose processing the worker gave up on never shows as failed at GitHub. Redelivering it (GitHub's "Redeliver" button, for now) reruns it: the webhook route retries its failed job with fresh attempts, or re-enqueues it if the job was pruned, and leaves a job still in progress alone (P1 checkpoint follow-up). Processors are idempotent. Finding these automatically (unprocessed `WebhookDelivery` rows with an `error`) belongs with the reconciler (P5.3).
 - It enforces a timeout on every non-terminal state. Defaults (tune later):
 
 | State | Timeout | Then |
@@ -129,7 +130,9 @@ Repository permissions:
 
 **Not requested: Workflows.** GitHub therefore refuses any App commit that touches `.github/workflows/**`, a hard guarantee on top of our own policy. GitHub does not guard the rest of `.github/` (composite actions under `.github/actions/**`, `CODEOWNERS`, `dependabot.yml`); only `INV-GITHUB-DIR` protects those.
 
-**Not requested: Members.** Teammates join by invitation (Phase 6), not by syncing GitHub org membership.
+**Account permission: Email addresses (read).** A GitHub App's user token can read the user's email only with this permission. Better Auth needs an email at sign-in, and Phase 6 email notifications use it (D9).
+
+**Organization permission: Members (read)** (D10), used for one thing: the OWNER check at sign-in reads the user's own org memberships (`GET /user/memberships/orgs`) to confirm they are an org admin. PipeHeal doesn't sync members: teammates join by invitation (Phase 6). Requesting an organization permission likely also means only org owners can install the App on an organization (to confirm at registration).
 
 The App can be installed on organizations and on personal accounts; both are tenants (§10).
 
@@ -138,8 +141,14 @@ Subscribed events: `installation`, `installation_repositories`, `workflow_run`, 
 ### 5.2 Auth
 - App JWT → installation access tokens, created on demand, cached in memory until shortly before expiry. Never stored in the database.
 - User sign-in with Better Auth's GitHub provider using the App's OAuth client credentials.
-- **Who becomes OWNER.** The `installation` webhook's `sender` is only a candidate. They become OWNER of the tenant on their first sign-in, and only after `GET /user/installations` (with their user access token) confirms they can access that installation. Everyone else joins by invitation (Phase 6).
-- Route protection: `proxy.ts` (Next.js 16) redirects signed-out users, but the membership check happens in every org layout, route handler and data helper, never in the proxy alone.
+- **Who becomes OWNER** (D10). The `installation` webhook's `sender` is only a candidate. They become OWNER on sign-in only when GitHub, asked with their own user access token, confirms both:
+  - `GET /user/installations` lists the installation;
+  - they own the account: a personal account is their own; for an organization, `GET /user/memberships/orgs` shows them as an active admin, matched on the organization's ID. A repository admin who installed the App on some repos is not enough.
+  - Everyone else joins by invitation (Phase 6). A bound candidate is used up; a reinstall names a new one.
+- **User access tokens are kept, encrypted** (D8): Better Auth stores the GitHub user token and refresh token in `Account` with `account.encryptOAuthTokens` (XChaCha20-Poly1305, key = SHA-256 of `BETTER_AUTH_SECRET`). They are used server-side only, for the OWNER check at sign-in and to list the user's installations during onboarding: Better Auth's HTTP endpoints that would return them (`/get-access-token`, `/refresh-token`, `/account-info`) are disabled. Rotating `BETTER_AUTH_SECRET` makes stored tokens unreadable, so users sign in again. The App's installation tokens are still never stored (above).
+- The OWNER check runs where sign-in lands (`/auth/complete`, again at every sign-in and after installing the App). It asks GitHub only when the user is a pending candidate. A GitHub failure never blocks sign-in; the check simply runs again next time.
+- Profile fields (name, avatar, login) come from GitHub at each sign-in and can't be edited in PipeHeal. GitHub is the only sign-in method, and a GitHub identity is never linked to an existing user by email.
+- Route protection: `proxy.ts` (Next.js 16) redirects signed-out users, but the membership check happens in every org layout, route handler and data helper, never in the proxy alone. Non-members and members below the required role get a 404.
 - Commits created by the App trigger workflows normally (unlike pushes made with `GITHUB_TOKEN`). We rely on this for independent verification of fixes.
 
 ### 5.3 Healer workflow (customer commits once, on the default branch)
@@ -455,7 +464,7 @@ Iterations: <n> · Model: <id> · Cost: $<x> · [Full timeline](<dashboard link>
 ```
 
 ### 9.1 Verification and loop protection
-- `workflow_run` on a `pipeheal/*` branch maps to its attempt, never to a new root failure.
+- `workflow_run` on a `pipeheal/*` branch maps to its attempt, never to a new root failure. The mapping uses the head SHA of the commit the App created, not the branch name: a fork PR can use any branch name (P1.4 review). Runs from forks are ignored.
 - Green → `VERIFIED`. Red → if attempts remain, new attempt with the new failure as context, pushing a new commit to the same `pipeheal/*` branch. Otherwise `NEEDS_HUMAN` + PR comment with the diagnosis. No CI on the PR → `UNVERIFIED` after the timeouts in §2.2.
 - One active heal per repo + branch. A newer failure on the same branch supersedes a pending heal (the code moved on).
 - `pull_request` closed → outcome `MERGED` or `CLOSED`, feeding the north-star metric.
@@ -464,10 +473,10 @@ Iterations: <n> · Model: <id> · Cost: $<x> · [Full timeline](<dashboard link>
 
 ## 10. Data model (Prisma, simplified)
 
-- `User` (githubId, login, email, avatarUrl). Better Auth's own tables (`Session`, `Account`, `Verification`) follow its Prisma schema.
+- `User` (login, email, image as avatar URL). Better Auth's own tables (`Session`, `Account`, `Verification`) follow its Prisma schema. The GitHub user ID is not duplicated on `User`: it is `Account.accountId` where `providerId = "github"`, unique per provider.
 - `Organization` = one tenant = one GitHub account with an installation (githubAccountId, login, accountType: ORG | USER, installationId unique, installerGithubId (OWNER candidate until verified sign-in, §5.2), status, plan, monthlyBudgetUsd)
 - `Membership` (userId, orgId, role: OWNER | ADMIN | MEMBER)
-- `Repository` (orgId, githubRepoId, fullName, defaultBranch, enabled, healerStatus: MISSING | OK | ERROR, commands JSON {install, build, lint, typecheck, test, testFile}, junitGlob, language)
+- `Repository` (orgId, githubRepoId, fullName, defaultBranch, enabled, removedFromInstallationAt, healerStatus: MISSING | OK | ERROR, commands JSON {install, build, lint, typecheck, test, testFile}, junitGlob, language). Unique on (orgId, githubRepoId): rows never move between tenants, so a repository transferred to another installed account gets a new row there.
 - `RepoWorkflow` (orgId, repoId, githubWorkflowId, path, name, selected, usesEnvironment, triggers). Discovered from the repo; `selected` is set at onboarding (§2.1, §11).
 - `Policy` (orgId, repoId nullable for org default, version, rules JSON, createdById) with history
 - `PipelineFailure` (orgId, repoId, headSha, headBranch, category, confidence, summary, status, skipReason, windowClosesAt, createdAt). Unique on (repoId, headSha) (§2.1).
@@ -480,7 +489,7 @@ Iterations: <n> · Model: <id> · Cost: $<x> · [Full timeline](<dashboard link>
 - `UsageRecord` (orgId, period, attempts, inputTokens, outputTokens, costUsd)
 - `WebhookDelivery` (deliveryId unique, event, receivedAt, processedAt, error)
 
-Every tenant table carries `orgId`. Indexes on (orgId, createdAt) and lookup keys.
+Every tenant table carries `orgId`. Indexes on (orgId, createdAt) and lookup keys. Child rows reference their parent through (orgId, parentId), so the database rejects a child whose org differs from its parent's. GitHub numeric IDs are `BigInt`.
 
 ---
 
@@ -555,7 +564,8 @@ A prompt or model change doesn't ship if the eval fix rate drops or any trap sce
 
 Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 1:** does creating the `pipeheal` label need Issues: write, or is Pull requests: write enough? Verify in P1.4 before registering the App.
-- **Phase 1:** keep GitHub user access tokens after sign-in? Better Auth stores them in `Account` by default. We only need them to verify installation access (§5.2); if kept, encrypt them at rest.
+- **Phase 1 (resolved, D8):** GitHub user access tokens are kept, encrypted at rest (§5.2).
+- **Phase 1 (resolved, D10):** who can become OWNER: the installer, when GitHub confirms they are the personal account or an org admin (§5.2).
 - **Phase 3:** policy precedence: split org defaults from org guardrails (§8.1). Merge rules are missing for `scope.branches`, `scope.workflows`, `review.*`, `retryBeforeHeal` and `customRules`.
 - **Phase 4:** async step protocol instead of ~2-minute synchronous requests (§3.1).
 - **Phase 4:** reserve budget atomically before each model call (worst-case estimate per call, org monthly budget with concurrent attempts), not only check it after.
@@ -578,3 +588,6 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 | D5 | 2026-09-27 | Watched workflows are opt-in per workflow, with CI-looking ones pre-selected; the flaky re-run happens at most once, only on failed jobs, never where a job uses `environment:` (§2.1, §6.2) | Re-runs spend the customer's CI minutes and can deploy again; release and deploy workflows mostly fail for reasons we don't heal. |
 | D6 | 2026-09-27 | Anthropic in development: a dedicated workspace with a hard spend cap, key only in the local `.env`; automated tests never call the real API (§6.2, §7.5) | Keeps spend bounded and tests deterministic. |
 | D7 | 2026-09-27 | Engineering defaults accepted without objection: versions in §4.2, healer path `.github/workflows/pipeheal.yml`, runner hardening (§5.3), OIDC `actor`/`run_id` binding (§5.4), state timeouts and delivery reconciler (§2.2), snapshot/fixture test globs (§8.3), no auth bypass in local mode (§12) | Raised in the alignment review; see `docs/PROGRESS.md`. |
+| D8 | 2026-09-27 | Keep GitHub user access tokens after sign-in, encrypted with Better Auth's `encryptOAuthTokens` (§5.2) | Chosen by Malek over verify-then-discard: onboarding can list the user's installations without a second sign-in; a database leak alone doesn't expose usable tokens. |
+| D9 | 2026-09-27 | The GitHub App requests the account permission "Email addresses: read" (§5.1) | Better Auth needs an email at sign-in, and Phase 6 notifications use it. |
+| D10 | 2026-09-27 | The App requests the organization permission "Members: read"; OWNER binding requires the installer to be the personal account or an active org admin (§5.1, §5.2) | Chosen by Malek. Otherwise a repository admin who installed the App on a few repos could own the whole organization's tenant (P1.3 security review). |

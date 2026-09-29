@@ -21,11 +21,15 @@ Watches GitHub Actions pipelines, diagnoses failures, and proposes fixes as pull
 ```powershell
 git clone https://github.com/MalekSoula7/Self-Healing_CI-CD.git
 cd Self-Healing_CI-CD
-Copy-Item .env.example .env   # optional for now: the defaults work locally
+Copy-Item .env.example .env   # optional until the GitHub App exists: without it, sign-in is off
 docker compose up -d          # Postgres + Redis
 pnpm install
+pnpm db:migrate               # create the tables (again after pulling new migrations)
+pnpm db:seed                  # optional: demo org "pipeheal-demo"
 pnpm dev                      # web + worker
 ```
+
+GitHub sign-in and webhooks need the development GitHub App: [`docs/SETUP-GITHUB-APP.md`](docs/SETUP-GITHUB-APP.md) walks through creating it and filling `.env`. Run `pnpm dev:webhooks` next to `pnpm dev` to receive webhooks.
 
 Then open:
 
@@ -52,6 +56,8 @@ pnpm test:unit     # unit tests only, no Docker needed
 pnpm format        # fix formatting
 pnpm --filter @pipeheal/web exec playwright install chromium   # once per machine
 pnpm test:e2e      # Playwright against a production build
+pnpm db:migrate    # apply migrations; after editing packages/db/prisma/schema.prisma: pnpm db:migrate --name <change>
+pnpm db:studio     # browse the dev database
 ```
 
 PowerShell 7 supports `&&` (`pnpm typecheck && pnpm lint && pnpm test`); Windows PowerShell 5.1 does not, so run the commands one by one there.
@@ -79,5 +85,5 @@ PowerShell 7 supports `&&` (`pnpm typecheck && pnpm lint && pnpm test`); Windows
 | 5432 / 6379 | Postgres / Redis from Docker |
 
 - **5432 or 6379 already taken** (e.g. a local Postgres): in `.env`, set `POSTGRES_PORT=5433` and change `DATABASE_URL` to match (same for `REDIS_PORT` and `REDIS_URL`), then `docker compose up -d` again.
-- **Integration tests say "Redis not reachable"**: run `docker compose up -d` first.
+- **Integration tests say "Redis not reachable" or "Postgres not usable"**: run `docker compose up -d` first. Tests use their own `pipeheal_test` database, recreated on every run; your dev data is untouched.
 - **A bad value in `.env`**: both apps refuse to start and name the variable (never its value).

@@ -3,5 +3,12 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["tests", "vitest.config.ts", "vitest.setup.ts"]
+  "include": [
+    "tests",
+    "scripts",
+    "vitest.config.ts",
+    "vitest.setup.ts",
+    "vitest.integration.setup.ts",
+    "vitest.integration.globalSetup.ts"
+  ]
 }
