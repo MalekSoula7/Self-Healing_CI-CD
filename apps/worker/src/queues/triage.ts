@@ -1,19 +1,11 @@
-// Triage of a failure once its collection window has closed (SPEC §2 step 5, §6.2). For now
-// steps 1–3: download each failed job's log, clean it, redact it, and store it as the job's
-// error window. The error-window extractor and signals (P2.3) and the classifier (P2.4) build on
-// this. Only redacted text ever reaches the database or the logs.
-import { cleanLog, redactLog } from "@pipeheal/agent-core";
+// Triage of a failure once its collection window has closed (SPEC §2 step 5, §6.2 steps 1-5):
+// download each failed job's log, then (agent-core's triageLog) take the failed step, clean and
+// redact it, and store its error window and signals. The classifier (P2.4) builds on these. Only
+// redacted text ever reaches the database or the logs.
+import { triageLog } from "@pipeheal/agent-core";
 import { forSystem, type Db } from "@pipeheal/db";
 import { GitHubApiError, type GitHubApp, type JobLog, type RepoClient } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
-
-/**
- * Until P2.3's extractor: the tail of the failed step (SPEC §6.2 step 4), capped at this many
- * lines. The failed step ends with its `##[error]` line; post-job steps (checkout's cleanup) follow
- * it in the job log and would otherwise fill the window.
- */
-export const ERROR_WINDOW_LINES = 300;
-const ERROR_WINDOW_MAX_CHARS = 100_000;
 
 export interface FailureTarget {
   orgId: string;
@@ -24,13 +16,6 @@ export interface FailureTarget {
 export interface TriageDeps {
   db: Db;
   githubApp: GitHubApp | null;
-}
-
-function provisionalWindow(text: string): string {
-  const lines = text.trimEnd().split("\n");
-  const lastError = lines.findLastIndex((line) => line.startsWith("##[error]"));
-  const failedStep = lastError === -1 ? lines : lines.slice(0, lastError + 1);
-  return failedStep.slice(-ERROR_WINDOW_LINES).join("\n").slice(-ERROR_WINDOW_MAX_CHARS);
 }
 
 /** The job's log, or null when GitHub no longer has it (logs expire; a job can be deleted). */
@@ -45,7 +30,7 @@ async function fetchLog(repoClient: RepoClient, githubJobId: bigint): Promise<Jo
   }
 }
 
-/** Fetches, cleans and redacts the log of every failed job not triaged yet. Safe to repeat. */
+/** Triages every failed job of the failure not triaged yet. Safe to repeat. */
 export async function triageFailure(
   deps: TriageDeps,
   target: FailureTarget,
@@ -66,15 +51,23 @@ export async function triageFailure(
 
   for (const job of pending) {
     const fetched = await fetchLog(repoClient, job.githubJobId);
-    const { text, redactions } = redactLog(fetched === null ? "" : cleanLog(fetched.text));
-    const errorWindow = provisionalWindow(text);
-    await system.failures.recordJobTriage(job.id, { errorWindow, redactions });
+    if (fetched === null) {
+      // GitHub no longer has the log: an empty window marks the job as triaged.
+      await system.failures.recordJobTriage(job.id, { errorWindow: "" });
+      log.info({ failedJobId: job.id }, "job log unavailable");
+      continue;
+    }
+    const { window, signals, redactions } = triageLog(fetched.text, {
+      failedStep: job.failedStep,
+    });
+    await system.failures.recordJobTriage(job.id, { errorWindow: window, signals, redactions });
     log.info(
       {
         failedJobId: job.id,
-        available: fetched !== null,
-        truncated: fetched?.truncated ?? false,
-        lines: errorWindow === "" ? 0 : errorWindow.split("\n").length,
+        truncated: fetched.truncated,
+        lines: window.split("\n").length,
+        tools: signals.tools,
+        errorCodes: signals.errorCodes,
         redactions,
       },
       "job log triaged",

@@ -76,8 +76,39 @@ export type FailedRunInput = z.infer<typeof failedRunInputSchema>;
  * What triage learned about one failed job (SPEC §6.2). `errorWindow` must already be redacted.
  * `redactions` (counts per kind, no content) only goes to the audit log.
  */
+const signalLocationSchema = z.strictObject({
+  path: z.string().min(1).max(500),
+  line: z.int().nonnegative(),
+  column: z.int().nonnegative().optional(),
+});
+
+/** Signals parsed from a failed job's redacted log (agent-core's `Signals`, SPEC §6.2 step 5). */
+export const jobSignalsSchema = z.strictObject({
+  failedStep: z.string().max(255).nullable(),
+  exitCode: z.int().nullable(),
+  tools: z.array(z.string().min(1).max(20)).max(20),
+  diagnostics: z
+    .array(
+      z.strictObject({
+        tool: z.string().min(1).max(20),
+        severity: z.enum(["error", "warning"]),
+        message: z.string().max(600),
+        code: z.string().max(100).optional(),
+        path: z.string().min(1).max(500).optional(),
+        line: z.int().nonnegative().optional(),
+        column: z.int().nonnegative().optional(),
+      }),
+    )
+    .max(50),
+  failingTests: z.array(z.string().min(1).max(1_000)).max(50),
+  locations: z.array(signalLocationSchema).max(50),
+  errorCodes: z.array(z.string().min(1).max(100)).max(50),
+});
+export type JobSignals = z.infer<typeof jobSignalsSchema>;
+
 export const jobTriageInputSchema = z.strictObject({
   errorWindow: z.string().max(200_000),
+  signals: jobSignalsSchema.optional(),
   redactions: z.record(z.string().regex(/^[a-z-]{1,40}$/), z.int().nonnegative()).optional(),
 });
 export type JobTriageInput = z.infer<typeof jobTriageInputSchema>;

@@ -1,0 +1,219 @@
+2026-09-28T23:55:10.9405386Z Current runner version: '2.337.0'
+2026-09-28T23:55:10.9430051Z ##[group]Runner Image Provisioner
+2026-09-28T23:55:10.9430947Z Hosted Compute Agent
+2026-09-28T23:55:10.9431424Z Version: 20260828.587
+2026-09-28T23:55:10.9432164Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-28T23:55:10.9432796Z Build Date: 2026-08-28T16:44:25Z
+2026-09-28T23:55:10.9433374Z Worker ID: {4e1748fb-8b6c-4989-b17d-73093e9c4f60}
+2026-09-28T23:55:10.9434031Z Azure Region: westus3
+2026-09-28T23:55:10.9434494Z ##[endgroup]
+2026-09-28T23:55:10.9435906Z ##[group]Operating System
+2026-09-28T23:55:10.9436428Z Ubuntu
+2026-09-28T23:55:10.9436900Z 24.04.5
+2026-09-28T23:55:10.9437372Z LTS
+2026-09-28T23:55:10.9437798Z ##[endgroup]
+2026-09-28T23:55:10.9438307Z ##[group]Runner Image
+2026-09-28T23:55:10.9438817Z Image: ubuntu-24.04
+2026-09-28T23:55:10.9439341Z Version: 20260920.314.1
+2026-09-28T23:55:10.9440494Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260920.314/images/ubuntu/Ubuntu2404-Readme.md
+2026-09-28T23:55:10.9442067Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260920.314
+2026-09-28T23:55:10.9442877Z ##[endgroup]
+2026-09-28T23:55:10.9444247Z ##[group]GITHUB_TOKEN Permissions
+2026-09-28T23:55:10.9446312Z Contents: read
+2026-09-28T23:55:10.9446851Z Metadata: read
+2026-09-28T23:55:10.9447398Z ##[endgroup]
+2026-09-28T23:55:10.9449374Z Secret source: Actions
+2026-09-28T23:55:10.9450228Z Cache mode: write
+2026-09-28T23:55:10.9450865Z Prepare workflow directory
+2026-09-28T23:55:11.0010824Z Prepare all required actions
+2026-09-28T23:55:11.0069623Z Getting action download info
+2026-09-28T23:55:11.3712943Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-09-28T23:55:12.4983842Z Download action repository 'actions/setup-node@v7' (SHA:820762786026740c76f36085b0efc47a31fe5020)
+2026-09-28T23:55:13.5700194Z Download action repository 'actions/upload-artifact@v7' (SHA:043fb46d1a93c77aae656e7c1c64a875d1fc6a0a)
+2026-09-28T23:55:14.4310695Z Complete job name: check
+2026-09-28T23:55:14.4904274Z ##[group]Run actions/checkout@v7
+2026-09-28T23:55:14.4904737Z with:
+2026-09-28T23:55:14.4904974Z   repository: pipeheal-sandbox-malek/pipeheal-demo-node
+2026-09-28T23:55:14.4907000Z   token: ***
+2026-09-28T23:55:14.4907227Z   ssh-strict: true
+2026-09-28T23:55:14.4907411Z   ssh-user: git
+2026-09-28T23:55:14.4907600Z   persist-credentials: true
+2026-09-28T23:55:14.4907792Z   clean: true
+2026-09-28T23:55:14.4907977Z   sparse-checkout-cone-mode: true
+2026-09-28T23:55:14.4908186Z   fetch-depth: 1
+2026-09-28T23:55:14.4908366Z   fetch-tags: false
+2026-09-28T23:55:14.4908548Z   show-progress: true
+2026-09-28T23:55:14.4908747Z   lfs: false
+2026-09-28T23:55:14.4908906Z   submodules: false
+2026-09-28T23:55:14.4909078Z   set-safe-directory: true
+2026-09-28T23:55:14.4909295Z   allow-unsafe-pr-checkout: false
+2026-09-28T23:55:14.4909643Z ##[endgroup]
+2026-09-28T23:55:14.5959640Z Syncing repository: pipeheal-sandbox-malek/pipeheal-demo-node
+2026-09-28T23:55:14.5982469Z ##[group]Getting Git version info
+2026-09-28T23:55:14.5983227Z Working directory is '/home/runner/work/pipeheal-demo-node/pipeheal-demo-node'
+2026-09-28T23:55:14.6003601Z [command]/usr/bin/git version
+2026-09-28T23:55:14.6230146Z git version 2.55.0
+2026-09-28T23:55:14.6288004Z ##[endgroup]
+2026-09-28T23:55:14.6298365Z Temporarily overriding HOME='/home/runner/work/_temp/f7f97e31-4d8b-44a0-a795-18922d38f17c' before making global git config changes
+2026-09-28T23:55:14.6299707Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-28T23:55:14.6303665Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/pipeheal-demo-node/pipeheal-demo-node
+2026-09-28T23:55:14.6582579Z Deleting the contents of '/home/runner/work/pipeheal-demo-node/pipeheal-demo-node'
+2026-09-28T23:55:14.6602878Z ##[group]Determining repository object format
+2026-09-28T23:55:14.6603496Z ##[endgroup]
+2026-09-28T23:55:14.6603915Z ##[group]Initializing the repository
+2026-09-28T23:55:14.6604893Z [command]/usr/bin/git init /home/runner/work/pipeheal-demo-node/pipeheal-demo-node
+2026-09-28T23:55:14.8275717Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-28T23:55:14.8281210Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-28T23:55:14.8292552Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-28T23:55:14.8293216Z hint: call:
+2026-09-28T23:55:14.8293661Z hint:
+2026-09-28T23:55:14.8294277Z hint: 	git config --global init.defaultBranch <name>
+2026-09-28T23:55:14.8294879Z hint:
+2026-09-28T23:55:14.8295412Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-28T23:55:14.8296206Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-28T23:55:14.8296833Z hint:
+2026-09-28T23:55:14.8297242Z hint: 	git branch -m <name>
+2026-09-28T23:55:14.8297686Z hint:
+2026-09-28T23:55:14.8298288Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-28T23:55:14.8843545Z Initialized empty Git repository in /home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git/
+2026-09-28T23:55:14.8862112Z [command]/usr/bin/git remote add origin https://github.com/pipeheal-sandbox-malek/pipeheal-demo-node
+2026-09-28T23:55:15.0154009Z ##[endgroup]
+2026-09-28T23:55:15.0162594Z ##[group]Disabling automatic garbage collection
+2026-09-28T23:55:15.0180255Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-28T23:55:15.0232397Z ##[endgroup]
+2026-09-28T23:55:15.0242347Z ##[group]Setting up auth
+2026-09-28T23:55:15.0262266Z Removing SSH command configuration
+2026-09-28T23:55:15.0265448Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-28T23:55:15.0303772Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-28T23:55:15.0843162Z Removing HTTP extra header
+2026-09-28T23:55:15.0849862Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-28T23:55:15.0886826Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-28T23:55:15.1124418Z Removing includeIf entries pointing to credentials config files
+2026-09-28T23:55:15.1125367Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-28T23:55:15.1152916Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-28T23:55:15.1399315Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-2490be2f-5aab-412c-8d5b-4b6249e78c8e.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-28T23:55:15.2111077Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git.path /home/runner/work/_temp/git-credentials-2490be2f-5aab-412c-8d5b-4b6249e78c8e.config
+2026-09-28T23:55:15.2472271Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-2490be2f-5aab-412c-8d5b-4b6249e78c8e.config
+2026-09-28T23:55:15.3719574Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-2490be2f-5aab-412c-8d5b-4b6249e78c8e.config
+2026-09-28T23:55:15.5856897Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-2490be2f-5aab-412c-8d5b-4b6249e78c8e.config
+2026-09-28T23:55:15.8284767Z ##[endgroup]
+2026-09-28T23:55:15.8285269Z ##[group]Fetching the repository
+2026-09-28T23:55:15.8286372Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +9b595e5bf4f34e34a945cf9659b6f85c349aa9f0:refs/remotes/origin/break/lint-20260928-235502
+2026-09-28T23:55:16.4577468Z From https://github.com/pipeheal-sandbox-malek/pipeheal-demo-node
+2026-09-28T23:55:16.4578763Z  * [new ref]         9b595e5bf4f34e34a945cf9659b6f85c349aa9f0 -> origin/break/lint-20260928-235502
+2026-09-28T23:55:16.4586111Z [command]/usr/bin/git branch --list --remote origin/break/lint-20260928-235502
+2026-09-28T23:55:16.4614981Z   origin/break/lint-20260928-235502
+2026-09-28T23:55:16.4621874Z [command]/usr/bin/git rev-parse refs/remotes/origin/break/lint-20260928-235502
+2026-09-28T23:55:16.4645896Z 9b595e5bf4f34e34a945cf9659b6f85c349aa9f0
+2026-09-28T23:55:16.4650631Z ##[endgroup]
+2026-09-28T23:55:16.4651376Z ##[group]Determining the checkout info
+2026-09-28T23:55:16.4652537Z ##[endgroup]
+2026-09-28T23:55:16.4655310Z [command]/usr/bin/git sparse-checkout disable
+2026-09-28T23:55:16.4703345Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-28T23:55:16.4734755Z ##[group]Checking out the ref
+2026-09-28T23:55:16.4738565Z [command]/usr/bin/git checkout --progress --force -B break/lint-20260928-235502 refs/remotes/origin/break/lint-20260928-235502
+2026-09-28T23:55:16.4799391Z Switched to a new branch 'break/lint-20260928-235502'
+2026-09-28T23:55:16.4805702Z branch 'break/lint-20260928-235502' set up to track 'origin/break/lint-20260928-235502'.
+2026-09-28T23:55:16.4813765Z ##[endgroup]
+2026-09-28T23:55:16.4854965Z [command]/usr/bin/git log -1 --format=%H
+2026-09-28T23:55:16.4881701Z 9b595e5bf4f34e34a945cf9659b6f85c349aa9f0
+2026-09-28T23:55:16.5116297Z ##[group]Run actions/setup-node@v7
+2026-09-28T23:55:16.5116542Z with:
+2026-09-28T23:55:16.5116708Z   node-version: 24
+2026-09-28T23:55:16.5116884Z   cache: npm
+2026-09-28T23:55:16.5117054Z   check-latest: false
+2026-09-28T23:55:16.5118877Z   token: ***
+2026-09-28T23:55:16.5119070Z   package-manager-cache: true
+2026-09-28T23:55:16.5185624Z ##[endgroup]
+2026-09-28T23:55:16.6315868Z Found in cache @ /opt/hostedtoolcache/node/24.21.0/x64
+2026-09-28T23:55:16.6317160Z ##[group]Environment details
+2026-09-28T23:55:17.1923938Z node: v24.21.0
+2026-09-28T23:55:17.1938414Z npm: 11.19.0
+2026-09-28T23:55:17.1939174Z yarn: 1.22.22
+2026-09-28T23:55:17.1940334Z ##[endgroup]
+2026-09-28T23:55:17.1964243Z [command]/opt/hostedtoolcache/node/24.21.0/x64/bin/npm config get cache
+2026-09-28T23:55:17.2944550Z /home/runner/.npm
+2026-09-28T23:55:17.5104045Z Cache hit for: node-cache-Linux-x64-npm-b9cade9c9150c08daf4c2c299ba05cc2ea15069486f7137f9ff59b813fd044b7
+2026-09-28T23:55:18.5609196Z Received 22136809 of 22136809 (100.0%), 25.1 MBs/sec
+2026-09-28T23:55:18.5609636Z Cache Size: ~21 MB (22136809 B)
+2026-09-28T23:55:18.5630718Z [command]/usr/bin/tar -xf /home/runner/work/_temp/4164ef92-5cd1-4983-85e4-e27cfad2dd25/cache.tzst -P -C /home/runner/work/pipeheal-demo-node/pipeheal-demo-node --use-compress-program unzstd
+2026-09-28T23:55:18.6710189Z Cache restored successfully
+2026-09-28T23:55:18.6725879Z Cache restored from key: node-cache-Linux-x64-npm-b9cade9c9150c08daf4c2c299ba05cc2ea15069486f7137f9ff59b813fd044b7
+2026-09-28T23:55:18.6872438Z ##[group]Run npm ci
+2026-09-28T23:55:18.6872721Z [36;1mnpm ci[0m
+2026-09-28T23:55:18.7835576Z shell: /usr/bin/bash -e {0}
+2026-09-28T23:55:18.7835848Z ##[endgroup]
+2026-09-28T23:55:20.4273869Z 
+2026-09-28T23:55:20.4283174Z added 130 packages, and audited 131 packages in 2s
+2026-09-28T23:55:20.4285264Z 
+2026-09-28T23:55:20.4285933Z 41 packages are looking for funding
+2026-09-28T23:55:20.4286677Z   run `npm fund` for details
+2026-09-28T23:55:20.4287142Z 
+2026-09-28T23:55:20.4287480Z found 0 vulnerabilities
+2026-09-28T23:55:20.4714394Z ##[group]Run npm run typecheck
+2026-09-28T23:55:20.4714662Z [36;1mnpm run typecheck[0m
+2026-09-28T23:55:20.4773130Z shell: /usr/bin/bash -e {0}
+2026-09-28T23:55:20.4773359Z ##[endgroup]
+2026-09-28T23:55:20.5692844Z 
+2026-09-28T23:55:20.5693888Z > pipeheal-demo-node@1.0.0 typecheck
+2026-09-28T23:55:20.5694675Z > tsc --noEmit
+2026-09-28T23:55:20.5695028Z 
+2026-09-28T23:55:21.4908300Z ##[group]Run npm run lint
+2026-09-28T23:55:21.4908549Z [36;1mnpm run lint[0m
+2026-09-28T23:55:21.4965457Z shell: /usr/bin/bash -e {0}
+2026-09-28T23:55:21.4965685Z ##[endgroup]
+2026-09-28T23:55:21.5858837Z 
+2026-09-28T23:55:21.5860042Z > pipeheal-demo-node@1.0.0 lint
+2026-09-28T23:55:21.5861054Z > eslint . --max-warnings 0
+2026-09-28T23:55:21.5861705Z 
+2026-09-28T23:55:22.5652405Z 
+2026-09-28T23:55:22.5653660Z /home/runner/work/pipeheal-demo-node/pipeheal-demo-node/src/cart.ts
+2026-09-28T23:55:22.5683790Z ##[error]  12:9  error  'itemCount' is assigned a value but never used  @typescript-eslint/no-unused-vars
+2026-09-28T23:55:22.5692084Z 
+2026-09-28T23:55:22.5692722Z ✖ 1 problem (1 error, 0 warnings)
+2026-09-28T23:55:22.5692996Z 
+2026-09-28T23:55:22.6547406Z ##[error]Process completed with exit code 1.
+2026-09-28T23:55:22.6622152Z ##[group]Run actions/upload-artifact@v7
+2026-09-28T23:55:22.6622400Z with:
+2026-09-28T23:55:22.6622569Z   name: junit
+2026-09-28T23:55:22.6622746Z   path: reports/junit.xml
+2026-09-28T23:55:22.6622959Z   if-no-files-found: ignore
+2026-09-28T23:55:22.6623156Z   compression-level: 6
+2026-09-28T23:55:22.6623340Z   overwrite: false
+2026-09-28T23:55:22.6623523Z   include-hidden-files: false
+2026-09-28T23:55:22.6623718Z   archive: true
+2026-09-28T23:55:22.6623886Z ##[endgroup]
+2026-09-28T23:55:22.7864041Z No files were found with the provided path: reports/junit.xml. No artifacts will be uploaded.
+2026-09-28T23:55:22.8118395Z Post job cleanup.
+2026-09-28T23:55:22.8982826Z [command]/usr/bin/git version
+2026-09-28T23:55:22.9076806Z git version 2.55.0
+2026-09-28T23:55:22.9102531Z Temporarily overriding HOME='/home/runner/work/_temp/4dc3297c-4aba-4579-ae60-91bfdf94c8e0' before making global git config changes
+2026-09-28T23:55:22.9103985Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-28T23:55:22.9142773Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/pipeheal-demo-node/pipeheal-demo-node
+2026-09-28T23:55:22.9203615Z Removing SSH command configuration
+2026-09-28T23:55:22.9204570Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-28T23:55:22.9283156Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-28T23:55:22.9612607Z Removing HTTP extra header
+2026-09-28T23:55:22.9622853Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-28T23:55:22.9673688Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-28T23:55:23.0095918Z Removing includeIf entries pointing to credentials config files
+2026-09-28T23:55:23.0122599Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-28T23:55:23.0132872Z includeif.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git.path
+2026-09-28T23:55:23.0134295Z includeif.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git/worktrees/*.path
+2026-09-28T23:55:23.0135256Z includeif.gitdir:/github/workspace/.git.path
+2026-09-28T23:55:23.0157018Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-28T23:55:23.0182741Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git.path
+2026-09-28T23:55:23.0184026Z /home/runner/work/_temp/git-credentials-2490be2f-5aab-412c-8d5b-4b6249e78c8e.config
+2026-09-28T23:55:23.0188787Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-2490be2f\-5aab\-412c\-8d5b\-4b6249e78c8e\.config
+2026-09-28T23:55:23.0233474Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git/worktrees/*.path
+2026-09-28T23:55:23.0260080Z /home/runner/work/_temp/git-credentials-2490be2f-5aab-412c-8d5b-4b6249e78c8e.config
+2026-09-28T23:55:23.0277118Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-2490be2f\-5aab\-412c\-8d5b\-4b6249e78c8e\.config
+2026-09-28T23:55:23.0316054Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-09-28T23:55:23.0344749Z /github/runner_temp/git-credentials-2490be2f-5aab-412c-8d5b-4b6249e78c8e.config
+2026-09-28T23:55:23.0360363Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-2490be2f\-5aab\-412c\-8d5b\-4b6249e78c8e\.config
+2026-09-28T23:55:23.0393117Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-28T23:55:23.0418959Z /github/runner_temp/git-credentials-2490be2f-5aab-412c-8d5b-4b6249e78c8e.config
+2026-09-28T23:55:23.0427192Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-2490be2f\-5aab\-412c\-8d5b\-4b6249e78c8e\.config
+2026-09-28T23:55:23.0470438Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-28T23:55:23.0681444Z Removing credentials config '/home/runner/work/_temp/git-credentials-2490be2f-5aab-412c-8d5b-4b6249e78c8e.config'
+2026-09-28T23:55:23.0838774Z Cleaning up orphan processes

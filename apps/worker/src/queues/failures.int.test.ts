@@ -149,8 +149,10 @@ async function jobOf(failedRunId: string) {
 
 const LOG = [
   "2026-09-28T23:22:10.1102345Z ##[group]Run npm run typecheck",
+  "2026-09-28T23:22:10.1103456Z shell: /usr/bin/bash -e {0}",
+  "2026-09-28T23:22:10.1104567Z ##[endgroup]",
+  // The step's own output leaks a token: it must be redacted before it's stored.
   `2026-09-28T23:22:10.1112345Z + export GITHUB_TOKEN=${PLANTED_TOKEN}`,
-  "2026-09-28T23:22:10.1122345Z ##[endgroup]",
   "2026-09-28T23:22:12.1101234Z \u001b[96msrc/receipt.ts\u001b[0m:1:25 - error TS2305: Module '\"./cart\"' has no exported member 'lineTotal'.",
   "2026-09-28T23:22:12.1112345Z ##[error]Process completed with exit code 2.",
   // Post-job steps follow the failed step in the job log: not part of the error window.
@@ -228,6 +230,13 @@ describe("triage job (SPEC §6.2 steps 1-3)", () => {
       where: { orgId: target.orgId, action: "failure.job_triaged" },
     });
     expect(audit.metadata).toMatchObject({ redactions: { "github-token": 1 } });
+    expect(job.signals).toMatchObject({
+      failedStep: "Typecheck",
+      exitCode: 2,
+      tools: ["tsc"],
+      errorCodes: ["TS2305"],
+      locations: [{ path: "src/receipt.ts", line: 1, column: 25 }],
+    });
     const asText = (value: unknown) =>
       JSON.stringify(value, (_key, v: unknown) => (typeof v === "bigint" ? String(v) : v));
     const everything =
@@ -236,16 +245,19 @@ describe("triage job (SPEC §6.2 steps 1-3)", () => {
     expect(everything).not.toContain(PLANTED_TOKEN);
   });
 
-  it("keeps only the end of a long log, and doesn't fetch a job it already triaged", async () => {
+  it("windows a long log to the failure and its end, and doesn't fetch a job it already triaged", async () => {
     const { target, repoFullName, githubJobId, failedRunId } = await openFailure();
     mockToken();
     const lines = Array.from({ length: 1_000 }, (_, i) => `step output ${String(i)}`);
-    mockLog(repoFullName, githubJobId, [...lines, "Error: the real failure"].join("\n"));
+    lines[500] = "Error: the real failure";
+    mockLog(repoFullName, githubJobId, lines.join("\n"));
     await processFailuresJob(triageJob(target), deps().deps);
 
     const window = (await jobOf(failedRunId)).errorWindow ?? "";
-    expect(window.split("\n")).toHaveLength(300);
-    expect(window.endsWith("Error: the real failure")).toBe(true);
+    expect(window.split("\n").length).toBeLessThanOrEqual(300);
+    expect(window).toContain("Error: the real failure");
+    expect(window.endsWith("step output 999")).toBe(true);
+    expect(window).toMatch(/lines omitted/);
 
     // No GitHub mocks now: a second fetch would fail the job.
     github.resetHandlers();

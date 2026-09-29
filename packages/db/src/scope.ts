@@ -536,14 +536,17 @@ function buildSystemScope(ctx: ScopeContext) {
       /** Stores what triage found for one failed job (SPEC §6.2). */
       async recordJobTriage(failedJobId: string, input: JobTriageInput) {
         const id = requireId(failedJobId, "failed job");
-        const { errorWindow, redactions } = jobTriageInputSchema.parse(input);
+        const { errorWindow, signals, redactions } = jobTriageInputSchema.parse(input);
         return db.$transaction(async (tx) => {
           const job = await tx.failedJob.findFirst({
             where: { id, orgId },
             include: { failedRun: { select: { failureId: true } } },
           });
           if (job === null) throw new NotFoundError("failed job not found");
-          const updated = await tx.failedJob.update({ where: { id }, data: { errorWindow } });
+          const updated = await tx.failedJob.update({
+            where: { id },
+            data: { errorWindow, ...(signals === undefined ? {} : { signals }) },
+          });
           await writeAudit(tx, orgId, actor, {
             action: "failure.job_triaged",
             target: auditTarget("failure", job.failedRun.failureId),
