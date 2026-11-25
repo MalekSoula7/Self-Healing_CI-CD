@@ -4,3 +4,4 @@ export { MAX_LINE_LENGTH, cleanLog } from "./logs/clean";
 export * from "./triage";
 export { redactLog, type RedactionKind, type RedactionResult } from "./redact/redact";
 export * from "./classify";
+export * from "./changes";
