@@ -15,6 +15,12 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/[org
             {scope.org.login}
           </Link>
           <Link
+            href={`/${scope.org.slug}/failures`}
+            className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+          >
+            Failures
+          </Link>
+          <Link
             href={`/${scope.org.slug}/repos`}
             className="text-sm text-muted-foreground underline-offset-4 hover:underline"
           >

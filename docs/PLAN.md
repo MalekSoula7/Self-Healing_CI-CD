@@ -60,7 +60,7 @@ Acceptance: installing the App on the sandbox org shows the org and repos in the
 - [x] **P2.4** Heuristic classifier + `TRIAGE_MODEL` fallback with zod-validated JSON and one retry. Cost recorded.
 - [x] **P2.5** Last-green resolver + recent-changes fetcher with token-budget truncation.
 - [x] **P2.6** Flaky check: re-run failed jobs once when `retryBeforeHeal` is on, with the guards in SPEC §6.2 step 8 (selected workflows only, never with `environment:`); link the re-run's result to the failure.
-- [ ] **P2.7** UI: failures list and detail page (category, summary, error window, signals, recent changes).
+- [x] **P2.7** UI: failures list and detail page (category, summary, error window, signals, recent changes).
 
 Acceptance: each `break.ts` scenario shows up within ~1 minute and has the right category once its collection window closes; no planted secret appears in the DB or logs.
 

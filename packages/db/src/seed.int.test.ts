@@ -1,6 +1,6 @@
 // Needs Postgres: `docker compose up -d` (runs against the `pipeheal_test` database).
 import { afterAll, describe, expect, it } from "vitest";
-import { SEED_ORG_SLUG, SEED_USER_EMAIL, seed } from "./seed";
+import { SEED_FAILURE_SHA, SEED_ORG_SLUG, SEED_USER_EMAIL, seed } from "./seed";
 import { createTestDb } from "./testing";
 
 const db = createTestDb();
@@ -32,6 +32,21 @@ describe("seed", () => {
     ]);
     expect(org.repositories.flatMap((repo) => repo.workflows)).toHaveLength(3);
     expect(org.auditLogs).toMatchObject([{ actorType: "SYSTEM", action: "org.seeded" }]);
+  });
+
+  it("creates a triaged demo failure with its job, signals and recent changes", async () => {
+    await seed(db);
+    const org = await seededOrg();
+    const failure = await db.pipelineFailure.findFirstOrThrow({
+      where: { orgId: org.id, headSha: SEED_FAILURE_SHA },
+      include: { runs: { include: { jobs: true } } },
+    });
+
+    expect(failure).toMatchObject({ status: "TRIAGED", category: "TYPECHECK" });
+    expect(failure.recentChanges).toMatchObject({ base: { source: "same-branch" } });
+    expect(failure.runs).toMatchObject([
+      { runId: -1n, jobs: [{ githubJobId: -1n, signals: { errorCodes: ["TS2305"] } }] },
+    ]);
   });
 
   it("uses negative GitHub IDs, which no real GitHub object has", async () => {

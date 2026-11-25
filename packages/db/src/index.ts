@@ -8,6 +8,7 @@ export type {
   AuditPage,
   FailedJobInput,
   FailedRunInput,
+  FailurePage,
   InstallationInput,
   PassedRunInput,
   RecentChangesInput,
@@ -21,7 +22,7 @@ export type {
   TriageCategory,
   WebhookDeliveryInput,
 } from "./inputs";
-export { jobSignalsSchema } from "./inputs";
+export { failureStatusSchema, jobSignalsSchema, recentChangesRecordSchema } from "./inputs";
 export {
   installations,
   type Installations,

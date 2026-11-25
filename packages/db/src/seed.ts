@@ -6,6 +6,7 @@
 import { isLoopbackUrl } from "@pipeheal/shared";
 import type { Db } from "./client";
 import type { Prisma } from "./generated/prisma/client";
+import { jobSignalsSchema, recentChangesRecordSchema } from "./inputs";
 
 export const SEED_ORG_SLUG = "pipeheal-demo";
 export const SEED_USER_EMAIL = "demo-owner@pipeheal.invalid";
@@ -150,6 +151,11 @@ export async function seed(db: Db): Promise<void> {
       }
     }
 
+    const demoNode = await tx.repository.findUniqueOrThrow({
+      where: { orgId_githubRepoId: { orgId: org.id, githubRepoId: -1n } },
+    });
+    await seedFailure(tx, org.id, demoNode.id);
+
     const alreadySeeded = await tx.auditLog.findFirst({
       where: { orgId: org.id, action: "org.seeded" },
     });
@@ -164,5 +170,113 @@ export async function seed(db: Db): Promise<void> {
         },
       });
     }
+  });
+}
+
+export const SEED_FAILURE_SHA = "5eed".repeat(10);
+
+/** A triaged typecheck failure on demo-node, as the worker stores one (SPEC §6.2), for the UI. */
+async function seedFailure(tx: Prisma.TransactionClient, orgId: string, repoId: string) {
+  const signals = jobSignalsSchema.parse({
+    failedStep: "Typecheck",
+    exitCode: 2,
+    tools: ["tsc"],
+    diagnostics: [
+      {
+        tool: "tsc",
+        severity: "error",
+        code: "TS2305",
+        message: "Module '\"./cart\"' has no exported member 'lineTotal'.",
+        path: "src/receipt.ts",
+        line: 1,
+        column: 10,
+      },
+    ],
+    failingTests: [],
+    locations: [{ path: "src/receipt.ts", line: 1, column: 10 }],
+    errorCodes: ["TS2305"],
+  });
+  const recentChanges = recentChangesRecordSchema.parse({
+    base: { sha: "9e11".repeat(10), source: "same-branch", branch: "main", runId: null },
+    changes: {
+      totalCommits: 1,
+      commits: [
+        { sha: SEED_FAILURE_SHA, subject: "refactor: rename lineTotal", authorLogin: "demo-owner" },
+      ],
+      omittedCommits: 0,
+      totalFiles: 1,
+      files: [
+        {
+          path: "src/cart.ts",
+          previousPath: null,
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          priority: false,
+          patch:
+            "@@ -1,3 +1,3 @@\n-export function lineTotal(item: Item): number {\n+export function lineTotals(item: Item): number {\n   return item.price * item.quantity;\n }",
+          patchState: "full",
+        },
+      ],
+      omittedFiles: 0,
+      githubTruncated: false,
+      estimatedTokens: 80,
+      tokenBudget: 12_000,
+      redactions: {},
+    },
+  });
+
+  const failure = await tx.pipelineFailure.upsert({
+    where: { repoId_headSha: { repoId, headSha: SEED_FAILURE_SHA } },
+    update: {},
+    create: {
+      orgId,
+      repoId,
+      headSha: SEED_FAILURE_SHA,
+      headBranch: "main",
+      status: "TRIAGED",
+      category: "TYPECHECK",
+      confidence: 0.95,
+      summary:
+        "tsc TS2305: Module '\"./cart\"' has no exported member 'lineTotal'. (src/receipt.ts:1)",
+      windowClosesAt: new Date(),
+      windowClosedAt: new Date(),
+      recentChanges,
+    },
+  });
+  const run = await tx.failedRun.upsert({
+    where: { repoId_runId: { repoId, runId: -1n } },
+    update: {},
+    create: {
+      orgId,
+      repoId,
+      failureId: failure.id,
+      runId: -1n,
+      runAttempt: 1,
+      workflowId: -1n,
+      workflowName: "CI",
+      workflowPath: ".github/workflows/ci.yml",
+      conclusion: "failure",
+    },
+  });
+  await tx.failedJob.upsert({
+    where: { failedRunId_githubJobId: { failedRunId: run.id, githubJobId: -1n } },
+    update: {},
+    create: {
+      orgId,
+      failedRunId: run.id,
+      githubJobId: -1n,
+      name: "check",
+      failedStep: "Typecheck",
+      category: "TYPECHECK",
+      confidence: 0.95,
+      summary: failure.summary,
+      errorWindow: [
+        "Run npm run typecheck",
+        "src/receipt.ts:1:10 - error TS2305: Module '\"./cart\"' has no exported member 'lineTotal'.",
+        "##[error]Process completed with exit code 2.",
+      ].join("\n"),
+      signals,
+    },
   });
 }

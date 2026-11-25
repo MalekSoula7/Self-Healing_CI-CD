@@ -69,3 +69,15 @@ test("Better Auth reports no session for a signed-out visitor", async ({ request
   expect(response.status()).toBe(200);
   expect(await response.json()).toBeNull();
 });
+
+test("a signed-out visitor of the failures pages is sent to sign-in, and back afterwards", async ({
+  page,
+}) => {
+  await page.goto("/acme/failures?status=TRIAGED");
+  await expect(page).toHaveURL(/\/login\?next=%2Facme%2Ffailures%3Fstatus%3DTRIAGED$/);
+
+  await page.goto("/acme/failures/00000000-0000-0000-0000-000000000000");
+  await expect(page).toHaveURL(
+    /\/login\?next=%2Facme%2Ffailures%2F00000000-0000-0000-0000-000000000000$/,
+  );
+});

@@ -238,6 +238,33 @@ export const webhookDeliverySchema = z.strictObject({
 });
 export type WebhookDeliveryInput = z.infer<typeof webhookDeliverySchema>;
 
+/** SPEC §10's failure statuses. */
+export const failureStatusSchema = z.enum([
+  "DETECTED",
+  "TRIAGED",
+  "SKIPPED",
+  "FLAKY",
+  "QUEUED",
+  "HEALING",
+  "PR_OPENED",
+  "VERIFIED",
+  "UNVERIFIED",
+  "NEEDS_HUMAN",
+  "NEEDS_SETUP",
+  "NOT_REPRODUCIBLE",
+  "FAILED",
+]);
+
+/** A page of an organization's failures, newest first (SPEC §11 failures list). */
+export const failurePageSchema = z.strictObject({
+  take: z.int().min(1).max(100).default(25),
+  /** Failures older than this one (IDs are UUIDv7, so time-ordered). */
+  before: idSchema.optional(),
+  repoId: idSchema.optional(),
+  status: failureStatusSchema.optional(),
+});
+export type FailurePage = z.input<typeof failurePageSchema>;
+
 export const auditPageSchema = z.strictObject({
   take: z.int().min(1).max(200).default(50),
   /**

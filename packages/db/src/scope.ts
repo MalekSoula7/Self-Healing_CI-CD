@@ -21,6 +21,7 @@ import {
   auditPageSchema,
   classificationSchema,
   failedRunInputSchema,
+  failurePageSchema,
   githubIdSchema,
   idSchema,
   installedRepositorySchema,
@@ -32,6 +33,7 @@ import {
   type AuditPage,
   type ClassificationInput,
   type FailedRunInput,
+  type FailurePage,
   type InstalledRepository,
   type InstalledWorkflow,
   type JobTriageInput,
@@ -191,6 +193,33 @@ function buildOrgScope(ctx: ScopeContext) {
     },
 
     failures: {
+      /** The organization's failures, newest first, optionally of one repository or status. */
+      list(page: FailurePage = {}) {
+        const { take, before, repoId, status } = failurePageSchema.parse(page);
+        return db.pipelineFailure.findMany({
+          where: {
+            orgId,
+            ...(before === undefined ? {} : { id: { lt: before } }),
+            ...(repoId === undefined ? {} : { repoId }),
+            ...(status === undefined ? {} : { status }),
+          },
+          orderBy: { id: "desc" },
+          take,
+          select: {
+            id: true,
+            headSha: true,
+            headBranch: true,
+            status: true,
+            category: true,
+            confidence: true,
+            summary: true,
+            createdAt: true,
+            repo: { select: { id: true, fullName: true } },
+            _count: { select: { runs: true } },
+          },
+        });
+      },
+
       /** A failure with its runs and their jobs, oldest run first. */
       async get(failureId: string) {
         const id = parseId(failureId);

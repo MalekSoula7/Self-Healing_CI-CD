@@ -281,6 +281,16 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
       ]),
     ).rejects.toThrow(NotFoundError);
   },
+  "failures.list": async () => {
+    await expect(a.asAdmin.failures.list({ take: 100 })).resolves.toMatchObject([
+      { id: a.failure.id },
+    ]);
+    await expect(a.asAdmin.failures.list({ take: 100 })).resolves.toHaveLength(1);
+    await expect(a.asAdmin.failures.list({ repoId: b.repo.id })).resolves.toEqual([]);
+    await expect(a.system.failures.list({ before: b.failure.id })).resolves.not.toContainEqual(
+      expect.objectContaining({ id: b.failure.id }),
+    );
+  },
   "failures.get": async () => {
     await expect(a.asAdmin.failures.get(b.failure.id)).resolves.toBeNull();
     await expect(a.system.failures.get(b.failure.id)).resolves.toBeNull();
@@ -397,6 +407,7 @@ const readOnlyHelpers = [
   "repositories.get",
   "repositories.findByGithubId",
   "workflows.listForRepo",
+  "failures.list",
   "failures.get",
   "failures.findBySha",
   "members.list",
@@ -1383,6 +1394,43 @@ describe("failures (SPEC §2.1)", () => {
     // A run that passed isn't failing any more: nothing to re-run.
     await db.failedRun.update({ where: { id: a.failedRunId }, data: { rerunByUs: false } });
     await expect(a.system.failures.claimRerun(a.failedRunId)).resolves.toBeNull();
+  });
+
+  it("lists failures newest first, page by page, by repository or status, for members", async () => {
+    const [second] = await a.system.repositories.syncInstalled([
+      { githubRepoId: githubId(), fullName: `${a.org.login}/second`, defaultBranch: "main" },
+    ]);
+    const secondRepoId = present(second, "repository").id;
+    const { failure: newer } = await a.system.failures.recordFailedRun(secondRepoId, failedRun());
+    const { failure: newest } = await a.system.failures.recordFailedRun(a.repo.id, failedRun());
+    await a.system.failures.recordTriage(newest.id, {
+      category: "test",
+      confidence: 0.9,
+      summary: "1 failing test",
+    });
+
+    const all = await a.asMember.failures.list();
+    expect(all.map((f) => f.id)).toEqual([newest.id, newer.id, a.failure.id]);
+    expect(all[0]).toMatchObject({
+      status: "TRIAGED",
+      category: "TEST",
+      summary: "1 failing test",
+      repo: { id: a.repo.id, fullName: a.repo.fullName },
+      _count: { runs: 1 },
+    });
+
+    const firstPage = await a.asMember.failures.list({ take: 2 });
+    const nextPage = await a.asMember.failures.list({ take: 2, before: firstPage[1]?.id });
+    expect([...firstPage, ...nextPage].map((f) => f.id)).toEqual(all.map((f) => f.id));
+    await expect(a.asMember.failures.list({ repoId: secondRepoId })).resolves.toMatchObject([
+      { id: newer.id },
+    ]);
+    await expect(a.asMember.failures.list({ status: "TRIAGED" })).resolves.toMatchObject([
+      { id: newest.id },
+    ]);
+    for (const bad of [{ take: 0 }, { take: 101 }, { status: "BROKEN" }, { repoId: "x" }]) {
+      expect(() => a.asMember.failures.list(bad as never)).toThrow(ZodError);
+    }
   });
 
   it("records a model call's tokens and cost exactly", async () => {
