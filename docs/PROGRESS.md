@@ -654,3 +654,12 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
 - Known limits (SPEC §8.5): `setup.py` dependencies aren't read (it's code); a lockfile's content isn't checked against its manifest (a changed lockfile needs an allowed manifest change, but the lockfile could still resolve something else). For P3.6's red team.
 - Tests: policy 348; coverage 99.6% statements, 96.3% branches.
 
+## 2026-11-25 · P3.5 · Behavioral checks: JUnit parser and inventory comparison
+
+- Done (`packages/policy/src/behavior`, fixtures first in `packages/policy/fixtures/junit.ts`: jest-junit, Vitest and pytest reports, each a baseline and a fixed run):
+  - `parseJunit(xml)`: our own reader for this one format, no XML dependency. Reports come from the customer's runner, so: no DOCTYPE or entity declarations (no entity expansion), only predefined and numeric entities, tags must nest, bounded at 20 MB, 50,000 tests and 64 levels. Anything off is refused, never half-read.
+  - IDs `classname::name`; repeats become `id (#2)` (an O(1) builder: the first version was quadratic on 50,000 identical names, which the limit test caught). `mergeInventories` for several report files.
+  - `compareInventories(baseline, after)`: missing tests, lower count, newly skipped, still failing, regressed (SPEC §8.6), up to 10 IDs named per violation.
+- Not here (Phase 4, SPEC §8.6): sending the reports from the runner, and "behavioral checks unavailable" (forcing `source_only` and a draft PR when no junit glob is configured).
+- Tests: policy 379; coverage 99.5% statements, 96.2% branches.
+

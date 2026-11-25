@@ -442,6 +442,8 @@ Static checks can be gamed; behavior is harder to fake. Repos configure a JUnit 
 - If JUnit isn't configured, behavioral checks are "unavailable": `tests.mode` is forced to `source_only`, the PR opens as draft, and the PR body says so.
 - The PR's own CI run is the final independent check.
 
+In code (P3.5, `packages/policy/src/behavior`): the runner sends the raw report files and the server parses them itself (`parseJunit`, `mergeInventories` for several files). The reader takes only this format: root `testsuites` or `testsuite`, no DOCTYPE or entity declarations, only predefined and numeric entities, at most 20 MB, 50,000 tests and 64 levels; anything else is refused, never half-read. A test's ID is `classname::name` (or `name`), capped at 1,000 characters; a repeated ID becomes `id (#2)`. A test case is failed if it has a `failure` or `error`, skipped if it has only `skipped`. `compareInventories(baseline, after)` reports `behavior.missingTests`, `behavior.testCount`, `behavior.newlySkipped`, `behavior.stillFailing` and `behavior.regressed`, naming up to 10 tests each. A baseline test that was already skipped may stay skipped.
+
 ### 8.7 Custom (plain-language) rules
 1. User writes a rule ("don't touch the payments module", "never change public API signatures").
 2. `HEAL_MODEL` tries to compile it into structured rules (e.g. `paths.deny += ["src/payments/**"]`). The user sees the compiled version and confirms. Then `enforcement: "code"`.

@@ -47,3 +47,13 @@ export {
   type GlobList,
 } from "./glob";
 export { checkChanges, type Violation } from "./checks";
+export {
+  MAX_REPORT_CHARS,
+  MAX_TESTS,
+  mergeInventories,
+  parseJunit,
+  type JunitRead,
+  type TestInventory,
+  type TestOutcome,
+} from "./behavior/junit";
+export { compareInventories } from "./behavior/inventory";
