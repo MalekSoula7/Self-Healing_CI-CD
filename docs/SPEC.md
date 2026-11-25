@@ -411,7 +411,7 @@ In code (`packages/policy`, P3.1): every limit has a plan maximum no layer can e
 Deny lists: union. Allow lists: intersection when several layers set them. Forbid flags: OR. Limits: minimum. Categories: intersection. `dependencies.mode`: most restrictive (`frozen` < `patch` < `minor` < `any`). `tests.mode`: `source_only` beats `may_edit_tests`. Property-based tests must prove that the merged policy is never less restrictive than any input layer.
 
 ### 8.5 Static checks (on diffs the server recomputed from full old/new file contents)
-Each check returns `Violation { ruleId, path, line?, message, hint }`.
+Each check reads `Change { path, oldPath, status, oldKind, newKind, isBinary, modeChanged, oldContent, newContent, hunks, addedLines, removedLines }` (P3.2: `oldKind`/`newKind` say whether each side is absent, text, binary, a symlink or a submodule, for INV-FILE-TYPES) and returns `Violation { ruleId, path, line?, message, hint }`.
 - **Paths**: deny/allow globs on both old and new paths (renames count as both).
 - **Protected configs**: any change to protected files; section-aware for `pyproject.toml` and `package.json` (dependency sections are governed by the dependency rules instead).
 - **Test edits**: in `source_only` mode, any change to a test file is a violation.

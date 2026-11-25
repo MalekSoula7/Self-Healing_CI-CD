@@ -592,3 +592,18 @@ Newest entry at the bottom. One entry per task. Format:
 - Tests: 26 policy tests, coverage 100%. Mutation-checked: a loose (non-strict) object and a missing code-rule check each fail a test. Full suite 1,063.
 - `policy-red-team` not run for this task: there's no engine to attack yet (only the schema). It runs in P3.6, after the checks exist.
 - Still open for P3.3 (SPEC §8.1/§15): split org *defaults* from org *guardrails* before writing the merge.
+
+## 2026-11-25 · P3.2 · Diff model
+
+- Done (`packages/policy/src/diff.ts`, pure; tests first):
+  - `buildChange({ path, oldPath?, old, new })` builds `Change { path, oldPath, status, oldKind, newKind, isBinary, modeChanged, oldContent, newContent, hunks, addedLines, removedLines }` from full contents.
+    - Each side is `absent`, `text` (content and mode), `binary`, `symlink` or `submodule`, as the GitHub client reports files. `oldKind`/`newKind` give INV-FILE-TYPES what it needs; SPEC §8.5 is updated.
+    - Status: added, deleted, renamed (an `oldPath` different from `path`) or modified. A change with nothing on either side is refused.
+    - Text diffs only when both sides are text or absent; binaries, symlinks and submodules get no hunks.
+  - `diffLines`: Myers' shortest edit script after trimming the common start and end, so a small change in a 50,000-line file takes milliseconds.
+    - Lines split on `\n`, keeping `\r`, so a CRLF or final-newline change counts as a change.
+    - Past 2,100 edits (`MAX_EDIT_DISTANCE`) it falls back to "every line replaced". That only overcounts, and anything that large already exceeds the largest possible `maxLinesChanged` (2,000), so the size check's verdict is unchanged. Memory stays bounded (about 18 MB worst case).
+  - Hunks are git-style: 3 lines of context, merged when they touch, 1-based starts (an empty side names the line before).
+  - Index accesses the algorithm guarantees go through `item()`, which throws instead of silently defaulting: a default would make a wrong diff look right.
+- Tests: 16, including two fast-check properties over 500 random pairs each (applying the hunks to the old text gives the new text, line counts and hunk sizes agree; never worse than replacing everything; empty only when nothing changed), minimality on an interleaved case, the fallback, and performance. Mutation-checked: swapping additions and deletions in the backtrack fails most tests. Policy coverage 99.4% statements, 99.2% branches (the one uncovered branch is `item()`'s "can't happen" throw). Full suite 1,079.
+- Dependency: `fast-check` (dev, policy): property-based tests, which SPEC asks for in P3.3 as well.

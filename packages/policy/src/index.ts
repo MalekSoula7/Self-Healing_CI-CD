@@ -13,3 +13,19 @@ export {
   type PolicyLayer,
   type PolicyRules,
 } from "./rules";
+export {
+  MAX_EDIT_DISTANCE,
+  buildChange,
+  diffLines,
+  splitLines,
+  type Change,
+  type ChangeInput,
+  type ChangeStatus,
+  type DiffOp,
+  type FileKind,
+  type FileMode,
+  type FileState,
+  type Hunk,
+  type HunkLine,
+  type LineDiff,
+} from "./diff";

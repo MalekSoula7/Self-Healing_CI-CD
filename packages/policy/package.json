@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "fast-check": "^4.11.0",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
