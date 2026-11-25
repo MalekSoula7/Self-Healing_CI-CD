@@ -267,7 +267,8 @@ export function selectRecentChanges(
   const commits: RecentChanges["commits"] = [];
   let commitsUsed = 0;
   for (const commit of comparison.commits) {
-    const firstLine = commit.message.split("\n")[0]?.trim() ?? "";
+    const newline = commit.message.indexOf("\n");
+    const firstLine = (newline === -1 ? commit.message : commit.message.slice(0, newline)).trim();
     const entry = {
       sha: commit.sha,
       subject: redact(firstLine).slice(0, MAX_SUBJECT_LENGTH),

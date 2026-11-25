@@ -13,7 +13,14 @@ import {
 import { forSystem, type Db } from "@pipeheal/db";
 import { GitHubApiError, type GitHubApp, type JobLog, type RepoClient } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
+import { ZodError } from "zod";
 import type { TriageModel } from "../triage-model";
+
+/**
+ * Model calls one failure may cost, retries of its job included (two per job when the first
+ * answer is invalid). Past it, jobs the heuristics can't place stay unknown (SPEC §13).
+ */
+export const MAX_MODEL_CALLS_PER_FAILURE = 8;
 
 export interface FailureTarget {
   orgId: string;
@@ -97,7 +104,12 @@ export async function triageFailure(
     });
     let source = "heuristic";
     let classification = classifyHeuristically({ window, signals, conclusion });
-    if (classification === null && deps.triageModel !== null) {
+    const budgetLeft =
+      (await system.failures.modelCallCount(failure.id)) < MAX_MODEL_CALLS_PER_FAILURE;
+    if (classification === null && deps.triageModel !== null && !budgetLeft) {
+      log.warn({ failedJobId: job.id }, "model call cap reached for this failure");
+    }
+    if (classification === null && deps.triageModel !== null && budgetLeft) {
       source = "model";
       classification = await deps.triageModel.classify(
         { window, signals, workflowName: run?.workflowName ?? "unknown", jobName: job.name },
@@ -110,12 +122,25 @@ export async function triageFailure(
       source = "none";
       classification = unknown("Couldn't tell why this job failed from its log.");
     }
-    await system.failures.recordJobTriage(job.id, {
-      errorWindow: window,
-      signals,
-      redactions,
-      classification: pickStored(classification),
-    });
+    try {
+      await system.failures.recordJobTriage(job.id, {
+        errorWindow: window,
+        signals,
+        redactions,
+        classification: pickStored(classification),
+      });
+    } catch (error) {
+      // What triage produced doesn't fit what's stored (agent-core bounds it, so this is a bug):
+      // the job is stored as unknown rather than blocking the failure's other jobs and retrying
+      // (and paying for) everything.
+      if (!(error instanceof ZodError)) throw error;
+      log.error({ failedJobId: job.id, issues: error.issues.length }, "job triage didn't fit");
+      await system.failures.recordJobTriage(job.id, {
+        errorWindow: "",
+        classification: pickStored(unknown("Couldn't store what triage found for this job.")),
+      });
+      continue;
+    }
     log.info(
       {
         failedJobId: job.id,

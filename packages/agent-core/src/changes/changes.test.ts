@@ -273,6 +273,31 @@ describe("selectRecentChanges", () => {
     }
   });
 
+  it("names a binary file the signals point at, and a named file whose diff doesn't fit at all", () => {
+    const changes = selectRecentChanges(
+      comparison([
+        file("assets/logo.png", null, { status: "modified" }),
+        // One diff line longer than the whole budget: not even a hunk's first line fits.
+        file("src/receipt.ts", `@@ -1 +1 @@\n+${"y".repeat(3_000)}`),
+      ]),
+      { priorityPaths: ["assets/logo.png", "src/receipt.ts"], tokenBudget: 200 },
+    );
+
+    expect(changes.files.map((f) => [f.path, f.priority, f.patchState])).toEqual([
+      ["src/receipt.ts", true, "omitted"],
+      ["assets/logo.png", true, "none"],
+    ]);
+    expect(changes.estimatedTokens).toBeLessThanOrEqual(200);
+  });
+
+  it("keeps duplicate entries in their order", () => {
+    const changes = selectRecentChanges(
+      comparison([file("a.ts", hunk(1, 1)), file("a.ts", hunk(5, 1))]),
+    );
+
+    expect(changes.files.map((f) => f.patch)).toEqual([hunk(1, 1), hunk(5, 1)]);
+  });
+
   it("is deterministic", () => {
     const input = comparison([file("b.ts", hunk(1, 3)), file("a.ts", hunk(1, 3))]);
     expect(selectRecentChanges(input)).toEqual(selectRecentChanges(input));

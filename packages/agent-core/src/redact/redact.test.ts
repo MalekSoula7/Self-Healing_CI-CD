@@ -184,6 +184,29 @@ describe("redactLog rules", () => {
     ["assignment", "--password=correct-horse-battery", "--password=[redacted:assignment]"],
     ["assignment", "db_passwd: hunter2", "db_passwd: [redacted:assignment]"],
     ["assignment", "API_KEY=abc123;next", "API_KEY=[redacted:assignment];next"],
+    // Added after the Phase 2 security review.
+    ["api-key", `gitlab ${"glp" + "at-"}${"aB3d_".repeat(4)}`, "gitlab [redacted:api-key]"],
+    ["api-key", `docker ${"dckr" + "_pat_"}${"aB3d-".repeat(5)}`, "docker [redacted:api-key]"],
+    [
+      "webhook-url",
+      `notify https://hooks.slack.com/services/T0123ABCD/B0123ABCD/${"aB3d".repeat(6)} done`,
+      "notify [redacted:webhook-url] done",
+    ],
+    [
+      "webhook-url",
+      `post https://discord.com/api/webhooks/123456789012345678/${"aB3d-_".repeat(10)}`,
+      "post [redacted:webhook-url]",
+    ],
+    ["assignment", "DB_PASS=hunter2hunter2", "DB_PASS=[redacted:assignment]"],
+    ["assignment", "SIGNING_KEY=abc123def456", "SIGNING_KEY=[redacted:assignment]"],
+    ["assignment", "AccountKey=abc123def456;", "AccountKey=[redacted:assignment];"],
+    ["assignment", "SENTRY_DSN=abcdef", "SENTRY_DSN=[redacted:assignment]"],
+    ["assignment", "cookie: session=abc123", "cookie: [redacted:assignment]"],
+    [
+      "url-credentials",
+      "postgres://app:p@ss@word@db:5432/x",
+      "postgres://app:[redacted:url-credentials]@db:5432/x",
+    ],
   ])("%s: %s", (kind, input, expected) => {
     const result = redactLog(input);
     expect(result.text).toBe(expected);

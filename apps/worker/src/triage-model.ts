@@ -3,6 +3,7 @@
 // its tokens and cost (prices come from config, never code).
 import Anthropic from "@anthropic-ai/sdk";
 import {
+  MODEL_CONFIDENCE_CAP,
   TRIAGE_OUTPUT_JSON_SCHEMA,
   TRIAGE_PROMPT_VERSION,
   buildTriagePrompt,
@@ -115,7 +116,10 @@ export function triageModel(options: {
           costUsd: callCost(price, usage),
           outcome: answer === null ? "invalid" : "valid",
         });
-        if (answer !== null) return answer;
+        if (answer !== null) {
+          // Below every heuristic: a log can't talk the model into outranking what code found.
+          return { ...answer, confidence: Math.min(answer.confidence, MODEL_CONFIDENCE_CAP) };
+        }
         logger.warn({ attempt, stopReason: response.stop_reason }, "invalid triage model answer");
       }
       return null;

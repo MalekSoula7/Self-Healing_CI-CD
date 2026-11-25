@@ -65,9 +65,37 @@ const RUFF_CONCISE =
 const RUFF_HEADER = /^(?<code>[A-Z]{1,4}\d{2,4}) (?:\[\*\] )?(?<message>\S.*)$/;
 const RUFF_ARROW = /^\s*--> (?<path>\S+?):(?<line>\d+):(?<column>\d+)$/;
 const ESLINT_FILE = /^(?:[A-Za-z]:)?[\w@./\\-]+\.(?:[cm]?[jt]sx?|vue|svelte|astro)$/;
-const ESLINT_ROW =
-  /^\s+(?<line>\d+):(?<column>\d+)\s+(?<severity>error|warning)\s+(?<message>.+?)(?:\s{2,}(?<code>[@\w][\w@/.-]*))?$/;
-const VITEST_FAIL = /^\s*FAIL\s+(?<file>\S+?\.[cm]?[jt]sx?)(?: > (?<name>.+?))?(?: \[ .+ \])?\s*$/;
+// The message and the optional rule ID after it are split in code (eslintRow): a lazy message
+// followed by an optional `\s{2,}rule` backtracks quadratically on long runs of spaces.
+const ESLINT_ROW = /^\s+(?<line>\d+):(?<column>\d+)\s+(?<severity>error|warning)\s+(?<rest>\S.*)$/;
+const ESLINT_RULE = /^[@\w][\w@/.-]*$/;
+
+/** An ESLint row's message and rule ID: the rule is the last word, after two or more spaces. */
+function eslintRow(rest: string): { message: string; code?: string } {
+  const trimmed = rest.trimEnd();
+  const lastSpace = trimmed.lastIndexOf(" ");
+  const rule = trimmed.slice(lastSpace + 1);
+  if (lastSpace > 0 && trimmed[lastSpace - 1] === " " && ESLINT_RULE.test(rule)) {
+    return { message: trimmed.slice(0, lastSpace).trimEnd(), code: rule };
+  }
+  return { message: trimmed };
+}
+// The test name and the optional `[ … ]` suffix are split in code (vitestName): a lazy name
+// followed by an optional bracketed suffix backtracks quadratically on rows full of brackets.
+const VITEST_FAIL = /^\s*FAIL\s+(?<file>\S+?\.[cm]?[jt]sx?)(?<rest>(?: [>[] .*)?)\s*$/;
+
+/** A Vitest FAIL row's test name after ` > `, without a trailing `[ … ]`; undefined if none. */
+function vitestName(rest: string): string | undefined {
+  let text = rest.trim();
+  if (text.startsWith("[ ")) return undefined;
+  if (text.endsWith("]")) {
+    const bracket = text.lastIndexOf(" [ ");
+    if (bracket !== -1) text = text.slice(0, bracket).trimEnd();
+  }
+  if (!text.startsWith("> ")) return undefined;
+  const name = text.slice(2).trim();
+  return name === "" ? undefined : name;
+}
 const VITEST_LOCATION = /^\s*❯ (?<path>[^\s:]+):(?<line>\d+):(?<column>\d+)\s*$/;
 const JEST_FAIL = /^FAIL (?<file>\S+?)(?: \([\d.]+ m?s\))?$/;
 const JEST_TEST = /^\s+● (?<name>.+)$/;
@@ -284,11 +312,12 @@ export function extractSignals(text: string, failedStep: string | null = null): 
       continue;
     }
     groups = ESLINT_ROW.exec(line)?.groups;
-    if (groups?.line !== undefined && groups.message !== undefined && eslintFile !== undefined) {
+    if (groups?.line !== undefined && groups.rest !== undefined && eslintFile !== undefined) {
+      const { message, code } = eslintRow(groups.rest);
       found.diagnostic("eslint", {
-        code: groups.code,
+        code,
         severity: groups.severity,
-        message: groups.message,
+        message,
         path: eslintFile,
         line: Number(groups.line),
         column: num(groups.column),
@@ -298,10 +327,8 @@ export function extractSignals(text: string, failedStep: string | null = null): 
 
     groups = VITEST_FAIL.exec(line)?.groups;
     if (groups?.file !== undefined) {
-      found.failingTest(
-        "vitest",
-        groups.name === undefined ? groups.file : `${groups.file} > ${groups.name}`,
-      );
+      const name = vitestName(groups.rest ?? "");
+      found.failingTest("vitest", name === undefined ? groups.file : `${groups.file} > ${name}`);
       awaitingMessage = { tool: "vitest", linesLeft: TEST_MESSAGE_LOOKAHEAD };
       continue;
     }

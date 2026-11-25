@@ -53,3 +53,30 @@ export function isCiLooking(workflow: WorkflowFacts & { name: string; path: stri
     !DEPLOY_LIKE.test(workflow.path)
   );
 }
+
+/**
+ * Why re-running this workflow's failed jobs could deploy, or null (SPEC §6.2 step 8's guard).
+ * `rerun-failed-jobs` also re-runs every job that depends on a failed one, so the whole workflow
+ * counts, not only the failed job:
+ * - a job declares `environment:`;
+ * - a job calls a reusable workflow (`uses:` at job level): what it runs isn't in this file;
+ * - a job's ID or name says deploy, release or publish.
+ * Unparseable YAML is a risk too: nothing can be checked.
+ */
+export function rerunRisk(content: string): string | null {
+  let doc: unknown;
+  try {
+    doc = parse(content);
+  } catch {
+    return "the workflow file doesn't parse";
+  }
+  if (!isRecord(doc) || !isRecord(doc.jobs)) return "the workflow file has no jobs";
+  for (const [id, job] of Object.entries(doc.jobs)) {
+    if (!isRecord(job)) continue;
+    if ("environment" in job) return `job ${id} uses an environment`;
+    if ("uses" in job) return `job ${id} calls a reusable workflow`;
+    const name = typeof job.name === "string" ? job.name : "";
+    if (DEPLOY_LIKE.test(id) || DEPLOY_LIKE.test(name)) return `job ${id} looks like a deploy`;
+  }
+  return null;
+}

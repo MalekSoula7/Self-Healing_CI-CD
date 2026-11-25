@@ -21,7 +21,7 @@ import {
   type FailuresDeps,
   type FailuresQueue,
 } from "./failures";
-import type { FailureTarget } from "./triage";
+import { MAX_MODEL_CALLS_PER_FAILURE, type FailureTarget } from "./triage";
 
 const db = createTestDb();
 const github = setupServer();
@@ -350,6 +350,26 @@ describe("triage job (SPEC §6.2 steps 1-3)", () => {
       },
     ]);
     expect(calls[0]?.costUsd.toString()).toBe("0.0012");
+  });
+
+  it("stops asking the model once the failure has used its model calls (retries included)", async () => {
+    const { target, system, repoFullName, githubJobId, failedRunId } = await openFailure();
+    for (let i = 0; i < MAX_MODEL_CALLS_PER_FAILURE; i++) {
+      await system.failures.recordModelCall(target.failureId, { ...MODEL_CALL, outcome: "valid" });
+    }
+    mockToken();
+    mockLog(repoFullName, githubJobId, UNCLEAR_LOG);
+    const model = fakeModel({
+      category: "build",
+      confidence: 0.6,
+      summary: "make's default target failed.",
+      suspectedFiles: [],
+    });
+
+    await processFailuresJob(triageJob(target), deps({ triageModel: model }).deps);
+
+    expect(model.inputs).toEqual([]);
+    expect(await jobOf(failedRunId)).toMatchObject({ category: "UNKNOWN" });
   });
 
   it("leaves the job unknown when heuristics can't tell and there's no model (or no answer)", async () => {
@@ -853,6 +873,8 @@ describe("flaky-check job (SPEC §6.2 step 8)", () => {
   /** A triaged failure on a watched workflow (CI, GitHub workflow ID 1). */
   async function triagedFailure(options: { selected?: boolean; usesEnvironment?: boolean } = {}) {
     const opened = await openFailure();
+    // A failure only exists for an enabled repository (the workflow_run processor's filter).
+    await db.repository.update({ where: { id: opened.repoId }, data: { enabled: true } });
     await opened.system.workflows.syncInstalled(opened.repoId, [
       {
         githubWorkflowId: 1n,
@@ -872,19 +894,38 @@ describe("flaky-check job (SPEC §6.2 step 8)", () => {
   }
 
   /** GitHub for this repo: the workflow file at the failing commit, the run, and re-runs. */
-  function mockRerun(fullName: string, runId: bigint, workflowYaml: string | null, status = 201) {
+  const DEFAULT_TIP = "d".repeat(40);
+
+  /**
+   * GitHub for this repo: the workflow file at the failing commit (and, when `defaultYaml` is
+   * given, a default branch that moved on, with its own copy), the run, and re-runs.
+   */
+  function mockRerun(
+    fullName: string,
+    runId: bigint,
+    workflowYaml: string | null,
+    status = 201,
+    defaultYaml?: string,
+  ) {
     const calls: string[] = [];
     const api = `https://api.github.com/repos/${fullName}`;
     github.use(
+      http.get(`${api}/git/ref/*`, () =>
+        HttpResponse.json({
+          ref: "refs/heads/main",
+          object: { sha: defaultYaml === undefined ? "a".repeat(40) : DEFAULT_TIP },
+        }),
+      ),
       http.get(`${api}/contents/*`, ({ request }) => {
-        calls.push(`file ${new URL(request.url).searchParams.get("ref") ?? ""}`);
-        if (workflowYaml === null)
-          return HttpResponse.json({ message: "Not Found" }, { status: 404 });
-        const content = Buffer.from(workflowYaml).toString("base64");
+        const ref = new URL(request.url).searchParams.get("ref") ?? "";
+        calls.push(`file ${ref}`);
+        const yaml = ref === DEFAULT_TIP ? (defaultYaml ?? null) : workflowYaml;
+        if (yaml === null) return HttpResponse.json({ message: "Not Found" }, { status: 404 });
+        const content = Buffer.from(yaml).toString("base64");
         return HttpResponse.json({
           type: "file",
           path: ".github/workflows/ci.yml",
-          size: workflowYaml.length,
+          size: yaml.length,
           encoding: "base64",
           content,
         });
@@ -992,6 +1033,78 @@ describe("flaky-check job (SPEC §6.2 step 8)", () => {
     await processFailuresJob(flakyCheckJob(target), deps({ retryBeforeHeal: false }).deps);
 
     expect(calls).toEqual([]);
+  });
+
+  it("never re-runs a workflow that could deploy through a dependent job", async () => {
+    const reusable = [
+      "on: [push]",
+      "jobs:",
+      "  test:",
+      "    runs-on: ubuntu-latest",
+      "    steps: []",
+      "  ship:",
+      "    needs: test",
+      "    uses: ./.github/workflows/deploy.yml",
+      "",
+    ].join("\n");
+    const { target, repoFullName, runId } = await triagedFailure();
+    mockToken();
+    const calls = mockRerun(repoFullName, runId, reusable);
+
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+
+    expect(calls).not.toContain("rerun");
+  });
+
+  it("checks the default branch's copy too (a pull_request run executes the merge)", async () => {
+    const withDeploy = [
+      "on: [push]",
+      "jobs:",
+      "  test:",
+      "    runs-on: ubuntu-latest",
+      "    steps: []",
+      "  deploy:",
+      "    needs: test",
+      "    runs-on: ubuntu-latest",
+      "    steps: []",
+      "",
+    ].join("\n");
+    const { target, repoFullName, runId } = await triagedFailure();
+    mockToken();
+    const calls = mockRerun(repoFullName, runId, CI_YAML, 201, withDeploy);
+
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+
+    expect(calls).toEqual([`file ${"a".repeat(40)}`, `file ${DEFAULT_TIP}`]);
+  });
+
+  it("re-runs when both copies are plain CI", async () => {
+    const { target, repoFullName, runId } = await triagedFailure();
+    mockToken();
+    const calls = mockRerun(repoFullName, runId, CI_YAML, 201, CI_YAML);
+
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+
+    expect(calls).toEqual([`file ${"a".repeat(40)}`, `file ${DEFAULT_TIP}`, "rerun"]);
+  });
+
+  it.each([
+    ["the repository is disabled", { enabled: false }],
+    ["the organization is suspended", { suspended: true }],
+  ])("doesn't re-run when %s", async (_label, state) => {
+    const { target, system, repoId, repoFullName, runId } = await triagedFailure();
+    if ("enabled" in state) {
+      await db.repository.update({ where: { id: repoId }, data: { enabled: false } });
+    } else {
+      await db.organization.update({ where: { id: target.orgId }, data: { status: "SUSPENDED" } });
+    }
+    mockToken();
+    const calls = mockRerun(repoFullName, runId, CI_YAML);
+
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+
+    expect(calls).toEqual([]);
+    expect(system.org.id).toBe(target.orgId);
   });
 
   it("only checks a triaged failure", async () => {

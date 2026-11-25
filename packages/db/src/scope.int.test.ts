@@ -295,6 +295,12 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
     await expect(a.asAdmin.failures.get(b.failure.id)).resolves.toBeNull();
     await expect(a.system.failures.get(b.failure.id)).resolves.toBeNull();
   },
+  "failures.modelCallCount": async () => {
+    await a.system.failures.recordModelCall(a.failure.id, modelCall());
+    await expect(a.system.failures.modelCallCount(a.failure.id)).resolves.toBe(1);
+    await expect(a.system.failures.modelCallCount(b.failure.id)).resolves.toBe(0);
+    await expect(b.system.failures.modelCallCount(a.failure.id)).resolves.toBe(0);
+  },
   "failures.findBySha": async () => {
     await expect(a.system.failures.findBySha(b.repo.id, b.failure.headSha)).resolves.toBeNull();
   },
@@ -410,6 +416,7 @@ const readOnlyHelpers = [
   "failures.list",
   "failures.get",
   "failures.findBySha",
+  "failures.modelCallCount",
   "members.list",
   "audit.list",
   "installations.findByInstallationId",

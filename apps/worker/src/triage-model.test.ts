@@ -78,6 +78,14 @@ function run() {
 }
 
 describe("triageModel", () => {
+  it("caps the model's confidence below every heuristic's", async () => {
+    serve(() => HttpResponse.json(message(JSON.stringify({ ...answer, confidence: 1 }))));
+
+    const { result } = run();
+
+    await expect(result).resolves.toMatchObject({ category: "build", confidence: 0.75 });
+  });
+
   it("asks for a structured answer and returns it, recording the call's tokens and cost", async () => {
     const requests = serve(() => HttpResponse.json(message(JSON.stringify(answer))));
 
@@ -88,7 +96,7 @@ describe("triageModel", () => {
       {
         purpose: "triage",
         model: MODEL,
-        promptVersion: "triage-v1",
+        promptVersion: "triage-v2",
         inputTokens: 1834,
         outputTokens: 96,
         cacheReadTokens: 0,

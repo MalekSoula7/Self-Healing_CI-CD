@@ -32,7 +32,17 @@ function lastProgressState(line: string): string {
   return cr === -1 ? trimmed : trimmed.slice(cr + 1);
 }
 
-export function cleanLog(raw: string): string {
+/** Cuts every line longer than MAX_LINE_LENGTH. */
+export function capLongLines(text: string): string {
+  return text.split("\n").map(capLine).join("\n");
+}
+
+/**
+ * Cleans a raw log. `capLines: false` leaves long lines whole, so a caller can redact first and
+ * cut after (a secret cut in two can fall below what the redaction rules recognize).
+ */
+export function cleanLog(raw: string, options: { capLines?: boolean } = {}): string {
+  const cap = options.capLines ?? true;
   const text = raw
     .replace(new RegExp(`^${BOM}`), "")
     .replace(/\r\n/g, "\n")
@@ -44,7 +54,8 @@ export function cleanLog(raw: string): string {
   for (const line of text.split("\n")) {
     if (line === "##[endgroup]") continue;
     const shown = lastProgressState(line);
-    lines.push(capLine(shown.startsWith("##[group]") ? shown.slice("##[group]".length) : shown));
+    const content = shown.startsWith("##[group]") ? shown.slice("##[group]".length) : shown;
+    lines.push(cap ? capLine(content) : content);
   }
   return lines.join("\n");
 }

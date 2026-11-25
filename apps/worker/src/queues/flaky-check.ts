@@ -6,14 +6,18 @@
 // A re-run spends the customer's CI minutes and can deploy, so it's guarded:
 // - only for a workflow still selected for the repo (SPEC §2.1);
 // - at most once per run (claimed in the database before GitHub is asked);
-// - never for a workflow in which any job declares `environment:`, read from the workflow file at
-//   the failing commit (unreadable or unparseable: no re-run) and remembered on RepoWorkflow.
+// - never for a workflow that could deploy: `rerun-failed-jobs` also re-runs the jobs that depend
+//   on the failed ones, so the whole workflow file is checked (rerunRisk: an `environment:`, a
+//   reusable workflow call, a deploy-, release- or publish-like job), at the failing commit and on
+//   the default branch. Unreadable or unparseable: no re-run. `environment:` is remembered on
+//   RepoWorkflow.
+// - only while the organization is active and the repository enabled.
 import type { Db } from "@pipeheal/db";
 import { forSystem } from "@pipeheal/db";
 import { GitHubApiError, GuardError, type GitHubApp } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
 import type { FailureTarget } from "./triage";
-import { parseWorkflowYaml } from "./workflow-yaml";
+import { parseWorkflowYaml, rerunRisk } from "./workflow-yaml";
 
 export interface FlakyCheckDeps {
   db: Db;
@@ -44,12 +48,32 @@ export async function checkFlaky(
   const candidates = failure.runs.filter((run) => !run.rerunByUs && FAILED.has(run.conclusion));
   if (candidates.length === 0) return;
   const repo = await system.repositories.get(failure.repoId);
-  if (repo === null) return;
+  // Still ours to act on: the org active, the repo enabled and in the installation.
+  if (
+    system.org.status !== "ACTIVE" ||
+    repo === null ||
+    !repo.enabled ||
+    repo.removedFromInstallationAt !== null
+  ) {
+    return;
+  }
   if (deps.githubApp === null) {
     log.warn("GitHub App isn't configured; skipping the flaky check");
     return;
   }
   const client = (await deps.githubApp.installation(target.installationId)).repo(repo.fullName);
+  /** The same workflow as the default branch has it: a risk there counts too. */
+  let defaultTip: string | null | undefined;
+  const defaultBranchRisk = async (path: string): Promise<string | null> => {
+    defaultTip ??= await client.getBranchSha(repo.defaultBranch);
+    if (defaultTip === null) return "default branch not found";
+    if (defaultTip === failure.headSha) return null;
+    const onDefault = await client.getFileAtRef(path, defaultTip);
+    if (onDefault === null) return null; // a workflow added by the branch: checked above
+    if (onDefault.kind !== "text") return "the default branch's workflow file is unreadable";
+    const risk = rerunRisk(onDefault.content);
+    return risk === null ? null : `on the default branch, ${risk}`;
+  };
   const workflows = new Map(
     (await system.workflows.listForRepo(repo.id)).map((w) => [w.githubWorkflowId, w]),
   );
@@ -67,10 +91,11 @@ export async function checkFlaky(
       skip("workflow uses an environment");
       continue;
     }
-    // The workflow as it ran, at the failing commit: a branch can add `environment:`.
+    // The workflow as it ran, at the failing commit (a branch can add a deploy job), and as the
+    // default branch has it (a pull_request run executes the branch merged into it).
     const file = await client.getFileAtRef(run.workflowPath, failure.headSha);
     const facts = file?.kind === "text" ? parseWorkflowYaml(file.content) : null;
-    if (facts === null) {
+    if (file?.kind !== "text" || facts === null) {
       skip("workflow file unreadable");
       continue;
     }
@@ -85,6 +110,11 @@ export async function checkFlaky(
         },
       ]);
       skip("workflow uses an environment");
+      continue;
+    }
+    const risk = rerunRisk(file.content) ?? (await defaultBranchRisk(run.workflowPath));
+    if (risk !== null) {
+      skip(risk);
       continue;
     }
 

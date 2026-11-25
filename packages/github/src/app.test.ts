@@ -561,14 +561,16 @@ describe("actions", () => {
     ]);
   });
 
-  it("re-runs a run's failed jobs, but never a fork's", async () => {
+  it("re-runs a run's failed jobs, but never a fork's or an untrusted trigger's", async () => {
     const reruns: string[] = [];
     mockServer.use(
       http.get(`${REPO}/actions/runs/:id`, ({ params }) =>
         HttpResponse.json(
           params.id === "98"
             ? run(98, { head_repository: { id: 999, full_name: "someone/app" } })
-            : run(99),
+            : params.id === "97"
+              ? run(97, { event: "pull_request_target" })
+              : run(99),
         ),
       ),
       http.post(`${REPO}/actions/runs/:id/rerun-failed-jobs`, ({ params }) => {
@@ -580,6 +582,7 @@ describe("actions", () => {
 
     await client.rerunFailedJobs(99n);
     await expect(client.rerunFailedJobs(98n)).rejects.toThrow(GuardError);
+    await expect(client.rerunFailedJobs(97n)).rejects.toThrow(GuardError);
 
     expect(reruns).toEqual(["99"]);
   });

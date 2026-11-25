@@ -1040,6 +1040,10 @@ describe("workflow_run (SPEC §2 step 4, §2.1)", () => {
     ["a run without a head repository (fails closed)", { head_repository: null }],
     ["a run on a PipeHeal branch", { head_branch: "pipeheal/abc123-1" }],
     ["a run of the healer workflow", { path: ".github/workflows/pipeheal.yml" }],
+    // These run in the base repo's context (head repo looks like ours) but can run fork code.
+    ["a pull_request_target run", { event: "pull_request_target" }],
+    ["a workflow_run-triggered run", { event: "workflow_run" }],
+    ["an issue_comment run", { event: "issue_comment" }],
   ])("ignores %s without calling GitHub", async (_case, run) => {
     const { deps, scheduled } = recordingDeps();
     const w = await watchedRepo(deps);

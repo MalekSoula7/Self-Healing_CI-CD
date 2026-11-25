@@ -19,7 +19,8 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 ];
 
 // user:password@ in any URL scheme; the host stays readable.
-const URL_CREDENTIALS = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]*:[^\s/@]*@/gi;
+// A scheme starts only after a non-scheme character (not \b: quadratic on long "a.a.a…" runs).
+const URL_CREDENTIALS = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]*:[^\s/@]*@/gi;
 
 // Query parameters that carry secrets (OAuth codes, pre-signed URL signatures, tokens).
 const SECRET_QUERY_PARAMS =

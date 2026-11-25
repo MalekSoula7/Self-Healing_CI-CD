@@ -137,7 +137,7 @@ Acceptance: on real GitHub, `break.ts` → PR opened → PR CI green → human m
 
 ## Phase 7: Metering & billing
 
-- [ ] **P7.1** `UsageRecord` roll-ups, budget UI, hard stops when budgets are hit (with a clear dashboard message).
+- [ ] **P7.1** `UsageRecord` roll-ups, budget UI, hard stops when budgets are hit (with a clear dashboard message). Includes a per-org budget for triage model calls, checked before each call (Phase 2 review H2; per-failure caps exist already).
 - [ ] **P7.2** **[HUMAN]** Stripe account. Then Checkout, Customer Portal, webhook handling, plan limits wired into policy caps.
 - [ ] **P7.3** Free tier limits.
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isCiLooking, parseWorkflowYaml } from "./workflow-yaml";
+import { isCiLooking, parseWorkflowYaml, rerunRisk } from "./workflow-yaml";
 
 function workflow(body: string): string {
   return `name: CI\n${body}`;
@@ -122,4 +122,31 @@ describe("isCiLooking", () => {
       expect(isCiLooking(workflow)).toBe(false);
     },
   );
+});
+
+describe("rerunRisk", () => {
+  const job = (body: string) => `on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n${body}`;
+
+  it("finds no risk in a plain CI workflow", () => {
+    expect(rerunRisk(job("  lint:\n    runs-on: ubuntu-latest\n    needs: test"))).toBeNull();
+  });
+
+  it.each([
+    ["an environment", job("  ship:\n    needs: test\n    environment: production"), /environment/],
+    [
+      "a reusable workflow call",
+      job("  ship:\n    needs: test\n    uses: ./.github/workflows/deploy.yml"),
+      /reusable workflow/,
+    ],
+    ["a deploy job by ID", job("  deploy:\n    needs: test\n    runs-on: ubuntu-latest"), /deploy/],
+    [
+      "a release job by name",
+      job("  ship:\n    name: Release to npm\n    needs: test\n    runs-on: ubuntu-latest"),
+      /deploy/,
+    ],
+    ["unparseable YAML", "on: [push\njobs: {", /doesn't parse/],
+    ["no jobs", "on: push\n", /no jobs/],
+  ])("refuses %s", (_label, content, reason) => {
+    expect(rerunRisk(content)).toMatch(reason);
+  });
 });

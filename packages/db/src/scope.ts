@@ -622,6 +622,13 @@ function buildSystemScope(ctx: ScopeContext) {
         });
       },
 
+      /** How many model calls this failure has cost so far (a per-failure cap, SPEC §13). */
+      async modelCallCount(failureId: string) {
+        const id = parseId(failureId);
+        if (id === null) return 0;
+        return db.modelCall.count({ where: { orgId, failureId: id } });
+      },
+
       /** Records one model call made for this failure, with its tokens and cost (SPEC §13). */
       async recordModelCall(failureId: string, input: ModelCallInput) {
         const id = requireId(failureId, "failure");

@@ -14,6 +14,7 @@ import {
   assertWritablePath,
   isHealBranch,
   parseFullName,
+  TRUSTED_RUN_EVENTS,
 } from "./guards";
 
 const id = z.number().int().positive().transform(BigInt);
@@ -506,8 +507,9 @@ export function repoClient(octokit: Octokit, fullName: string) {
 
     /** Re-runs the failed jobs of a run's latest attempt (flaky check, SPEC §6.2). Never forks. */
     async rerunFailedJobs(runId: bigint): Promise<void> {
-      if ((await getRun(runId)).fromFork) {
-        throw new GuardError("PipeHeal never re-runs code from forks");
+      const run = await getRun(runId);
+      if (run.fromFork || !TRUSTED_RUN_EVENTS.has(run.event)) {
+        throw new GuardError("PipeHeal never re-runs code from forks or untrusted triggers");
       }
       await octokit.request("POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs", {
         ...where,

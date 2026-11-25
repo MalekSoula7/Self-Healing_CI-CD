@@ -23,6 +23,7 @@ export {
 export {
   GuardError,
   HEALER_WORKFLOW_PATH,
+  TRUSTED_RUN_EVENTS,
   HEAL_BRANCH_PREFIX,
   assertBranchName,
   assertCommitMessage,

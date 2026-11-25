@@ -12,6 +12,7 @@ export type RedactionKind =
   | "github-token"
   | "api-key"
   | "aws-access-key"
+  | "webhook-url"
   | "assignment"
   | "high-entropy"
   | "other";
@@ -45,8 +46,9 @@ const whole =
     marker(kind);
 
 // Key names whose values are secrets, in `KEY=value`, `key: value`, `"key": "value"`, `--key=value`.
+// Not a bare `auth` or `key`: they would blank `author:` lines and every cache `key:`.
 const SECRET_KEY =
-  "(?:secret|passw(?:or)?d|pwd|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?|auth[_-]?key)";
+  "(?:secret|pass(?:w(?:or)?d|phrase)?|pwd|token|cookie|dsn|api[_-]?key|access[_-]?key|private[_-]?key|credentials?|auth[_-]?key|(?:signing|account|master|encryption|client|app|deploy|ssh)[_-]?key)";
 // A key, possibly quoted, not starting mid-word; then `=` or a single `:` (never `::`, as in
 // pytest node IDs like tests/test_token.py::test_refresh).
 const ASSIGNMENT = new RegExp(
@@ -65,7 +67,11 @@ const RULES: readonly Rule[] = [
   {
     // scheme://user:password@host keeps the user; scheme://TOKEN@host loses the token.
     kind: "url-credentials",
-    pattern: /\b([a-z][a-z0-9+.-]*:\/\/)(?:([^\s/@:]*):([^\s/@]+)|([A-Za-z0-9_-]{20,}))@/gi,
+    // The lookbehind (not \b) starts a scheme only after a non-scheme character: \b let every
+    // position of a long "a.a.a…" run start one, which is quadratic.
+    pattern:
+      // The password runs to the last `@` before the host (a password may contain `@`).
+      /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)(?:([^\s/@:]*):([^\s/]+)|([A-Za-z0-9_-]{20,}))@/gi,
     replace: (m) => {
       if (m.has(4)) return `${m.group(1)}${marker("url-credentials")}@`;
       if (isMarker(m.group(3))) return null;
@@ -102,11 +108,18 @@ const RULES: readonly Rule[] = [
     replace: whole("github-token"),
   },
   {
-    // Anthropic/OpenAI (sk-), npm, Slack, Stripe, Google API keys.
+    // Anthropic/OpenAI (sk-), npm, Slack, Stripe, Google, GitLab, Docker Hub API keys.
     kind: "api-key",
     pattern:
-      /\b(?:sk-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36,}|xox[abposr]-[A-Za-z0-9-]{10,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{35,})/g,
+      /\b(?:sk-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36,}|xox[abposr]-[A-Za-z0-9-]{10,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|AIza[0-9A-Za-z_-]{35,}|glpat-[A-Za-z0-9_-]{20,}|dckr_pat_[A-Za-z0-9_-]{20,})/g,
     replace: whole("api-key"),
+  },
+  {
+    // Incoming webhook URLs: the URL itself is the credential.
+    kind: "webhook-url",
+    pattern:
+      /https:\/\/(?:hooks\.slack\.com\/services\/[A-Za-z0-9]+\/[A-Za-z0-9]+\/[A-Za-z0-9]+|(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+)/g,
+    replace: whole("webhook-url"),
   },
   {
     kind: "aws-access-key",

@@ -1,11 +1,13 @@
 // Triage of one failed job's log (SPEC §6.2 steps 2-5): the failed step, cleaned and redacted,
 // its error window, and its signals. Pure.
-import { cleanLog } from "../logs/clean";
+import { capLongLines, cleanLog } from "../logs/clean";
 import { redactLog, type RedactionKind } from "../redact/redact";
+import { boundSignals, boundWindow } from "./bounds";
 import { extractSignals, type Signals } from "./signals";
 import { failedStepLog } from "./step";
 import { extractErrorWindow } from "./window";
 
+export { TRIAGE_LIMITS, boundSignals, boundWindow } from "./bounds";
 export { MAX_SIGNAL_ITEMS, extractSignals, repoPath } from "./signals";
 export type { Diagnostic, Location, Signals, Tool } from "./signals";
 export { failedStepLog } from "./step";
@@ -19,12 +21,18 @@ export interface TriagedLog {
   redactions: Partial<Record<RedactionKind, number>>;
 }
 
-/** Raw job log → the failed step → cleaned → redacted → error window and signals. */
+/**
+ * Raw job log → the failed step → cleaned → redacted → error window and signals, each bounded to
+ * what can be stored and prompted (TRIAGE_LIMITS).
+ */
 export function triageLog(raw: string, options: { failedStep?: string | null } = {}): TriagedLog {
-  const { text, redactions } = redactLog(cleanLog(failedStepLog(raw)));
+  // Redacted before long lines are cut: a cut can split a secret below what the rules recognize.
+  const redacted = redactLog(cleanLog(failedStepLog(raw), { capLines: false }));
+  const text = capLongLines(redacted.text);
+  const { redactions } = redacted;
   return {
-    window: extractErrorWindow(text),
-    signals: extractSignals(text, options.failedStep ?? null),
+    window: boundWindow(extractErrorWindow(text)),
+    signals: boundSignals(extractSignals(text, options.failedStep ?? null)),
     redactions,
   };
 }

@@ -12,6 +12,7 @@ import {
 } from "@pipeheal/db";
 import {
   HEALER_WORKFLOW_PATH,
+  TRUSTED_RUN_EVENTS,
   isHealBranch,
   type RepoClient,
   type WorkflowRunEvent,
@@ -85,6 +86,8 @@ async function resolveTarget(
   if (event.action !== "completed") return `action ${event.action}`;
   // Fail closed (CLAUDE.md): code that didn't come from the repository itself is never ours.
   if (run.fromFork) return "from a fork";
+  // Triggers that run in the base repository's context can execute a fork's code anyway.
+  if (!TRUSTED_RUN_EVENTS.has(run.event)) return `event ${run.event}`;
   // Runs on PipeHeal's own branches belong to an attempt (P5.3), never to a new failure.
   if (run.headBranch !== null && isHealBranch(run.headBranch)) return "PipeHeal branch";
   if (run.path === HEALER_WORKFLOW_PATH) return "the healer workflow";

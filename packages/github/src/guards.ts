@@ -12,6 +12,20 @@ export const HEAL_BRANCH_PREFIX = "pipeheal/";
 /** The healer workflow's fixed path (SPEC §5.3): its own runs are never failures to heal. */
 export const HEALER_WORKFLOW_PATH = ".github/workflows/pipeheal.yml";
 
+/**
+ * Trigger events whose runs execute the repository's own code. `pull_request_target`,
+ * `workflow_run`, `issue_comment` and the like run in the base repository's context, so their
+ * head repository looks like ours even when they check out a fork's code: PipeHeal never records,
+ * re-runs or heals those (CLAUDE.md: never act on forks).
+ */
+export const TRUSTED_RUN_EVENTS: ReadonlySet<string> = new Set([
+  "push",
+  "pull_request",
+  "merge_group",
+  "schedule",
+  "workflow_dispatch",
+]);
+
 const HEAL_BRANCH = /^pipeheal\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
 export function isHealBranch(branch: string): boolean {

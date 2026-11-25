@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   MAX_WINDOW_LINES,
+  TRIAGE_LIMITS,
+  boundWindow,
   extractErrorWindow,
   extractSignals,
   failedStepLog,
@@ -567,5 +569,105 @@ describe("triageLog", () => {
     expect(JSON.stringify(result)).not.toContain(token);
     expect(result.window).toContain("https://[redacted:url-credentials]@github.com/o/r");
     expect(result.redactions).toEqual({ "url-credentials": 1 });
+  });
+
+  it("cuts a window without line breaks too", () => {
+    const window = boundWindow("x".repeat(TRIAGE_LIMITS.windowChars + 10_000));
+
+    expect(window.length).toBeLessThanOrEqual(TRIAGE_LIMITS.windowChars);
+    expect(window).toMatch(/… \d+ characters omitted …/);
+  });
+
+  it("parses ESLint rows without a rule, and Vitest rows with timing brackets", () => {
+    const signals = extractSignals(
+      [
+        "/home/runner/work/r/r/src/a.ts",
+        "  3:5  error  Parsing error: Unexpected token )",
+        " FAIL  test/a.test.ts > adds [ 12ms ]",
+        " FAIL  test/b.test.ts [ test/b.test.ts ]",
+      ].join("\n"),
+      "Test",
+    );
+
+    expect(signals.diagnostics).toContainEqual(
+      expect.objectContaining({ tool: "eslint", message: "Parsing error: Unexpected token )" }),
+    );
+    expect(signals.diagnostics.find((d) => d.tool === "eslint")?.code).toBeUndefined();
+    expect(signals.failingTests).toEqual(["test/a.test.ts > adds", "test/b.test.ts"]);
+  });
+
+  it("redacts a secret that straddles the long-line cut", () => {
+    const token = "gh" + "p_" + "Rt5".repeat(12);
+    const raw = [
+      "##[group]Run x",
+      "##[endgroup]",
+      `${"x".repeat(1_990)} ${token} rest of the line`,
+      "##[error]Process completed with exit code 1.",
+    ].join("\n");
+
+    const { window } = triageLog(raw);
+
+    expect(window).not.toContain(token.slice(0, 8));
+    expect(window).toMatch(/more characters\]/);
+  });
+
+  // Adversarial shapes found by the Phase 2 security review (each took seconds before): a long
+  // run of scheme-like characters for the URL rules, and padded ESLint rows.
+  it.each([
+    ["5 MB of 'a.a.a…' lines", "a.".repeat(1_000), 2_500],
+    ["ESLint rows padded with spaces", `  1:1  error  x${" ".repeat(1_980)}!`, 2_500],
+    ["Vitest rows with brackets", `FAIL a.ts > ${" [ x".repeat(497)}`, 2_500],
+  ])("stays fast on %s", (_label, line, count) => {
+    const raw = `##[group]Run x\n##[endgroup]\n${`${line}\n`.repeat(count)}##[error]Process completed with exit code 1.`;
+
+    const started = performance.now();
+    triageLog(raw, { failedStep: "x" });
+
+    expect(performance.now() - started).toBeLessThan(1_500);
+  });
+
+  // Logs are untrusted and unbounded; what triage stores must always fit (TRIAGE_LIMITS mirrors
+  // packages/db's jobSignalsSchema and jobTriageInputSchema).
+  describe("bounds every field, whatever the log", () => {
+    function step(body: string): string {
+      return `##[group]Run x\n##[endgroup]\n${body}\n##[error]Process completed with exit code 1.`;
+    }
+
+    it("keeps a huge window within its character cap, its start and its end", () => {
+      const lines = Array.from({ length: 290 }, (_, i) => `${"x".repeat(1_990)}${String(i)}`);
+      const { window } = triageLog(step(lines.join("\n")));
+
+      expect(window.length).toBeLessThanOrEqual(TRIAGE_LIMITS.windowChars);
+      expect(window.startsWith("Run x")).toBe(true);
+      expect(window.endsWith("##[error]Process completed with exit code 1.")).toBe(true);
+      expect(window).toMatch(/… \d+ characters omitted …/);
+    });
+
+    it("caps test IDs, paths, line numbers and the failed step's name", () => {
+      const long = "a".repeat(1_500);
+      const { signals } = triageLog(
+        step(
+          [
+            `FAILED tests/${long}.py::test_x`,
+            `src/${"b".repeat(700)}.py:1: error: boom  [attr-defined]`,
+            "src/a.py:99999999999999999999: error: huge line  [attr-defined]",
+          ].join("\n"),
+        ),
+        { failedStep: "s".repeat(300) },
+      );
+
+      expect(signals.failedStep?.length).toBeLessThanOrEqual(TRIAGE_LIMITS.failedStep);
+      for (const id of signals.failingTests) {
+        expect(id.length).toBeLessThanOrEqual(TRIAGE_LIMITS.testId);
+      }
+      for (const item of [...signals.locations, ...signals.diagnostics]) {
+        expect(item.path?.length ?? 0).toBeLessThanOrEqual(TRIAGE_LIMITS.path);
+        expect(Number.isSafeInteger(item.line ?? 0)).toBe(true);
+      }
+      for (const diagnostic of signals.diagnostics) {
+        expect(diagnostic.message.length).toBeLessThanOrEqual(TRIAGE_LIMITS.message);
+        expect(diagnostic.code?.length ?? 0).toBeLessThanOrEqual(TRIAGE_LIMITS.code);
+      }
+    });
   });
 });

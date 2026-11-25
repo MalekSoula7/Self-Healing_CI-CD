@@ -22,7 +22,12 @@ export type {
   TriageCategory,
   WebhookDeliveryInput,
 } from "./inputs";
-export { failureStatusSchema, jobSignalsSchema, recentChangesRecordSchema } from "./inputs";
+export {
+  failureStatusSchema,
+  jobSignalsSchema,
+  jobTriageInputSchema,
+  recentChangesRecordSchema,
+} from "./inputs";
 export {
   installations,
   type Installations,

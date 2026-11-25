@@ -23,7 +23,7 @@ When a failure can't or shouldn't be fixed by a code change (infrastructure, mis
 1. Customer installs the PipeHeal GitHub App on selected repos (organization or personal account), chooses which workflows PipeHeal watches (§11), and commits the healer workflow (§5.3) to the default branch at `.github/workflows/pipeheal.yml`.
 2. A run fails. GitHub sends `workflow_run` (`action=completed`, `conclusion=failure`) to our webhook.
 3. `apps/web` verifies `X-Hub-Signature-256`, records `X-GitHub-Delivery` for idempotency, enqueues a job, responds quickly (GitHub times out webhooks after ~10s).
-4. `apps/worker` filters: repo enabled, workflow selected for this repo (§2.1), not from a fork, branch not `pipeheal/*`, workflow is not the healer. It then creates or updates the `PipelineFailure` for this repo + head SHA and attaches the run to it (§2.1).
+4. `apps/worker` filters: repo enabled, workflow selected for this repo (§2.1), not from a fork, triggered by an event that runs the repository's own code (`push`, `pull_request`, `merge_group`, `schedule`, `workflow_dispatch`; never `pull_request_target`, `workflow_run` or comment triggers, which run in the base repo's context and can check out fork code), branch not `pipeheal/*`, workflow is not the healer. It then creates or updates the `PipelineFailure` for this repo + head SHA and attaches the run to it (§2.1).
 5. When the collection window closes (§2.1), triage (§6) runs for every failed job: download logs, clean, redact, extract the error window, classify. Re-run failed jobs once to detect flakiness when the rules in §6.2 step 8 allow it.
 6. Scope and budget check against the effective policy (§8). Out of scope or non-healable: stop at diagnosis.
 7. Dispatch: create a `HealAttempt`, trigger the healer workflow via `workflow_dispatch` on the **default branch** with inputs `job_id` and `target_sha`.
@@ -241,7 +241,8 @@ It returns an opaque random session token (stored hashed, TTL 45 min, bound to t
 8. Flaky check (policy `retryBeforeHeal`, default on): re-run failed jobs once (`rerun-failed-jobs`, never the whole run). If they pass, mark `flaky`, stop. Guards, because a re-run spends the customer's CI minutes and can deploy:
    - only for workflows selected for the repo (§2.1);
    - at most once per run;
-   - never for a workflow in which any job declares `environment:`, detected by parsing the workflow file at the run's head SHA and cached as `RepoWorkflow.usesEnvironment`.
+   - never for a workflow that could deploy. `rerun-failed-jobs` also re-runs the jobs that depend on the failed ones, so the whole file counts: no job may declare `environment:`, call a reusable workflow (job-level `uses:`, whose content isn't in the file), or have a deploy/release/publish-like ID or name. Checked at the run's head SHA and on the default branch (a `pull_request` run executes the merge); unreadable or unparseable means no re-run. `environment:` is cached as `RepoWorkflow.usesEnvironment`.
+   - only for runs of trusted trigger events (step 4 of §2), while the org is active and the repo enabled.
 
 ---
 
@@ -532,6 +533,7 @@ RBAC: OWNER (billing, members, everything), ADMIN (policy, repos, manual heal), 
 
 - Record tokens and cost per model call; roll up into `UsageRecord`.
 - Enforce before dispatch (monthly org budget, plan limits) and during the loop (per-attempt cap).
+- Triage: at most 8 model calls per failure (retries included), each prompt capped (40,000 characters of log); the model's confidence is capped below the heuristics' so a log can't talk it into outranking them. A monthly per-org triage budget comes with P7.1.
 - Billing (Phase 7): Stripe Checkout + Customer Portal + webhooks; plans by heal attempts per month and number of repos; free tier with low caps. Pricing TBD.
 
 ---
