@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./logger": "./src/logger.ts",
+    "./repo-path": "./src/repo-path.ts",
     "./testing": "./src/testing/index.ts"
   },
   "scripts": {

@@ -620,3 +620,14 @@ Newest entry at the bottom. One entry per task. Format:
 - Tests: 11, including three fast-check properties (never looser than the guardrails or the repo file, over 500 random layer sets; adding a tightening layer never loosens; limits within plan maximums). Policy: 53 tests. Full suite 1,090.
 - Raised (SPEC §15): `.pipeheal.yml` can declare custom rules, so a `judge` rule's text comes from anyone who can push; the P4.7 judge must treat it as untrusted data.
 - `policy-red-team`: still deferred to P3.6, once the checks exist to attack; the merge's properties are covered by the fast-check tests.
+
+## 2026-11-25 · P3.4 (1/3) · Static checks: paths, invariants, size
+
+P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) test-integrity checks (test edits, skip markers, suppressions, early exits, assertion reduction); (3) protected configs and dependencies. The PLAN box is ticked after the third.
+- Done (tests and fixtures first):
+  - `@pipeheal/shared/repo-path` (pure): `repoPathProblem`, `writablePathProblem` (moved from `packages/github`'s guards, which now wrap them) and `canonicalPath`, the file a path is on case-insensitive Windows and macOS checkouts.
+  - `packages/policy/src/glob.ts`: our own matcher, no picomatch. Globs come from `.pipeheal.yml`, which anyone who can push edits, so no regular expressions built from them (a backtracking glob is O(n·m), checked by a test) and braces bounded at 64 alternatives (`globSchema` refuses more). Dotfiles match. `matchAnywhere` (deny, test globs, invariants) also matches the canonical path; `matchExact` (allow lists) doesn't, so `SRC/x` is outside `src/**`.
+  - `checkChanges(changes, policy)` and `Violation { ruleId, path?, line?, message, hint }`. Checks: `invariants` (INV-GITHUB-DIR, INV-PATH, INV-SECRETS, INV-FILE-TYPES, INV-TEST-DELETE, on old and new paths), `paths` (deny and every allow list, on old and new paths), `size`.
+  - Fixtures as TypeScript data in `packages/policy/fixtures/` (the package does no I/O): each runs through every check, so an allowed fixture also proves nothing else fires.
+- Decision (mine, SPEC §8.2): new invariant **INV-PATH** for paths the GitHub client would refuse anyway (`.git`, `.gitmodules`, Windows-reserved names, code points macOS ignores), so the policy reports them to the agent instead of the upload failing late.
+

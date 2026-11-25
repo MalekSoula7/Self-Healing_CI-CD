@@ -5,6 +5,7 @@
 // Both are strict: an unknown key (a typo) is an error, never silently ignored, because an ignored
 // key could leave a rule looser than its author meant.
 import { z } from "zod";
+import { MAX_GLOB_ALTERNATIVES, compileGlob } from "./glob";
 import { deepFreeze } from "./invariants";
 
 /** SPEC §6.1's categories PipeHeal may try to heal; the others are diagnosed only. */
@@ -44,7 +45,7 @@ function hasControlCharacter(value: string): boolean {
 }
 
 /**
- * A repo-relative POSIX glob (matching semantics: P3.4). Never absolute, never above the repo
+ * A repo-relative POSIX glob (matching semantics: glob.ts). Never absolute, never above the repo
  * root, never Windows-style: those could never match a repo path, so they'd silently do nothing.
  */
 export const globSchema = z
@@ -59,6 +60,10 @@ export const globSchema = z
       !glob.split("/").includes("..") &&
       !hasControlCharacter(glob),
     "must be a repository-relative POSIX glob (no leading /, ./, .., or backslash)",
+  )
+  .refine(
+    (glob) => compileGlob(glob) !== null,
+    `braces must expand to at most ${String(MAX_GLOB_ALTERNATIVES)} alternatives`,
   );
 const globs = z.array(globSchema).max(MAX_GLOBS);
 

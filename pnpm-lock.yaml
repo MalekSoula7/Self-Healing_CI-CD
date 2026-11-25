@@ -283,6 +283,9 @@ importers:
 
   packages/policy:
     dependencies:
+      '@pipeheal/shared':
+        specifier: workspace:*
+        version: link:../shared
       zod:
         specifier: 'catalog:'
         version: 4.6.5

@@ -7,6 +7,7 @@ import {
   INVARIANTS,
   INVARIANT_PATHS,
   LIMIT_CAPS,
+  globSchema,
   policyLayerSchema,
   policyRulesSchema,
   type PolicyRules,
@@ -198,12 +199,20 @@ describe("policyLayerSchema", () => {
     expect(policyLayerSchema.safeParse({ paths: { deny: ["../x"] } }).success).toBe(false);
     expect(policyLayerSchema.safeParse({ unknown: true }).success).toBe(false);
   });
+
+  it("refuses a glob whose braces expand past the matcher's bound", () => {
+    const tooMany = "{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}";
+
+    expect(globSchema.safeParse(tooMany).success).toBe(false);
+    expect(globSchema.safeParse("src/{a,b}/**").success).toBe(true);
+  });
 });
 
 describe("invariants (SPEC §8.2)", () => {
   it("lists every invariant once, with a description", () => {
     expect(INVARIANTS.map((invariant) => invariant.id)).toEqual([
       "INV-GITHUB-DIR",
+      "INV-PATH",
       "INV-SECRETS",
       "INV-FILE-TYPES",
       "INV-TEST-DELETE",

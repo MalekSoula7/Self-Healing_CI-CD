@@ -4,6 +4,7 @@
 
 export type InvariantId =
   | "INV-GITHUB-DIR"
+  | "INV-PATH"
   | "INV-SECRETS"
   | "INV-FILE-TYPES"
   | "INV-TEST-DELETE"
@@ -26,6 +27,11 @@ export function deepFreeze<T>(value: T): T {
 
 export const INVARIANTS: readonly Invariant[] = deepFreeze([
   { id: "INV-GITHUB-DIR", description: "No changes under .github/." },
+  {
+    id: "INV-PATH",
+    description:
+      "Every path is safe to check out everywhere: no .git or .gitmodules, no name Windows or macOS would read differently.",
+  },
   {
     id: "INV-SECRETS",
     description: "No changes to .env files, keys, certificates or secrets directories.",

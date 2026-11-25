@@ -1,6 +1,7 @@
 // Product invariants (CLAUDE.md), enforced in the GitHub client itself, below the policy engine:
 // whatever calls these wrappers, the App can only write to its own `pipeheal/*` branches, never
 // force-pushes, never touches `.github/`, and has no way to merge. Repo paths are POSIX strings.
+import { repoPathProblem, writablePathProblem } from "@pipeheal/shared/repo-path";
 
 export class GuardError extends Error {
   override readonly name = "GuardError";
@@ -43,55 +44,17 @@ export function assertHealBranch(branch: string): void {
  * Windows paths, no control characters.
  */
 export function assertRepoPath(path: string): void {
-  const segments = path.split("/");
-  const invalid =
-    path.length === 0 ||
-    path.length > 4096 ||
-    path.includes("\\") ||
-    /^[A-Za-z]:/.test(path) ||
-    hasControlCharacter(path) ||
-    segments.some((segment) => segment === "" || segment === "." || segment === "..");
-  if (invalid) throw new GuardError("not a repository-relative POSIX path");
+  const problem = repoPathProblem(path);
+  if (problem !== null) throw new GuardError(problem);
 }
 
-// Code points macOS (HFS+) ignores in file names, so ".git\u200c" is ".git" there.
-const HFS_IGNORABLE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u206a-\u206f\ufeff]/;
-// Names Windows reserves (any extension), and characters it refuses.
-const WINDOWS_RESERVED =
-  /^(con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])(\..*)?$/i;
-const WINDOWS_INVALID_CHARS = /[<>:"|?*]/;
-
 /**
- * A path the App may write, checked the way git protects checkouts (verify_path with
- * protectNTFS and protectHFS), since customers check PipeHeal's branches out on Windows and
- * macOS:
- * - never under `.github/` (INV-GITHUB-DIR; GitHub itself only blocks `.github/workflows/` for
- *   Apps without the Workflows permission), including its Windows 8.3 alias `GITHUB~1`;
- * - never a `.git` directory or `.gitmodules` file, at any depth;
- * - no name Windows can't check out (reserved names, trailing dot or space, `<>:"|?*`), and no
- *   code point macOS ignores.
- * Compared case-insensitively: Windows and macOS checkouts are case-insensitive.
+ * A path the App may write (`writablePathProblem` in `@pipeheal/shared/repo-path`): never under
+ * `.github/` or a `.git` directory, and safe to check out on Windows and macOS.
  */
 export function assertWritablePath(path: string): void {
-  assertRepoPath(path);
-  const segments = path.split("/");
-  const [first = ""] = segments;
-  if (/^(\.github|github~\d+)$/i.test(first)) {
-    throw new GuardError("the App never writes under .github/");
-  }
-  for (const segment of segments) {
-    if (/^(\.git|git~\d+|\.gitmodules)$/i.test(segment)) {
-      throw new GuardError("the App never writes .git or .gitmodules");
-    }
-    if (
-      HFS_IGNORABLE.test(segment) ||
-      WINDOWS_RESERVED.test(segment) ||
-      WINDOWS_INVALID_CHARS.test(segment) ||
-      /[. ]$/.test(segment)
-    ) {
-      throw new GuardError("the path can't be checked out safely on Windows or macOS");
-    }
-  }
+  const problem = writablePathProblem(path);
+  if (problem !== null) throw new GuardError(problem);
 }
 
 /** A branch name safe to pass to GitHub (the healer's `ref`, a PR base). */
@@ -119,14 +82,6 @@ export function assertCommitMessage(message: string): void {
     throw new GuardError("a commit message must be 1 to 10000 characters");
   }
   if (SKIP_CI.test(message)) throw new GuardError("a fix's commit must not skip CI");
-}
-
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code < 0x20 || code === 0x7f) return true;
-  }
-  return false;
 }
 
 /** `owner/name` of a GitHub repository. */

@@ -347,6 +347,7 @@ Invariants (§8.2) aren't a layer: code enforces them whatever the policy says. 
 
 ### 8.2 Invariants (hard-coded, not configurable)
 - `INV-GITHUB-DIR`: no changes under `.github/**`
+- `INV-PATH`: every path is safe to check out everywhere: no `.git` or `.gitmodules` at any depth, no name Windows reserves or would read differently (trailing dot or space, `<>:"|?*`), no code point macOS ignores (git's protectNTFS/protectHFS; `@pipeheal/shared/repo-path`, also enforced by the GitHub client)
 - `INV-SECRETS`: no changes to `.env*`, `**/*.pem`, `**/*.key`, `**/secrets/**`, `**/*.p12`
 - `INV-FILE-TYPES`: no binary files, symlinks, submodule changes, or file-mode changes
 - `INV-TEST-DELETE`: no deletion or rename-away of test files
@@ -420,7 +421,9 @@ An override replaces each value its layer sets. Tightening, field by field:
 Property-based tests (fast-check) prove that the effective policy is never looser than the repo file or the org guardrails, whatever the other layers say; that adding a tightening layer never loosens it; and that limits stay within plan maximums. `looserThan(policy, layer)` lists the fields where a policy is looser than a layer.
 
 ### 8.5 Static checks (on diffs the server recomputed from full old/new file contents)
-Each check reads `Change { path, oldPath, status, oldKind, newKind, isBinary, modeChanged, oldContent, newContent, hunks, addedLines, removedLines }` (P3.2: `oldKind`/`newKind` say whether each side is absent, text, binary, a symlink or a submodule, for INV-FILE-TYPES) and returns `Violation { ruleId, path, line?, message, hint }`.
+Each check reads `Change { path, oldPath, status, oldKind, newKind, isBinary, modeChanged, oldContent, newContent, hunks, addedLines, removedLines }` (P3.2: `oldKind`/`newKind` say whether each side is absent, text, binary, a symlink or a submodule, for INV-FILE-TYPES) and returns `Violation { ruleId, path?, line?, message, hint }`. `ruleId` is an invariant or the policy field broken (`paths.deny`, `limits.maxFilesChanged`); `path` is absent for whole-change rules (size); `hint` tells the agent what to do instead. `checkChanges(changes, policy)` runs them all.
+
+Globs (P3.4, `glob.ts`): `**` as a whole segment matches zero or more segments, `*` and `?` never cross `/`, both match dotfiles; `[...]` classes and nested `{a,b}` braces, at most 64 alternatives (the schema refuses more). Globs come from `.pipeheal.yml`, so matching never compiles them to regular expressions. Deny globs, test globs and invariants also match the file a path is on a case-insensitive Windows or macOS checkout (`canonicalPath`: NFC, lowercase, without code points macOS ignores or the trailing dots and spaces Windows drops, 8.3 aliases such as `GITHUB~1` spelled out); allow globs match only as written, so they never let more through.
 - **Paths**: deny/allow globs on both old and new paths (renames count as both).
 - **Protected configs**: any change to protected files; section-aware for `pyproject.toml` and `package.json` (dependency sections are governed by the dependency rules instead).
 - **Test edits**: in `source_only` mode, any change to a test file is a violation.

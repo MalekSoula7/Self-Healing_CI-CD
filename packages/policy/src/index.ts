@@ -38,3 +38,12 @@ export {
   type Provenance,
   type ScopeGlobs,
 } from "./merge";
+export {
+  MAX_GLOB_ALTERNATIVES,
+  compileGlob,
+  globList,
+  globMatches,
+  type CompiledGlob,
+  type GlobList,
+} from "./glob";
+export { checkChanges, type Violation } from "./checks";
