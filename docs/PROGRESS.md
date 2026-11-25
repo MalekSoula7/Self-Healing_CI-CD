@@ -631,3 +631,15 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - Fixtures as TypeScript data in `packages/policy/fixtures/` (the package does no I/O): each runs through every check, so an allowed fixture also proves nothing else fires.
 - Decision (mine, SPEC §8.2): new invariant **INV-PATH** for paths the GitHub client would refuse anyway (`.git`, `.gitmodules`, Windows-reserved names, code points macOS ignores), so the policy reports them to the agent instead of the upload failing late.
 
+## 2026-11-25 · P3.4 (2/3) · Static checks: test integrity
+
+- Done (fixtures first, `packages/policy/fixtures/tests.ts` and `suppressions.ts`):
+  - `source.ts`: `stripCode` blanks comments and string contents, keeping offsets and line breaks (JS/TS: quotes, nested template literals, regular expressions told from division; Python: `#`, single and triple-quoted strings). `addedLines(change)` with new-content line numbers.
+  - Checks: `test-edits` (tests.mode), `skips` (skip markers and early exits, both `tests.forbidSkips`), `assertions` (assertion and test-function counts, old vs new), `suppressions` (raw added lines, any file). SPEC §8.5 lists every pattern.
+- Choices (mine, in SPEC §8.5):
+  - Early exits are reported as `tests.forbidSkips`: a `return` with more code after it at the same indentation, `return; x()` on one line, dead conditions. Not limited to "the start of a test body", since a return halfway is the same trick.
+  - Skip markers are read only in test files: `.skip(` is ordinary in source code (query builders).
+  - `xit`/`fit` still count as tests, so a skipped test is reported once (as a skip), not also as a lost test.
+  - A changed line that already carried a suppression counts as added; comparing old and new comments would let a suppression move to a new line unnoticed.
+- Tests: policy 232, coverage 99.6% statements, 96.2% branches.
+

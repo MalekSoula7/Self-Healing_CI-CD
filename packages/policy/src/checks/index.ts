@@ -2,14 +2,26 @@
 import type { Change } from "../diff";
 import { globList } from "../glob";
 import type { EffectivePolicy } from "../merge";
+import { checkAssertions } from "./assertions";
 import { checkInvariants } from "./invariants";
 import { checkPaths } from "./paths";
 import { checkSize } from "./size";
+import { checkSkips } from "./skips";
+import { checkSuppressions } from "./suppressions";
+import { checkTestEdits } from "./test-edits";
 import type { Check, Violation } from "./types";
 
 export type { Violation } from "./types";
 
-const CHECKS: readonly Check[] = [checkInvariants, checkPaths, checkSize];
+const CHECKS: readonly Check[] = [
+  checkInvariants,
+  checkPaths,
+  checkSize,
+  checkTestEdits,
+  checkSkips,
+  checkAssertions,
+  checkSuppressions,
+];
 
 /** Every rule the changes break under `policy`; empty when they pass. */
 export function checkChanges(changes: readonly Change[], policy: EffectivePolicy): Violation[] {

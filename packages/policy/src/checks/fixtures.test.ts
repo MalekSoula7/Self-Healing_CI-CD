@@ -4,10 +4,20 @@ import { describe, expect, it } from "vitest";
 import { invariants } from "../../fixtures/invariants";
 import { paths } from "../../fixtures/paths";
 import { size } from "../../fixtures/size";
+import { suppressions } from "../../fixtures/suppressions";
+import { assertions, skips, testEdits } from "../../fixtures/tests";
 import type { FixtureFamily, PolicyFixture } from "../../fixtures/types";
 import { buildChange, checkChanges, effectivePolicy, type Violation } from "../index";
 
-const FAMILIES: Record<string, FixtureFamily> = { invariants, paths, size };
+const FAMILIES: Record<string, FixtureFamily> = {
+  invariants,
+  paths,
+  size,
+  testEdits,
+  skips,
+  assertions,
+  suppressions,
+};
 
 function check(fixture: PolicyFixture): Violation[] {
   const { policy } = effectivePolicy(fixture.policy === undefined ? {} : { repo: fixture.policy });
