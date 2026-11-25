@@ -67,10 +67,15 @@ const openPacing: InstallationPacing = {
 
 function deps(overrides: Partial<FailuresDeps> = {}) {
   const triaged: { target: FailureTarget; key: string | undefined }[] = [];
+  const recentChanges: FailureTarget[] = [];
   const jobs: FailureJobs = {
     scheduleWindowClose: () => Promise.resolve(),
     enqueueTriage: (target, key) => {
       triaged.push({ target, key });
+      return Promise.resolve();
+    },
+    enqueueRecentChanges: (target) => {
+      recentChanges.push(target);
       return Promise.resolve();
     },
   };
@@ -83,11 +88,11 @@ function deps(overrides: Partial<FailuresDeps> = {}) {
     triageModel: null,
     ...overrides,
   };
-  return { deps: all, triaged };
+  return { deps: all, triaged, recentChanges };
 }
 
 /** An org with a repo and a failure with one failed job; its window still open. */
-async function openFailure() {
+async function openFailure(options: { headBranch?: string | null } = {}) {
   const login = `org-${randomUUID().slice(0, 8)}`;
   const installationId = githubId();
   const org = await installations(db, "test").upsert({
@@ -104,7 +109,7 @@ async function openFailure() {
   const githubJobId = githubId();
   const { failure, run } = await system.failures.recordFailedRun(repo.id, {
     headSha: "a".repeat(40),
-    headBranch: "main",
+    headBranch: options.headBranch === undefined ? "main" : options.headBranch,
     runId: githubId(),
     runAttempt: 1,
     workflowId: 1n,
@@ -115,7 +120,14 @@ async function openFailure() {
     jobs: [{ githubJobId, name: "check", failedStep: "Typecheck", htmlUrl: null }],
   });
   const target: FailureTarget = { orgId: org.id, failureId: failure.id, installationId };
-  return { target, repoFullName: repo.fullName, githubJobId, failedRunId: run.id };
+  return {
+    target,
+    system,
+    repoId: repo.id,
+    repoFullName: repo.fullName,
+    githubJobId,
+    failedRunId: run.id,
+  };
 }
 
 function mockToken() {
@@ -474,5 +486,349 @@ describe("failureJobs", () => {
     await expect(queue.getJob(`triage-${t.failureId}-123-1`)).resolves.toBeDefined();
     const waiting = await queue.getWaiting();
     expect(waiting.filter((j) => j.data.failureId === t.failureId)).toHaveLength(2);
+  });
+
+  it("queues the recent changes once per failure", async () => {
+    const t = target();
+    const jobs = failureJobs(queue);
+
+    await jobs.enqueueRecentChanges(t);
+    await jobs.enqueueRecentChanges(t);
+
+    const job = await queue.getJob(`recent-changes-${t.failureId}`);
+    expect(job?.name).toBe("recent-changes");
+    const waiting = await queue.getWaiting();
+    expect(waiting.filter((j) => j.data.failureId === t.failureId)).toHaveLength(1);
+  });
+});
+
+describe("recent-changes job (SPEC §6.2 step 7)", () => {
+  const HEAD = "a".repeat(40);
+  const GREEN = "b".repeat(40);
+  const LATER = "c".repeat(40);
+  const TIP = "d".repeat(40);
+
+  function recentChangesJob(target: FailureTarget) {
+    return {
+      name: "recent-changes",
+      data: { ...target, installationId: String(target.installationId) },
+    };
+  }
+
+  function greenRun(id: number, headSha: string, branch: string, forkRepoId?: number) {
+    return {
+      id,
+      run_attempt: 1,
+      workflow_id: 1,
+      name: "CI",
+      path: ".github/workflows/ci.yml",
+      head_sha: headSha,
+      head_branch: branch,
+      event: "push",
+      status: "completed",
+      conclusion: "success",
+      html_url: `https://github.com/x/y/actions/runs/${String(id)}`,
+      repository: { id: 1, full_name: "x/y" },
+      head_repository: { id: forkRepoId ?? 1, full_name: "x/y" },
+    };
+  }
+
+  function comparison(status: string, files: object[], totalCommits = 1) {
+    return {
+      status,
+      ahead_by: totalCommits,
+      behind_by: 0,
+      total_commits: totalCommits,
+      commits: Array.from({ length: totalCommits }, (_, i) => ({
+        sha: String(i + 1)
+          .repeat(40)
+          .slice(0, 40),
+        commit: { message: `fix: change ${String(i + 1)}\n\nbody` },
+        author: { login: "dev" },
+      })),
+      files,
+    };
+  }
+
+  const RECEIPT_PATCH = [
+    "@@ -1,2 +1,2 @@",
+    `-import { lineTotal } from "./cart";`,
+    `+import { lineTotals } from "./cart";`,
+    " const x = 1;",
+  ].join("\n");
+
+  /**
+   * GitHub for this repo: green runs per workflow and branch, comparisons per base SHA (a number
+   * is an error status), the default branch's tip. Records the calls made.
+   */
+  function mockRepo(
+    fullName: string,
+    options: {
+      greenRuns?: Record<string, ReturnType<typeof greenRun>[]>;
+      comparisons?: Record<string, ReturnType<typeof comparison> | number>;
+      tip?: string | null;
+    },
+  ) {
+    const calls: string[] = [];
+    const api = `https://api.github.com/repos/${fullName}`;
+    github.use(
+      http.get(`${api}/actions/workflows/:workflowId/runs`, ({ request, params }) => {
+        const branch = new URL(request.url).searchParams.get("branch") ?? "";
+        calls.push(`runs ${String(params.workflowId)} ${branch}`);
+        const runs = options.greenRuns?.[`${String(params.workflowId)} ${branch}`] ?? [];
+        return HttpResponse.json({ total_count: runs.length, workflow_runs: runs });
+      }),
+      http.get(`${api}/compare/:basehead`, ({ params }) => {
+        const base = String(params.basehead).split("...")[0] ?? "";
+        calls.push(`compare ${base.slice(0, 7)}`);
+        const answer = options.comparisons?.[base];
+        if (answer === undefined || typeof answer === "number") {
+          return HttpResponse.json({ message: "Not Found" }, { status: answer ?? 404 });
+        }
+        return HttpResponse.json(answer);
+      }),
+      http.get(`${api}/git/ref/*`, () => {
+        calls.push("tip");
+        return options.tip === undefined || options.tip === null
+          ? HttpResponse.json({ message: "Not Found" }, { status: 404 })
+          : HttpResponse.json({ ref: "refs/heads/main", object: { sha: options.tip } });
+      }),
+    );
+    return calls;
+  }
+
+  async function storedChanges(failureId: string) {
+    const failure = await db.pipelineFailure.findUniqueOrThrow({ where: { id: failureId } });
+    return failure.recentChanges;
+  }
+
+  it("is queued by triage once the jobs are classified", async () => {
+    const { target, repoFullName, githubJobId } = await openFailure();
+    mockToken();
+    mockLog(repoFullName, githubJobId, LOG);
+    const { deps: d, recentChanges } = deps();
+
+    await processFailuresJob({ name: "triage", data: recentChangesJob(target).data }, d);
+
+    expect(recentChanges).toEqual([target]);
+  });
+
+  it("compares with the workflow's last green run on the same branch, named files first, redacted", async () => {
+    const { target, system, repoFullName, failedRunId } = await openFailure({
+      headBranch: "feature/x",
+    });
+    const job = await jobOf(failedRunId);
+    await system.failures.recordJobTriage(job.id, {
+      errorWindow: "error TS2305",
+      signals: {
+        failedStep: "Typecheck",
+        exitCode: 2,
+        tools: ["tsc"],
+        diagnostics: [],
+        failingTests: [],
+        locations: [{ path: "src/receipt.ts", line: 1 }],
+        errorCodes: ["TS2305"],
+      },
+    });
+    mockToken();
+    const calls = mockRepo(repoFullName, {
+      greenRuns: {
+        "1 feature/x": [
+          greenRun(30, HEAD, "feature/x"), // the failing commit itself (another event): skipped
+          greenRun(29, LATER, "feature/x"), // after the failing commit: skipped
+          greenRun(28, "e".repeat(40), "feature/x", 999), // a fork's: never compared
+          greenRun(27, GREEN, "feature/x"),
+        ],
+      },
+      comparisons: {
+        [LATER]: comparison("behind", []),
+        [GREEN]: comparison(
+          "ahead",
+          [
+            {
+              filename: "README.md",
+              status: "modified",
+              additions: 1,
+              deletions: 0,
+              patch: `@@ -1 +1 @@\n+export TOKEN=${PLANTED_TOKEN}`,
+            },
+            {
+              filename: "src/receipt.ts",
+              status: "modified",
+              additions: 1,
+              deletions: 1,
+              patch: RECEIPT_PATCH,
+            },
+          ],
+          2,
+        ),
+      },
+    });
+
+    await processFailuresJob(recentChangesJob(target), deps().deps);
+
+    expect(calls).toEqual([
+      "runs 1 feature/x",
+      `compare ${LATER.slice(0, 7)}`,
+      `compare ${GREEN.slice(0, 7)}`,
+    ]);
+    const stored = await storedChanges(target.failureId);
+    expect(stored).toMatchObject({
+      base: { sha: GREEN, source: "same-branch", branch: "feature/x", runId: "27" },
+      changes: {
+        totalCommits: 2,
+        commits: [
+          { subject: "fix: change 1", authorLogin: "dev" },
+          { subject: "fix: change 2", authorLogin: "dev" },
+        ],
+        files: [
+          { path: "src/receipt.ts", priority: true, patchState: "full", patch: RECEIPT_PATCH },
+          { path: "README.md", priority: false, patchState: "full" },
+        ],
+      },
+    });
+    const audit = await db.auditLog.findFirstOrThrow({
+      where: { orgId: target.orgId, action: "failure.recent_changes" },
+    });
+    expect(audit.metadata).toMatchObject({ baseSha: GREEN, source: "same-branch", files: 2 });
+    const everything = JSON.stringify(stored) + JSON.stringify(audit);
+    expect(everything).not.toContain(PLANTED_TOKEN);
+    expect(JSON.stringify(stored)).toContain("[redacted:");
+  });
+
+  it("falls back to the default branch's last green run, even when the branch diverged from it", async () => {
+    const { target, repoFullName } = await openFailure({ headBranch: "feature/x" });
+    mockToken();
+    mockRepo(repoFullName, {
+      greenRuns: { "1 main": [greenRun(40, GREEN, "main")] },
+      comparisons: { [GREEN]: comparison("diverged", []) },
+    });
+
+    await processFailuresJob(recentChangesJob(target), deps().deps);
+
+    expect(await storedChanges(target.failureId)).toMatchObject({
+      base: { sha: GREEN, source: "default-branch", branch: "main", runId: "40" },
+    });
+  });
+
+  it("uses the merge base with the default branch when no green run exists", async () => {
+    const { target, repoFullName } = await openFailure({ headBranch: "feature/x" });
+    mockToken();
+    const calls = mockRepo(repoFullName, {
+      tip: TIP,
+      comparisons: { [TIP]: comparison("diverged", [], 3) },
+    });
+
+    await processFailuresJob(recentChangesJob(target), deps().deps);
+
+    expect(calls).toEqual(["runs 1 feature/x", "runs 1 main", "tip", `compare ${TIP.slice(0, 7)}`]);
+    expect(await storedChanges(target.failureId)).toMatchObject({
+      base: { sha: TIP, source: "merge-base", branch: "main", runId: null },
+      changes: { totalCommits: 3 },
+    });
+  });
+
+  it("records that there's no base when nothing comes before the failing commit", async () => {
+    const { target, repoFullName } = await openFailure({ headBranch: "main" });
+    mockToken();
+    // On the default branch, its tip is the failing commit itself: nothing to compare.
+    const calls = mockRepo(repoFullName, { tip: HEAD });
+
+    await processFailuresJob(recentChangesJob(target), deps().deps);
+
+    expect(calls).toEqual(["runs 1 main", "tip"]);
+    expect(await storedChanges(target.failureId)).toMatchObject({ base: null });
+    const audit = await db.auditLog.findFirstOrThrow({
+      where: { orgId: target.orgId, action: "failure.recent_changes" },
+    });
+    expect(audit.metadata).toMatchObject({ base: null });
+  });
+
+  it("skips green commits it can't use, and stops after three comparisons per branch", async () => {
+    const { target, repoFullName } = await openFailure({ headBranch: "feature/x" });
+    mockToken();
+    const [gone, behind, same, fourth] = ["1", "2", "3", "4"].map((c) => c.repeat(40));
+    const calls = mockRepo(repoFullName, {
+      greenRuns: {
+        "1 feature/x": [gone, behind, same, fourth].map((sha, i) =>
+          greenRun(50 + i, sha ?? "", "feature/x"),
+        ),
+        "1 main": [greenRun(60, GREEN, "main")],
+      },
+      comparisons: {
+        [gone ?? ""]: 404,
+        [behind ?? ""]: comparison("behind", []),
+        [same ?? ""]: comparison("identical", []),
+        [fourth ?? ""]: comparison("ahead", []),
+        [GREEN]: comparison("ahead", []),
+      },
+    });
+
+    await processFailuresJob(recentChangesJob(target), deps().deps);
+
+    expect(calls.filter((call) => call.startsWith("compare"))).toHaveLength(4);
+    expect(await storedChanges(target.failureId)).toMatchObject({
+      base: { sha: GREEN, source: "default-branch" },
+    });
+  });
+
+  it("takes the widest comparison when several workflows failed", async () => {
+    const { target, system, repoId, repoFullName } = await openFailure({
+      headBranch: "feature/x",
+    });
+    await system.failures.recordFailedRun(repoId, {
+      headSha: HEAD,
+      headBranch: "feature/x",
+      runId: githubId(),
+      runAttempt: 1,
+      workflowId: 2n,
+      workflowName: "Lint",
+      workflowPath: ".github/workflows/lint.yml",
+      conclusion: "failure",
+      htmlUrl: null,
+      jobs: [{ githubJobId: githubId(), name: "lint", failedStep: "Lint", htmlUrl: null }],
+    });
+    mockToken();
+    mockRepo(repoFullName, {
+      greenRuns: {
+        "1 feature/x": [greenRun(70, GREEN, "feature/x")],
+        "2 feature/x": [greenRun(71, LATER, "feature/x")],
+      },
+      comparisons: {
+        [GREEN]: comparison("ahead", [], 1),
+        [LATER]: comparison("ahead", [], 4),
+      },
+    });
+
+    await processFailuresJob(recentChangesJob(target), deps().deps);
+
+    expect(await storedChanges(target.failureId)).toMatchObject({
+      base: { sha: LATER, runId: "71" },
+      changes: { totalCommits: 4 },
+    });
+  });
+
+  it("resolves once: a repeated job calls GitHub no more", async () => {
+    const { target, repoFullName } = await openFailure({ headBranch: "main" });
+    mockToken();
+    const calls = mockRepo(repoFullName, { tip: HEAD });
+
+    await processFailuresJob(recentChangesJob(target), deps().deps);
+    await processFailuresJob(recentChangesJob(target), deps().deps);
+
+    expect(calls).toEqual(["runs 1 main", "tip"]);
+  });
+
+  it("waits, without calling GitHub, while the installation is paused", async () => {
+    const { target } = await openFailure();
+    const pacing: InstallationPacing = {
+      ...openPacing,
+      pausedUntil: () => Promise.resolve(new Date(Date.now() + 60_000)),
+    };
+
+    await expect(
+      processFailuresJob(recentChangesJob(target), deps({ pacing }).deps),
+    ).rejects.toThrow(RateLimitedError);
+    expect(await storedChanges(target.failureId)).toBeNull();
   });
 });

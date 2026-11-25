@@ -359,6 +359,28 @@ export function repoClient(octokit: Octokit, fullName: string) {
 
     getRun,
 
+    /**
+     * A workflow's most recent successful runs on a branch, newest first (one page, at most
+     * `limit`): candidates for the last green commit (SPEC §6.2 step 7). Runs from forks are
+     * left out: their commits aren't this repository's.
+     */
+    async listSuccessfulRuns(
+      workflowId: bigint,
+      branch: string,
+      limit = 10,
+    ): Promise<WorkflowRun[]> {
+      assertBranchName(branch);
+      const perPage = z.int().min(1).max(100).parse(limit);
+      const { data } = await octokit.request(
+        "GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs",
+        { ...where, workflow_id: Number(workflowId), branch, status: "success", per_page: perPage },
+      );
+      const { workflow_runs: runs } = z
+        .object({ workflow_runs: z.array(workflowRunSchema) })
+        .parse(data);
+      return runs.map(toWorkflowRun).filter((run) => !run.fromFork && run.conclusion === "success");
+    },
+
     /** The jobs of one attempt of a run. */
     async listJobs(runId: bigint, attempt: number): Promise<Job[]> {
       const jobs: unknown[] = await octokit.paginate(

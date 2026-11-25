@@ -152,6 +152,70 @@ export const jobTriageInputSchema = z.strictObject({
 });
 export type JobTriageInput = z.infer<typeof jobTriageInputSchema>;
 
+const redactionCountsSchema = z.record(z.string().regex(/^[a-z-]{1,40}$/), z.int().nonnegative());
+
+/**
+ * What changed since the last green commit (SPEC §6.2 step 7), as agent-core's
+ * `selectRecentChanges` produced it: redacted, within its token budget.
+ */
+export const recentChangesSchema = z.strictObject({
+  totalCommits: z.int().nonnegative(),
+  commits: z
+    .array(
+      z.strictObject({
+        sha: shaSchema,
+        subject: z.string().max(200),
+        authorLogin: z.string().max(39).nullable(),
+      }),
+    )
+    .max(250),
+  omittedCommits: z.int().nonnegative(),
+  totalFiles: z.int().nonnegative(),
+  files: z
+    .array(
+      z.strictObject({
+        path: z.string().min(1).max(4_096),
+        previousPath: z.string().min(1).max(4_096).nullable(),
+        status: z.string().min(1).max(20),
+        additions: z.int().nonnegative(),
+        deletions: z.int().nonnegative(),
+        priority: z.boolean(),
+        patch: z.string().max(400_000).nullable(),
+        patchState: z.enum(["full", "partial", "omitted", "none"]),
+      }),
+    )
+    .max(300),
+  omittedFiles: z.int().nonnegative(),
+  githubTruncated: z.boolean(),
+  estimatedTokens: z.int().nonnegative(),
+  tokenBudget: z.int().positive().max(100_000),
+  redactions: redactionCountsSchema,
+});
+export type RecentChangesInput = z.infer<typeof recentChangesSchema>;
+
+/**
+ * The commit a failure is compared with, and how it was found: the workflow's last green run on
+ * the same branch, else on the default branch, else the default branch's tip (the comparison
+ * then starts at the merge base).
+ */
+export const changesBaseSchema = z.strictObject({
+  sha: shaSchema,
+  source: z.enum(["same-branch", "default-branch", "merge-base"]),
+  branch: z.string().min(1).max(255),
+  /** The green run that made this commit the base (a digit string: JSON has no BigInt). */
+  runId: z
+    .string()
+    .regex(/^[1-9]\d{0,19}$/)
+    .nullable(),
+});
+
+/** What's stored for a failure: no base when nothing to compare with was found. */
+export const recentChangesRecordSchema = z.union([
+  z.strictObject({ base: changesBaseSchema, changes: recentChangesSchema }),
+  z.strictObject({ base: z.null(), reason: z.string().min(1).max(200) }),
+]);
+export type RecentChangesRecord = z.infer<typeof recentChangesRecordSchema>;
+
 /** A later attempt of a run that passed (SPEC §2.1 re-runs). */
 export const passedRunInputSchema = z.strictObject({
   runId: githubIdSchema,

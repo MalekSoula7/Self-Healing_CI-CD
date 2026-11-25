@@ -276,6 +276,9 @@ model PipelineFailure {
   /// When it actually closed (possibly earlier: every selected run completed). Runs attached
   /// after this are late arrivals.
   windowClosedAt DateTime?
+  /// What changed since the last green commit (SPEC §6.2 step 7), redacted and cut to a token
+  /// budget; `recentChangesRecordSchema` in inputs.ts. Null until resolved.
+  recentChanges  Json?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 

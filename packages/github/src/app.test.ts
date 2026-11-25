@@ -196,6 +196,45 @@ describe("App authentication", () => {
 });
 
 describe("workflow runs and jobs", () => {
+  it("lists a workflow's successful runs on a branch, without forks", async () => {
+    let query: URLSearchParams | undefined;
+    let path = "";
+    mockServer.use(
+      http.get(`${REPO}/actions/workflows/:workflowId/runs`, ({ request }) => {
+        const url = new URL(request.url);
+        path = url.pathname;
+        query = url.searchParams;
+        return HttpResponse.json({
+          total_count: 3,
+          workflow_runs: [
+            run(9, { conclusion: "success", head_sha: SHA_B }),
+            run(8, { conclusion: "success", head_repository: { id: 999, full_name: "x/app" } }),
+            run(7, { conclusion: "success" }),
+          ],
+        });
+      }),
+    );
+
+    const runs = await (await repo()).listSuccessfulRuns(7n, "feature/x", 5);
+
+    expect(path).toBe("/repos/octo-org/app/actions/workflows/7/runs");
+    expect(Object.fromEntries(query ?? [])).toEqual({
+      branch: "feature/x",
+      status: "success",
+      per_page: "5",
+    });
+    expect(runs.map((r) => [r.id, r.headSha])).toEqual([
+      [9n, SHA_B],
+      [7n, SHA_A],
+    ]);
+  });
+
+  it("refuses a malformed branch or page size before calling GitHub", async () => {
+    const client = await repo();
+    await expect(client.listSuccessfulRuns(7n, "a..b")).rejects.toThrow(GuardError);
+    await expect(client.listSuccessfulRuns(7n, "main", 0)).rejects.toThrow(ZodError);
+  });
+
   it("lists every run of a commit", async () => {
     let query: URLSearchParams | undefined;
     mockServer.use(

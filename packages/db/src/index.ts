@@ -10,6 +10,8 @@ export type {
   FailedRunInput,
   InstallationInput,
   PassedRunInput,
+  RecentChangesInput,
+  RecentChangesRecord,
   InstalledRepository,
   InstalledWorkflow,
   ClassificationInput,
@@ -19,6 +21,7 @@ export type {
   TriageCategory,
   WebhookDeliveryInput,
 } from "./inputs";
+export { jobSignalsSchema } from "./inputs";
 export {
   installations,
   type Installations,

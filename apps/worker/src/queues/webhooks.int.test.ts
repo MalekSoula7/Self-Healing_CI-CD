@@ -138,6 +138,7 @@ function testDeps(): WebhookProcessorDeps {
     failureJobs: {
       scheduleWindowClose: () => Promise.resolve(),
       enqueueTriage: () => Promise.resolve(),
+      enqueueRecentChanges: () => Promise.resolve(),
     },
     pacing: {
       record: () => undefined,
@@ -684,6 +685,7 @@ describe("workflow_run (SPEC §2 step 4, §2.1)", () => {
           triaged.push({ failureId, installationId, key });
           return Promise.resolve();
         },
+        enqueueRecentChanges: () => Promise.resolve(),
       },
     };
     return { deps, scheduled, triaged };

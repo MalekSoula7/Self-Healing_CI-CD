@@ -471,3 +471,35 @@ Newest entry at the bottom. One entry per task. Format:
   - Suspected files aren't stored yet (no column); the healer (Phase 4) reads them from the signals.
 - Follow-ups:
   - Replace the Anthropic key with a workspace-scoped one, then re-run the failed job on the `live/unclassified-…` branch to see a real classification and its cost; delete the branch after.
+
+## 2026-11-25 · Resuming after the break
+
+- Fresh checkout: `node_modules` was missing (`pnpm install --frozen-lockfile`), Docker Desktop was stopped (started it). Typecheck, lint, 928 tests green before any change.
+- On a fresh checkout `pnpm lint` reports ~20 errors until `pnpm typecheck` has generated Next's route types; CI runs typecheck first, so it's only a local ordering quirk.
+- The first `pnpm test` right after Docker started had one timeout (`maintenance.int.test.ts` › Redis up through the gateway health check, 5.8 s against Vitest's 5 s). It passed alone and in a second full run. Noted, not chased: it hasn't recurred.
+- SPEC §4.2 drift since 2026-09-27: `@anthropic-ai/sdk` went 1.0 (2026-10-21, now 1.14; we pin 0.128); ioredis 6.1 is out (5.11 stays until the shutdown hang is re-tested). TypeScript 6.0 (typescript-eslint still `<6.1`) and Prisma 7.10 (8.0 still RC) still hold. **Open for Malek:** stay on SDK 0.128 or move to 1.x.
+
+## 2026-11-25 · P2.5 · Last-green resolver and recent changes
+
+- Done:
+  - **`packages/agent-core/src/changes`** (pure, tests first): `selectRecentChanges(comparison, { priorityPaths, tokenBudget })`.
+    - Ordering: files the signals name (also by a renamed file's old path), then other files, then lockfiles and build output (`dist/`, `vendor/`, `*.min.js`…); within each, files with a text diff first, smaller changes first.
+    - Budget (default 12,000 tokens, 1 token ≈ 3.5 characters, erring high): commit subjects get at most a fifth. Named files get as much of their diff as fits, cut at hunk boundaries (or the first lines of a single huge hunk). Then every other file's name and line counts while they fit, then their diffs whole while they fit. What's left out is counted (`omittedCommits`, `omittedFiles`, `patchState: omitted`). Never exceeds the budget (tested across budgets from 150 to 50,000).
+    - Every diff and commit subject goes through `redactLog` before it's measured or stored.
+    - `signalPaths` (files from locations, diagnostics and test IDs) and `renderRecentChanges` (the text form for prompts and the UI).
+  - **`packages/github`**: `listSuccessfulRuns(workflowId, branch, limit)`, one page, forks dropped.
+  - **Base resolution** (`apps/worker/src/queues/recent-changes.ts`), per failing workflow:
+    - the workflow's last green runs on the same branch, then on the default branch (up to 10 candidates, at most 3 comparisons per branch);
+    - a candidate counts only if `compare(green...head)` is `ahead` or `diverged`: the failing commit itself, a later green commit (`behind`), `identical`, or a commit GitHub no longer has are skipped;
+    - three-dot comparisons start at the merge base, which covers SPEC's "merge base" fallback for a diverged branch;
+    - no green run at all: the default branch's tip as base (the branch's own changes since it forked); nothing found is stored as `{ base: null, reason }`;
+    - several failing workflows: the comparison with the most commits wins, so it covers every workflow's changes.
+  - **`recent-changes` job** on the `failures` queue, queued by triage after it has classified the jobs (one job per failure; resolved once). Paced per installation like triage. Kept separate so a slow or failing comparison never holds up classification, and retries on its own.
+  - **`packages/db`**: `PipelineFailure.recentChanges` (JSON, migration `20261125161329_recent_changes`), validated by `recentChangesRecordSchema` (bounded commits, files, patch sizes; run ID as a digit string since JSON has no BigInt); `failures.recordRecentChanges` with audit `failure.recent_changes` (base, counts, redaction counts; never diffs or messages), in the cross-org and audit meta-tests. `jobSignalsSchema` is exported for reading stored signals.
+- Tests: agent-core 16 (ordering, renames, hunk cuts, huge hunk, names without diffs, dropped files, commit share, redaction, budget property, rendering); GitHub client 2; DB 3 (meta-tests and validation); worker integration 11 against Postgres and msw's GitHub (triage queues it, same branch with a later green and a fork run skipped and a planted token redacted, default-branch fallback, merge base, no base, unusable candidates and the comparison cap, widest of two workflows, resolved once, paused installation). Mutation-checked: accepting a `behind` comparison as a base fails two tests. Full suite 959.
+- Decisions:
+  - Diffs and commit messages are redacted with the log redactor (SPEC §15 had this as "likely" for Phase 4; it's needed as soon as the diff is stored). The high-entropy rule also blanks lockfile integrity hashes, which are noise anyway.
+  - Recent changes belong to the failure (one commit), not to each run.
+- Follow-ups:
+  - Not seen live yet: push a scenario on a demo repo with the dev servers running and check the stored `recentChanges` (part of CHECKPOINT 2b's acceptance run).
+  - Token estimate is a character heuristic; Phase 4 can switch to the API's token counting if prompts get close to their limits.

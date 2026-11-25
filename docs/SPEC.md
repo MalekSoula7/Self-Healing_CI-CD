@@ -479,7 +479,7 @@ Iterations: <n> · Model: <id> · Cost: $<x> · [Full timeline](<dashboard link>
 - `Repository` (orgId, githubRepoId, fullName, defaultBranch, enabled, removedFromInstallationAt, healerStatus: MISSING | OK | ERROR, commands JSON {install, build, lint, typecheck, test, testFile}, junitGlob, language). Unique on (orgId, githubRepoId): rows never move between tenants, so a repository transferred to another installed account gets a new row there.
 - `RepoWorkflow` (orgId, repoId, githubWorkflowId, path, name, selected, usesEnvironment, triggers). Discovered from the repo; `selected` is set at onboarding (§2.1, §11).
 - `Policy` (orgId, repoId nullable for org default, version, rules JSON, createdById) with history
-- `PipelineFailure` (orgId, repoId, headSha, headBranch, category, confidence, summary, status, skipReason, windowClosesAt, createdAt). Unique on (repoId, headSha) (§2.1).
+- `PipelineFailure` (orgId, repoId, headSha, headBranch, category, confidence, summary, status, skipReason, windowClosesAt, windowClosedAt, recentChanges JSON (the base commit and how it was found, plus the redacted, budgeted diff, §6.2 step 7), createdAt). Unique on (repoId, headSha) (§2.1).
   - status: DETECTED | TRIAGED | SKIPPED | FLAKY | QUEUED | HEALING | PR_OPENED | VERIFIED | UNVERIFIED | NEEDS_HUMAN | NEEDS_SETUP | NOT_REPRODUCIBLE | FAILED
 - `FailedRun` (orgId, repoId, failureId, runId, runAttempt, workflowId, workflowName, workflowPath, conclusion, rerunByUs, lateArrival, createdAt). Unique on (repoId, runId); a higher `runAttempt` updates the row.
 - `FailedJob` (orgId, failedRunId, githubJobId, name, failedStep, category, confidence, summary, errorWindow (redacted), signals JSON)
@@ -569,7 +569,7 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 3:** policy precedence: split org defaults from org guardrails (§8.1). Merge rules are missing for `scope.branches`, `scope.workflows`, `review.*`, `retryBeforeHeal` and `customRules`.
 - **Phase 4:** async step protocol instead of ~2-minute synchronous requests (§3.1).
 - **Phase 4:** reserve budget atomically before each model call (worst-case estimate per call, org monthly budget with concurrent attempts), not only check it after.
-- **Phase 4:** redaction beyond CI logs. The recent-changes diff should likely use the same redactor. Tool output (`read_file`, `search_code`) needs a design, because redacting it breaks `apply_edit`'s exact matching.
+- **Phase 4:** redaction beyond CI logs. The recent-changes diff and commit messages already go through the log redactor (P2.5). Tool output (`read_file`, `search_code`) needs a design, because redacting it breaks `apply_edit`'s exact matching.
 - **Phase 4:** the upload set on `submit_fix` should be exactly the files touched through edit tools, since `install` can rewrite lockfiles and generated files. Lockfile diffs and `maxLinesChanged` also need a rule.
 - **Phase 4:** matrix builds: which leg does the healer reproduce? Pass the failed job's matrix values as a dispatch input?
 - **Phase 4:** can the workflow-dispatch API return the run ID? If so, store it and bind the OIDC `run_id` claim (§5.4).

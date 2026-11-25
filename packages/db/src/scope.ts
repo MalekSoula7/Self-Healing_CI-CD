@@ -28,6 +28,7 @@ import {
   jobTriageInputSchema,
   modelCallInputSchema,
   passedRunInputSchema,
+  recentChangesRecordSchema,
   type AuditPage,
   type ClassificationInput,
   type FailedRunInput,
@@ -36,6 +37,7 @@ import {
   type JobTriageInput,
   type ModelCallInput,
   type PassedRunInput,
+  type RecentChangesRecord,
   type TriageCategory,
 } from "./inputs";
 
@@ -639,6 +641,41 @@ function buildSystemScope(ctx: ScopeContext) {
             action: "failure.triaged",
             target: auditTarget("failure", id),
             metadata: { category, confidence, status: updated.status },
+          });
+          return updated;
+        });
+      },
+
+      /**
+       * Stores what changed since the failure's last green commit (SPEC §6.2 step 7), or that
+       * there was nothing to compare with. Replaces an earlier record.
+       */
+      async recordRecentChanges(failureId: string, input: RecentChangesRecord) {
+        const id = requireId(failureId, "failure");
+        const record = recentChangesRecordSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const failure = await tx.pipelineFailure.findFirst({ where: { id, orgId } });
+          if (failure === null) throw new NotFoundError("failure not found");
+          const updated = await tx.pipelineFailure.update({
+            where: { id },
+            data: { recentChanges: record },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "failure.recent_changes",
+            target: auditTarget("failure", id),
+            // Counts and the base only: never diffs or commit messages.
+            metadata:
+              record.base === null
+                ? { base: null, reason: record.reason }
+                : {
+                    baseSha: record.base.sha,
+                    source: record.base.source,
+                    commits: record.changes.totalCommits,
+                    files: record.changes.totalFiles,
+                    filesShown: record.changes.files.length,
+                    estimatedTokens: record.changes.estimatedTokens,
+                    redactions: record.changes.redactions,
+                  },
           });
           return updated;
         });

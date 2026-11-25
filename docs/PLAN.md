@@ -58,7 +58,7 @@ Acceptance: installing the App on the sandbox org shows the org and repos in the
 - [x] **P2.2** Log fetch + clean + redact (`packages/agent-core/redact`). Fixture tests with planted fake secrets of every type in SPEC §6.2.
 - [x] **P2.3** Error-window extractor and signal parsers for tsc, eslint, jest/vitest, pytest, mypy, ruff, pip/npm install errors. Real log samples in `packages/agent-core/fixtures/logs/`, test-first.
 - [x] **P2.4** Heuristic classifier + `TRIAGE_MODEL` fallback with zod-validated JSON and one retry. Cost recorded.
-- [ ] **P2.5** Last-green resolver + recent-changes fetcher with token-budget truncation.
+- [x] **P2.5** Last-green resolver + recent-changes fetcher with token-budget truncation.
 - [ ] **P2.6** Flaky check: re-run failed jobs once when `retryBeforeHeal` is on, with the guards in SPEC §6.2 step 8 (selected workflows only, never with `environment:`); link the re-run's result to the failure.
 - [ ] **P2.7** UI: failures list and detail page (category, summary, error window, signals, recent changes).
 

@@ -73,6 +73,40 @@ function modelCall() {
   };
 }
 
+function recentChanges() {
+  return {
+    base: {
+      sha: "b".repeat(40),
+      source: "same-branch" as const,
+      branch: "main",
+      runId: "4242",
+    },
+    changes: {
+      totalCommits: 1,
+      commits: [{ sha: "c".repeat(40), subject: "fix: rename", authorLogin: "dev" }],
+      omittedCommits: 0,
+      totalFiles: 1,
+      files: [
+        {
+          path: "src/receipt.ts",
+          previousPath: null,
+          status: "modified",
+          additions: 1,
+          deletions: 1,
+          priority: true,
+          patch: "@@ -1 +1 @@\n-a\n+b",
+          patchState: "full" as const,
+        },
+      ],
+      omittedFiles: 0,
+      githubTruncated: false,
+      estimatedTokens: 30,
+      tokenBudget: 12_000,
+      redactions: { "github-token": 1 },
+    },
+  };
+}
+
 function uniqueLogin(): string {
   return `T${randomUUID().replaceAll("-", "").slice(0, 20)}`;
 }
@@ -273,6 +307,11 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
     await expect(a.system.failures.recordModelCall(b.failure.id, modelCall())).rejects.toThrow(
       NotFoundError,
     );
+  },
+  "failures.recordRecentChanges": async () => {
+    await expect(
+      a.system.failures.recordRecentChanges(b.failure.id, recentChanges()),
+    ).rejects.toThrow(NotFoundError);
   },
   "failures.recordTriage": async () => {
     await expect(
@@ -512,6 +551,26 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
         action: "failure.triaged",
         target: `failure:${a.failure.id}`,
         metadata: { category: "typecheck", confidence: 0.95, status: "TRIAGED" },
+      },
+    ];
+  },
+  "failures.recordRecentChanges": async () => {
+    await a.system.failures.recordRecentChanges(a.failure.id, recentChanges());
+    return [
+      {
+        actorType: "SYSTEM",
+        actorId: "test",
+        action: "failure.recent_changes",
+        target: `failure:${a.failure.id}`,
+        metadata: {
+          baseSha: "b".repeat(40),
+          source: "same-branch",
+          commits: 1,
+          files: 1,
+          filesShown: 1,
+          estimatedTokens: 30,
+          redactions: { "github-token": 1 },
+        },
       },
     ];
   },
@@ -1255,6 +1314,33 @@ describe("failures (SPEC §2.1)", () => {
         summary: "x",
       }),
     ).resolves.toMatchObject({ status: "FLAKY", category: "TEST" });
+  });
+
+  it("stores the recent changes, or that there was no base, and nothing malformed", async () => {
+    await a.system.failures.recordRecentChanges(a.failure.id, recentChanges());
+    const stored = await a.asMember.failures.get(a.failure.id);
+    expect(stored?.recentChanges).toEqual(recentChanges());
+
+    await a.system.failures.recordRecentChanges(a.failure.id, {
+      base: null,
+      reason: "No green run of this workflow, and the default branch has no commits.",
+    });
+    expect((await a.asMember.failures.get(a.failure.id))?.recentChanges).toEqual({
+      base: null,
+      reason: "No green run of this workflow, and the default branch has no commits.",
+    });
+
+    for (const bad of [
+      { ...recentChanges(), base: { ...recentChanges().base, sha: "main" } },
+      { ...recentChanges(), base: { ...recentChanges().base, runId: "0" } },
+      { ...recentChanges(), changes: { ...recentChanges().changes, tokenBudget: 1_000_000 } },
+      { ...recentChanges(), extra: true },
+      { base: null, reason: "" },
+    ]) {
+      await expect(
+        a.system.failures.recordRecentChanges(a.failure.id, bad as never),
+      ).rejects.toThrow(ZodError);
+    }
   });
 
   it("records a model call's tokens and cost exactly", async () => {

@@ -1,7 +1,8 @@
 // The `failures` queue: the timed and GitHub-heavy steps of a failure's life (SPEC §2.1, §6.2).
 // `close-window` closes the collection window when its time is up, then queues `triage`, which
-// fetches, cleans and redacts the failed jobs' logs. Triage calls GitHub, so its jobs are paced
-// per installation like webhook jobs.
+// fetches, cleans and redacts the failed jobs' logs and classifies them, then queues
+// `recent-changes` (what changed since the last green commit). Both call GitHub, so their jobs
+// are paced per installation like webhook jobs.
 import { NotFoundError, forSystem, type Db } from "@pipeheal/db";
 import type { GitHubApp } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
@@ -14,6 +15,7 @@ import {
   pauseIfRateLimited,
   type InstallationPacing,
 } from "../pacing";
+import { resolveRecentChanges } from "./recent-changes";
 import { triageFailure, type FailureTarget, type TriageDeps } from "./triage";
 
 export const FAILURES_QUEUE = "failures";
@@ -23,7 +25,7 @@ const targetSchema = z
   .strictObject({ orgId: z.uuid(), failureId: z.uuid(), installationId: z.string().regex(/^\d+$/) })
   .transform(({ installationId, ...ids }) => ({ ...ids, installationId: BigInt(installationId) }));
 type FailureJobData = z.input<typeof targetSchema>;
-type FailureJobName = "close-window" | "triage";
+type FailureJobName = "close-window" | "triage" | "recent-changes";
 
 export type FailuresQueue = Queue<FailureJobData, void, FailureJobName>;
 
@@ -36,6 +38,8 @@ export interface FailureJobs {
    * none; a run attached after that (a late arrival, or a newer failed attempt) passes its own.
    */
   enqueueTriage: (target: FailureTarget, key?: string) => Promise<void>;
+  /** Resolves what changed since the last green commit. Idempotent: one job per failure. */
+  enqueueRecentChanges: (target: FailureTarget) => Promise<void>;
 }
 
 export interface FailuresDeps extends TriageDeps {
@@ -53,7 +57,7 @@ interface QueueJob {
 }
 
 export async function processFailuresJob(job: QueueJob, deps: FailuresDeps): Promise<void> {
-  if (job.name !== "close-window" && job.name !== "triage") {
+  if (job.name !== "close-window" && job.name !== "triage" && job.name !== "recent-changes") {
     throw new UnrecoverableError(`unknown failures job "${job.name}"`);
   }
   const target = targetSchema.parse(job.data);
@@ -68,7 +72,12 @@ export async function processFailuresJob(job: QueueJob, deps: FailuresDeps): Pro
     }
     await assertNotPaused(deps.pacing, target.installationId);
     try {
+      if (job.name === "recent-changes") {
+        await resolveRecentChanges(deps, target, log);
+        return;
+      }
       await triageFailure(deps, target, log);
+      await deps.jobs.enqueueRecentChanges(target);
     } catch (error) {
       await pauseIfRateLimited(deps.pacing, target.installationId, error);
       throw error;
@@ -112,6 +121,11 @@ export function failureJobs(queue: FailuresQueue): FailureJobs {
       await queue.add("close-window", jobData(target), {
         jobId: `close-window-${target.failureId}`,
         delay: Math.max(0, at.getTime() - Date.now()),
+      });
+    },
+    async enqueueRecentChanges(target) {
+      await queue.add("recent-changes", jobData(target), {
+        jobId: `recent-changes-${target.failureId}`,
       });
     },
     async enqueueTriage(target, key) {
