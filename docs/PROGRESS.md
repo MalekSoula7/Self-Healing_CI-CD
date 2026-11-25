@@ -548,3 +548,21 @@ Newest entry at the bottom. One entry per task. Format:
   GitHub already masks registered secrets; these are the unregistered remainder.
 - Low, noted: completed runs of a commit with an open failure each call `listRunsForSha` (bounded by pacing); filenames and branch/job names are stored unredacted (metadata).
 - Verified: typecheck, lint, format, 1,037 unit+integration tests, agent-core coverage 96.1% branches.
+
+## 2026-11-25 · D11 · Self-hosted models on Ollama replace the Anthropic API
+
+- Malek's decision: no Anthropic key. Open-weight models run on Ollama on the application's own host (Intel i5 10th gen, RTX 3060 12 GB, 16 GB RAM), for triage and healing, in development and production. In development, Ollama is on that other machine and the worker reaches it over the LAN.
+- Model: `qwen3:14b` (Apache 2.0) for both `TRIAGE_MODEL` and `HEAL_MODEL`. It's the newest model in Ollama's library with tool calling at a size that fits 12 GB at Q4 (about 9 GB). One model for both avoids swapping. Newer Qwen coders start at 30B (about 19 GB at Q4, doesn't fit). Alternative: `qwen2.5-coder:14b`.
+- Done:
+  - `apps/worker/src/ollama.ts`: a small client for `/api/chat` (non-streaming) and `/api/show`, using `fetch` and zod (no SDK). Calls run one at a time (one GPU), with a 180 s timeout. Errors carry Ollama's status and short message, never the prompt.
+  - `triage-model.ts` on Ollama: the JSON-schema-constrained answer (`format`), `think: false`, `temperature: 0`, a 12K-token context. An answer cut off (`done_reason: length`) counts as invalid; zod validation and the one retry stay. Tokens come from Ollama's counts; cost is recorded as 0.
+  - Prompt caps lowered to fit that context: 24,000 characters of log and 8,000 of signals (about 10K tokens). At 16K tokens, the KV cache (about 2.6 GB) plus the weights would fill the card.
+  - Env: `OLLAMA_URL` (default `http://localhost:11434`; production requires it explicitly, https unless loopback) and `TRIAGE_MODEL` (an Ollama tag, default `qwen3:14b`). `ANTHROPIC_API_KEY` and `MODEL_PRICES` are gone, along with `model-prices.ts` and the `@anthropic-ai/sdk` dependency (which also settles the SDK 1.x question). The worker checks at startup that the model is pulled and only warns, so triage goes on if Ollama is down: calls fail, are recorded, and unclear jobs stay `unknown`.
+  - Docs: SPEC §3, §4, §4.2, §7.5, §12, §13, §15 and D11 (D6 superseded); CLAUDE.md's stack line, and its invariant now reads "the model server is internal only"; PLAN P4.4 (tool calling and context sizing on Ollama) and P7.1 (per-org GPU-time share instead of spend); `.env.example`.
+- Tests: Ollama client 5 (one call at a time, recovery after a failure, error without the prompt, timeout, model pulled or not); triage on Ollama 8 (request shape: schema, `think`, context, temperature; confidence cap; retry; invalid and cut-off answers; error answer, unreachable server, unexpected body); env 4. Full suite 1,037.
+- Not verified live: Ollama runs on another machine and this one can't reach it yet (see below).
+- For Malek, on the Ollama machine:
+  - `ollama pull qwen3:14b`;
+  - for development over the LAN, make Ollama listen beyond localhost (`OLLAMA_HOST=0.0.0.0`) with the firewall allowing only your LAN, and put `OLLAMA_URL=http://<that machine's LAN IP>:11434` in this machine's `.env`;
+  - optionally `OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0`, which roughly halve the context's memory.
+  - In production the app runs there and uses `http://localhost:11434`; Ollama should then listen on localhost only.

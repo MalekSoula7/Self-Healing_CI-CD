@@ -10,7 +10,6 @@ import { defineConfig } from "vitest/config";
 const ignored = ["**/node_modules/**", "**/dist/**", "**/.next/**"];
 // Secrets from the developer's shell or .env never reach tests (empty counts as unset in parseEnv).
 const blankSecrets = {
-  ANTHROPIC_API_KEY: "",
   BETTER_AUTH_SECRET: "",
   GITHUB_APP_PRIVATE_KEY: "",
   GITHUB_CLIENT_SECRET: "",

@@ -24,9 +24,12 @@ export const TRIAGE_PROMPT_VERSION = "triage-v2";
  */
 export const MODEL_CONFIDENCE_CAP = 0.75;
 
-/** Characters of log and of signals in a prompt: bounds the cost of one call (SPEC §13). */
-export const MAX_PROMPT_LOG_CHARS = 40_000;
-const MAX_PROMPT_SIGNALS_CHARS = 16_000;
+/**
+ * Characters of log and of signals in a prompt: about 10K tokens together, so a prompt fits the
+ * self-hosted model's context window (D11) and bounds one call's time (SPEC §13).
+ */
+export const MAX_PROMPT_LOG_CHARS = 24_000;
+const MAX_PROMPT_SIGNALS_CHARS = 8_000;
 
 /** What TRIAGE_MODEL must answer (structured outputs), validated again with zod. */
 export const triageOutputSchema = z.strictObject({

@@ -1,7 +1,7 @@
-// TRIAGE_MODEL, for jobs the heuristics can't classify (SPEC §6.2 step 6, §7.5): structured
-// outputs, validated again with zod, one retry on an invalid answer, and every call recorded with
-// its tokens and cost (prices come from config, never code).
-import Anthropic from "@anthropic-ai/sdk";
+// TRIAGE_MODEL, for jobs the heuristics can't classify (SPEC §6.2 step 6, §7.5): a self-hosted
+// model on Ollama (D11). The answer is constrained by a JSON schema, validated again with zod, one
+// retry on an invalid answer, and every call recorded with its tokens. Self-hosted calls cost no
+// money per token, so their cost is recorded as 0.
 import {
   MODEL_CONFIDENCE_CAP,
   TRIAGE_OUTPUT_JSON_SCHEMA,
@@ -14,45 +14,30 @@ import {
 } from "@pipeheal/agent-core";
 import type { ModelCallInput } from "@pipeheal/db";
 import type { Logger } from "@pipeheal/shared/logger";
-import { z } from "zod";
-import { callCost, type ModelPrice } from "./model-prices";
-
-const apiErrorBodySchema = z.object({
-  error: z.object({ type: z.string(), message: z.string() }),
-});
-
-/**
- * The API's own error type and message (e.g. a key without a workspace), safe to log: they
- * describe the request, never echo its content or the key.
- */
-export function apiErrorDetail(error: { error: unknown }): {
-  errorType?: string;
-  errorMessage?: string;
-} {
-  const body = apiErrorBodySchema.safeParse(error.error);
-  if (!body.success) return {};
-  return { errorType: body.data.error.type, errorMessage: body.data.error.message.slice(0, 500) };
-}
+import { OllamaError, type OllamaChatResponse, type OllamaClient } from "./ollama";
 
 export interface TriageModel {
-  /** Null when no valid answer came back (after one retry) or the API call failed. */
+  /** Null when no valid answer came back (after one retry) or the call failed. */
   classify(
     input: TriagePromptInput,
     record: (call: ModelCallInput) => Promise<void>,
   ): Promise<Classification | null>;
 }
 
+/**
+ * Context window: the prompt (at most ~10K tokens, agent-core's caps) and the answer. Sized for a
+ * 14B model on a 12 GB GPU: its KV cache grows with the context.
+ */
+export const TRIAGE_CONTEXT_TOKENS = 12_288;
 // Classification is short; this leaves room for the summary and file list.
-const MAX_TOKENS = 1_024;
+const MAX_ANSWER_TOKENS = 512;
 const ATTEMPTS = 2;
 
 /** The answer, when the model finished normally and it's valid; null otherwise. */
-function parseAnswer(response: Anthropic.Message): TriageOutput | null {
-  if (response.stop_reason !== "end_turn") return null;
-  const text = response.content.find((block) => block.type === "text")?.text;
-  if (text === undefined) return null;
+function parseAnswer(response: OllamaChatResponse): TriageOutput | null {
+  if (response.done_reason !== undefined && response.done_reason !== "stop") return null;
   try {
-    const parsed = triageOutputSchema.safeParse(JSON.parse(text));
+    const parsed = triageOutputSchema.safeParse(JSON.parse(response.message.content));
     return parsed.success ? parsed.data : null;
   } catch {
     return null;
@@ -60,67 +45,59 @@ function parseAnswer(response: Anthropic.Message): TriageOutput | null {
 }
 
 export function triageModel(options: {
-  client: Anthropic;
+  client: OllamaClient;
   model: string;
-  price: ModelPrice;
   logger: Logger;
 }): TriageModel {
-  const { client, model, price, logger } = options;
-  // We validate the answer ourselves (parseAnswer) instead of messages.parse(), which throws on
-  // an invalid answer and so loses its usage.
-  const format = {
-    type: "json_schema" as const,
-    schema: TRIAGE_OUTPUT_JSON_SCHEMA,
+  const { client, model, logger } = options;
+  const base = {
+    purpose: "triage",
+    model,
+    promptVersion: TRIAGE_PROMPT_VERSION,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
   };
-  const base = { purpose: "triage", model, promptVersion: TRIAGE_PROMPT_VERSION };
 
   return {
     async classify(input, record) {
       const { system, user } = buildTriagePrompt(input);
       for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-        let response: Anthropic.Message;
+        let response: OllamaChatResponse;
         try {
-          response = await client.messages.create({
+          response = await client.chat({
             model,
-            max_tokens: MAX_TOKENS,
-            system,
-            messages: [{ role: "user", content: user }],
-            output_config: { format },
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+            format: TRIAGE_OUTPUT_JSON_SCHEMA,
+            // Classification needs no long reasoning: answer directly, deterministically.
+            think: false,
+            options: {
+              num_ctx: TRIAGE_CONTEXT_TOKENS,
+              num_predict: MAX_ANSWER_TOKENS,
+              temperature: 0,
+            },
           });
         } catch (error) {
-          if (!(error instanceof Anthropic.APIError)) throw error;
-          // The SDK already retried what's retryable (429, 5xx, connection errors).
-          await record({
-            ...base,
-            inputTokens: 0,
-            outputTokens: 0,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
-            costUsd: 0,
-            outcome: "error",
-          });
-          logger.warn(
-            { status: error.status, attempt, ...apiErrorDetail(error) },
-            "triage model call failed",
-          );
+          if (!(error instanceof OllamaError)) throw error;
+          await record({ ...base, inputTokens: 0, outputTokens: 0, outcome: "error" });
+          logger.warn({ status: error.status, attempt, err: error }, "triage model call failed");
           return null;
         }
         const answer = parseAnswer(response);
-        const { usage } = response;
         await record({
           ...base,
-          inputTokens: usage.input_tokens,
-          outputTokens: usage.output_tokens,
-          cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-          cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
-          costUsd: callCost(price, usage),
+          inputTokens: response.prompt_eval_count ?? 0,
+          outputTokens: response.eval_count ?? 0,
           outcome: answer === null ? "invalid" : "valid",
         });
         if (answer !== null) {
           // Below every heuristic: a log can't talk the model into outranking what code found.
           return { ...answer, confidence: Math.min(answer.confidence, MODEL_CONFIDENCE_CAP) };
         }
-        logger.warn({ attempt, stopReason: response.stop_reason }, "invalid triage model answer");
+        logger.warn({ attempt, doneReason: response.done_reason }, "invalid triage model answer");
       }
       return null;
     },

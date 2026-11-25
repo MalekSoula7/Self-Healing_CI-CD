@@ -94,7 +94,7 @@ Acceptance: coverage ≥ 95% on `packages/policy`; all red-team fixtures rejecte
 - [ ] **P4.2** Gateway `POST /v1/session`: OIDC verification per SPEC §5.4. Tests with locally generated keys and JWTs, including every rejection path.
 - [ ] **P4.3** Gateway `POST /v1/step`: accept tool results, run the next model turn, return tool calls; persist `AgentEvent`s; enforce caps; idempotent on `stepSeq`.
 - [ ] **P4.3b** Reads that feed the model use installation tokens scoped to the one repository and read-only permissions (`repositoryIds` + `permissions`, P1.4 review).
-- [ ] **P4.4** `packages/agent-core`: prompt builder (SPEC §7.4, versioned), tool definitions, context assembler, loop controller with all stop conditions, cost accounting, prompt caching on the static prefix.
+- [ ] **P4.4** `packages/agent-core`: prompt builder (SPEC §7.4, versioned), tool definitions, context assembler, loop controller with all stop conditions, token and time accounting. On Ollama (D11): tool calling with `HEAL_MODEL`, the context window (`num_ctx`) sized for the 12 GB GPU, model calls serialized.
 - [ ] **P4.5** `packages/heal-action`: JavaScript action bundled to `dist/`. OIDC exchange, install, reproduce, baseline JUnit, tool executor (path-traversal protection, output truncation, commands only from config, args as arrays), final checks, submission upload.
 - [ ] **P4.6** Local mode: `pnpm heal:local --repo examples/demo-node --scenario <name>` runs the same executor inside a Linux Docker container against a local copy of the repo and a local gateway. A dev CLI creates a real attempt and session token; there is no auth bypass (SPEC §12). This is the main dev loop for agent work.
 - [ ] **P4.7** Soft-rule judge (SPEC §8.7 step 3).
@@ -137,7 +137,7 @@ Acceptance: on real GitHub, `break.ts` → PR opened → PR CI green → human m
 
 ## Phase 7: Metering & billing
 
-- [ ] **P7.1** `UsageRecord` roll-ups, budget UI, hard stops when budgets are hit (with a clear dashboard message). Includes a per-org budget for triage model calls, checked before each call (Phase 2 review H2; per-failure caps exist already).
+- [ ] **P7.1** `UsageRecord` roll-ups, budget UI, hard stops when budgets are hit (with a clear dashboard message). Includes a per-org share of model time on the shared GPU (D11: no per-token cost), checked before each call (Phase 2 review H2; per-failure caps exist already).
 - [ ] **P7.2** **[HUMAN]** Stripe account. Then Checkout, Customer Portal, webhook handling, plan limits wired into policy caps.
 - [ ] **P7.3** Free tier limits.
 

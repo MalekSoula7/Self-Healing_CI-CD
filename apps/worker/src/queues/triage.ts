@@ -31,7 +31,7 @@ export interface FailureTarget {
 export interface TriageDeps {
   db: Db;
   githubApp: GitHubApp | null;
-  /** Null without ANTHROPIC_API_KEY (development): what heuristics can't classify stays unknown. */
+  /** Null to skip the model (tests): what heuristics can't classify stays unknown. */
   triageModel: TriageModel | null;
 }
 

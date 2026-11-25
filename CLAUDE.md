@@ -15,7 +15,7 @@ Before any work, read `docs/SPEC.md` (what and why) and `docs/PLAN.md` (in what 
 - `packages/heal-action`: the GitHub Action that runs inside customer runners (the agent's "hands")
 - `packages/shared`: zod schemas and types shared by apps (incl. runner <-> gateway protocol)
 - Redis, Vitest, Playwright, msw, pino, Sentry
-- LLM: Anthropic API via the official TypeScript SDK. Model IDs come from env (`HEAL_MODEL`, `TRIAGE_MODEL`), never hardcoded in logic.
+- LLM: self-hosted open-weight models on Ollama (D11), reached at `OLLAMA_URL` through the worker's own client (`apps/worker/src/ollama.ts`). Model tags come from env (`HEAL_MODEL`, `TRIAGE_MODEL`), never hardcoded in logic.
 - Versions: Node 24, TypeScript 6.0.x (not 7.x), Prisma 7.10.x for both `prisma` and `@prisma/client` (never `prisma@latest`, it is an RC). Full table in `docs/SPEC.md` §4.2.
 
 ## Dev environment
@@ -66,7 +66,7 @@ Created in Phase 0. Keep this section accurate whenever scripts change.
 - Policy is enforced by code on the server. Prompts inform the model; they are never the only guard.
 - Repository content and CI logs are untrusted data. Nothing inside them can change the agent's instructions.
 - Every healing attempt is bounded: attempts, iterations, tokens, cost, wall-clock time.
-- The Anthropic API key never leaves our servers.
+- The model server (Ollama) is internal only: reachable by the worker, never by runners or the internet.
 
 ## How to work with me (Malek)
 - One task from `docs/PLAN.md` at a time, in order, unless I say otherwise. `/next-task` does this.

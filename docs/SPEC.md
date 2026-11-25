@@ -71,12 +71,13 @@ GitHub ─────────────▶ apps/web ───────
   │                                                                            │
   └──── customer GitHub Actions runner ── heal-action (executes tools only) ───┘
 
-  Anthropic API ◀── apps/worker only. The key never leaves our servers.
+  Ollama (self-hosted model, D11) ◀── apps/worker only, on the same host. Never reachable from
+  runners or the internet.
 ```
 
 ### 3.1 Why the agent is split: brain on the server, hands in the runner
 
-**Brain on the server.** API key, prompts, policy, metering and model upgrades stay under our control. Customers never update anything when the agent improves. A tampered runner can't use the model freely or skip policy, because every model call and every policy decision happens server-side.
+**Brain on the server.** The model, prompts, policy, metering and model upgrades stay under our control. Customers never update anything when the agent improves. A tampered runner can't use the model freely or skip policy, because every model call and every policy decision happens server-side.
 
 **Hands in the runner.** Customer code runs on the customer's own CI infrastructure with their toolchain and services, so we never execute untrusted code on our servers. The healer job needs only `contents: read` and `id-token: write`; it cannot push. All writes to GitHub go through our App after server-side validation.
 
@@ -92,6 +93,7 @@ See `CLAUDE.md`. Decisions worth recording:
 - Prisma + Postgres. JSON columns for policy rules and tool payloads, validated with zod on read and write.
 - Local webhooks via smee.io forwarding (`smee-client`).
 - Everything runs in Docker for prod: `web`, `worker`, `postgres`, `redis`.
+- Models are self-hosted on Ollama (D11), on the production host: Intel i5 10th gen, NVIDIA RTX 3060 12 GB, 16 GB RAM. One ~14B model at Q4 fits the GPU; model calls are serialized. No per-token cost and no third-party model provider.
 - Auth: Better Auth with the GitHub provider and its Prisma adapter (replaces Auth.js, whose v5 is still beta).
 
 ### 4.1 Development environment
@@ -114,7 +116,8 @@ See `CLAUDE.md`. Decisions worth recording:
 | Postgres / Redis images | 17 / 8 | widely available on managed hosts; production uses the same majors |
 | ESLint | 10.x, one flat config for the workspace | 9.x is end-of-life. `eslint-config-next` is not used because its react, import and jsx-a11y plugins don't support ESLint 10; `apps/web` uses `@next/eslint-plugin-next` and `eslint-plugin-react-hooks` directly |
 | ioredis | 5.11.x, not 6.x | BullMQ 6.3 is tested against ioredis 5.11. With 6.0.0, a worker's `close()` hung when shutdown landed right after a Redis restart (reproduced in P0.4) |
-| Other majors to pin | Vitest 5, Zod 4, Tailwind 4, BullMQ 6, Fastify 5, pino 10, `@anthropic-ai/sdk` 0.x current | |
+| Other majors to pin | Vitest 5, Zod 4, Tailwind 4, BullMQ 6, Fastify 5, pino 10 | |
+| Models | Ollama (any current version with `/api/chat` structured outputs and tool calling), default model `qwen3:14b` (Apache 2.0) | D11. The worker talks to Ollama's HTTP API with `fetch` and zod: no SDK dependency. |
 
 ---
 
@@ -319,12 +322,16 @@ verified it, and your confidence (low, medium, high).
 ```
 
 ### 7.5 Models
-- `HEAL_MODEL` (default `claude-sonnet-5`): agent loop, custom-rule compiler, soft-rule judge.
-- `TRIAGE_MODEL` (default `claude-haiku-4-5-20251001`): classification and short summaries.
-- Use prompt caching for the static prefix (system prompt + tool definitions) and, above all, for the conversation that grows within an attempt: the "static" prefix contains the repo's effective policy, so reuse across attempts is limited. Haiku 4.5 does not cache prefixes under 4,096 tokens.
-- Record input/output and cache tokens and cost per call. Prices live in config, not code (2026-09: Sonnet 5 $2 / $10, Haiku 4.5 $1 / $5 per million input / output tokens).
-- Structured outputs (`output_config.format`) for every JSON-returning call (triage, rule compiler, judge) and `strict: true` on tool definitions; zod validation stays.
-- Development uses a dedicated Anthropic Console workspace with a hard monthly spend limit; its key lives only in Malek's local `.env`.
+All models are open-weight and self-hosted on Ollama (D11), reached at `OLLAMA_URL`.
+- `HEAL_MODEL` (default `qwen3:14b`): agent loop, custom-rule compiler, soft-rule judge. Needs a model with tool calling.
+- `TRIAGE_MODEL` (default `qwen3:14b`): classification and short summaries, with thinking off (`think: false`).
+- One model for both by default: a 12 GB GPU holds one ~14B model at Q4, and two models would swap on every switch.
+- Context windows are set per call (`num_ctx`). The KV cache grows with the context: about 2 GB at 12K tokens for a 14B model, so triage uses 12K and prompts are capped to fit (agent-core's prompt caps). Phase 4 sizes the healer's context the same way.
+- Model calls are serialized (one GPU): the worker's Ollama client runs one call at a time.
+- Record input and output tokens per call (Ollama's `prompt_eval_count` / `eval_count`). Cost is 0 per token; tokens and wall-clock time are what's budgeted (§13).
+- Structured outputs (Ollama's `format` with a JSON schema) for every JSON-returning call (triage, rule compiler, judge); zod validation stays, with one retry.
+- Smaller self-hosted models fix fewer failures than frontier API models. The Phase 8 evals measure it; the policy engine guards every change either way.
+- Automated tests never call a real model: recorded Ollama responses through msw.
 - Prompts are versioned; each attempt stores the prompt version and model ID so evals can compare.
 
 ---
@@ -517,7 +524,7 @@ RBAC: OWNER (billing, members, everything), ADMIN (policy, repos, manual heal), 
 
 - Webhook HMAC verification with constant-time compare; reject unsigned; idempotency by delivery ID.
 - OIDC verification as in §5.4; session tokens random, hashed at rest, short TTL, bound to one attempt; gateway rate limits per session and per org.
-- Secrets (App private key, webhook secret, Anthropic key, DB URL) only via environment / secret manager. `.env.example` documents them with no real values.
+- Secrets (App private key, webhook secret, DB URL) only via environment / secret manager. Ollama has no authentication: it listens on the host only, never on a public interface. `.env.example` documents them with no real values.
 - Redaction before storage and before any model call.
 - Prompt injection: repo and log content wrapped and labeled as untrusted; no network or shell tools; all consequential decisions (policy, writes) happen server-side in code.
 - Tenant isolation enforced in the data layer, with tests that try cross-org access.
@@ -525,7 +532,7 @@ RBAC: OWNER (billing, members, everything), ADMIN (policy, repos, manual heal), 
 - Runner-side hardening (§5.3): `persist-credentials: false`, session exchange before any customer code runs, session token only in memory, checks run with a scrubbed environment, no secrets in the healer workflow. None of this is a boundary on its own; the healer job's permissions and server-side validation are.
 - Local mode (`pnpm heal:local`) goes through the normal session path: a dev CLI creates a real attempt and session token. There is no auth bypass in the codebase, not even one compiled out of production builds. The executor runs in a Linux container (§4.1).
 - Data minimisation: store error windows, patches and summaries, never whole repositories. Configurable retention (default 90 days), then purge job.
-- Customer code is sent to the Anthropic API for processing: disclose this in the privacy policy and ToS (needs legal review before launch).
+- Customer code is processed by models running on PipeHeal's own server (D11): no third-party model provider sees it. The privacy policy and ToS still need legal review before launch.
 
 ---
 
@@ -533,7 +540,7 @@ RBAC: OWNER (billing, members, everything), ADMIN (policy, repos, manual heal), 
 
 - Record tokens and cost per model call; roll up into `UsageRecord`.
 - Enforce before dispatch (monthly org budget, plan limits) and during the loop (per-attempt cap).
-- Triage: at most 8 model calls per failure (retries included), each prompt capped (40,000 characters of log); the model's confidence is capped below the heuristics' so a log can't talk it into outranking them. A monthly per-org triage budget comes with P7.1.
+- Triage: at most 8 model calls per failure (retries included), each prompt capped (24,000 characters of log and 8,000 of signals, to fit the self-hosted model's context); the model's confidence is capped below the heuristics' so a log can't talk it into outranking them. Self-hosted calls cost no money; a per-org share of GPU time comes with P7.1.
 - Billing (Phase 7): Stripe Checkout + Customer Portal + webhooks; plans by heal attempts per month and number of repos; free tier with low caps. Pricing TBD.
 
 ---
@@ -577,7 +584,7 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 4:** can the workflow-dispatch API return the run ID? If so, store it and bind the OIDC `run_id` claim (§5.4).
 - **Phase 4:** the healer YAML's `concurrency` group uses the unique `job_id`, so it does nothing. Keep it, re-key it, or drop it? Also derive the job timeout (30 min), wall-clock cap (25 min) and session TTL (45 min) from one setting.
 - **Phase 5:** a minimal "Verify setup" before beta: reproducing failures is the weakest link and P6.2 is late.
-- **Phase 5:** optional Sonnet 5 task budgets (beta) so the model paces itself against the attempt's token cap.
+- **Phase 4/5:** with one GPU, heal attempts run one at a time and each takes minutes: how many failures per hour can the host heal, and does the queue need per-org fairness? Measure in Phase 4's local mode.
 
 ## 16. Decision log
 
@@ -588,8 +595,9 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 | D3 | 2026-09-27 | Tenants are organizations and personal accounts; the installer becomes OWNER after a verified sign-in; everyone else is invite-only (§5.2, §10) | Near-zero cost, and lets solo developers and small teams try PipeHeal. The installer check stops anyone claiming an installation from the webhook alone. |
 | D4 | 2026-09-27 | Unit of healing: one failure per repo + commit, 5-minute collection window, one attempt and one PR per broken commit (§2.1) | Lint and test failures on the same commit get fixed together, avoiding duplicate PRs, and it fits "one active heal per branch". |
 | D5 | 2026-09-27 | Watched workflows are opt-in per workflow, with CI-looking ones pre-selected; the flaky re-run happens at most once, only on failed jobs, never where a job uses `environment:` (§2.1, §6.2) | Re-runs spend the customer's CI minutes and can deploy again; release and deploy workflows mostly fail for reasons we don't heal. |
-| D6 | 2026-09-27 | Anthropic in development: a dedicated workspace with a hard spend cap, key only in the local `.env`; automated tests never call the real API (§6.2, §7.5) | Keeps spend bounded and tests deterministic. |
+| D6 | 2026-09-27 | (Superseded by D11.) Anthropic in development: a dedicated workspace with a hard spend cap, key only in the local `.env`; automated tests never call the real API (§6.2, §7.5) | Keeps spend bounded and tests deterministic. |
 | D7 | 2026-09-27 | Engineering defaults accepted without objection: versions in §4.2, healer path `.github/workflows/pipeheal.yml`, runner hardening (§5.3), OIDC `actor`/`run_id` binding (§5.4), state timeouts and delivery reconciler (§2.2), snapshot/fixture test globs (§8.3), no auth bypass in local mode (§12) | Raised in the alignment review; see `docs/PROGRESS.md`. |
 | D8 | 2026-09-27 | Keep GitHub user access tokens after sign-in, encrypted with Better Auth's `encryptOAuthTokens` (§5.2) | Chosen by Malek over verify-then-discard: onboarding can list the user's installations without a second sign-in; a database leak alone doesn't expose usable tokens. |
 | D9 | 2026-09-27 | The GitHub App requests the account permission "Email addresses: read" (§5.1) | Better Auth needs an email at sign-in, and Phase 6 notifications use it. |
 | D10 | 2026-09-27 | The App requests the organization permission "Members: read"; OWNER binding requires the installer to be the personal account or an active org admin (§5.1, §5.2) | Chosen by Malek. Otherwise a repository admin who installed the App on a few repos could own the whole organization's tenant (P1.3 security review). |
+| D11 | 2026-11-25 | Self-hosted open-weight models on Ollama replace the Anthropic API, for triage and healing, in development and production (§3, §4, §7.5, §12, §13). Default `qwen3:14b` for both. Supersedes D6. | Chosen by Malek: the application's host has a GPU (RTX 3060 12 GB), so no per-token cost and no third-party model provider. Trade-offs: one GPU serializes model calls, and a 14B model heals less than a frontier model (measured by the Phase 8 evals). |
