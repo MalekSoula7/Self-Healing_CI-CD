@@ -29,3 +29,12 @@ export {
   type HunkLine,
   type LineDiff,
 } from "./diff";
+export {
+  effectivePolicy,
+  looserThan,
+  type EffectivePolicy,
+  type LayerName,
+  type PolicyLayers,
+  type Provenance,
+  type ScopeGlobs,
+} from "./merge";

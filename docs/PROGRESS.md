@@ -607,3 +607,16 @@ Newest entry at the bottom. One entry per task. Format:
   - Index accesses the algorithm guarantees go through `item()`, which throws instead of silently defaulting: a default would make a wrong diff look right.
 - Tests: 16, including two fast-check properties over 500 random pairs each (applying the hunks to the old text gives the new text, line counts and hunk sizes agree; never worse than replacing everything; empty only when nothing changed), minimality on an interleaved case, the fallback, and performance. Mutation-checked: swapping additions and deletions in the backtrack fails most tests. Policy coverage 99.4% statements, 99.2% branches (the one uncovered branch is `item()`'s "can't happen" throw). Full suite 1,079.
 - Dependency: `fast-check` (dev, policy): property-based tests, which SPEC asks for in P3.3 as well.
+
+## 2026-11-25 · P3.3 · Layer merge with provenance
+
+- Decision **D13 (Malek):** org defaults + guardrails. Org defaults and the repo dashboard settings override (an admin may loosen); `.pipeheal.yml`, `code` custom rules and org guardrails only tighten. SPEC §8.1, §8.4, §15, §16 updated.
+- Done (`packages/policy/src/merge.ts`, pure; tests first):
+  - `effectivePolicy({ orgDefaults, repo, repoFile, orgGuardrails })` returns `{ policy, provenance }`. Every layer is re-parsed with `policyLayerSchema`, since callers will pass stored JSON and file contents.
+  - `EffectivePolicy` differs from `PolicyRules` where a conjunction isn't one glob list: `paths.allowAll` and `scope.*.includeAll` keep every layer's list (a path must match a glob in each). P3.4's path checks and the scope filter read these.
+  - Provenance: for each field (`limits.maxFilesChanged`, `paths.deny`, ...) the layers its value comes from. Single values name the layer that set them, or every layer that asked for the same value; lists name every layer that contributed. A code rule shows as `custom:<layer>:<id>`.
+  - Every field is described once (how to read, override, tighten and compare it), so the merge and `looserThan` can't disagree.
+  - `looserThan(policy, layer)`: the fields where a policy is looser than a layer, in field order. Conservative for glob lists: it compares lists, not what they match.
+- Tests: 11, including three fast-check properties (never looser than the guardrails or the repo file, over 500 random layer sets; adding a tightening layer never loosens; limits within plan maximums). Policy: 53 tests. Full suite 1,090.
+- Raised (SPEC §15): `.pipeheal.yml` can declare custom rules, so a `judge` rule's text comes from anyone who can push; the P4.7 judge must treat it as untrusted data.
+- `policy-red-team`: still deferred to P3.6, once the checks exist to attack; the merge's properties are covered by the fast-check tests.

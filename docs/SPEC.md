@@ -338,11 +338,12 @@ All models are open-weight and self-hosted on Ollama (D11), reached at `OLLAMA_U
 
 ## 8. Policy engine (`packages/policy`)
 
-### 8.1 Layers and precedence
-`invariants` → `org default` → `repo (dashboard)` → `repo file (.pipeheal.yml on default branch)`.
-**Most restrictive wins.** Repo layers can only tighten. Only org admins can loosen org defaults, and never below invariants or plan limits. The UI shows the effective policy with provenance: which layer set each value.
+### 8.1 Layers and precedence (D13)
+Two kinds of layers, applied in this order:
+1. **Override** (a later layer replaces the values it sets, and may loosen them): system defaults (§8.3) → org defaults → repo (dashboard). Only org admins edit these.
+2. **Tighten** (most restrictive wins, §8.4): repo file (`.pipeheal.yml` on the default branch, which anyone who can push may edit) → the compiled form of each `code` custom rule → org guardrails.
 
-Open for Phase 3 (§15): as written, no repo can be looser than the org defaults, so the defaults act as a floor for every repo. We will likely split org *defaults* (overridable per repo) from org *guardrails* (a ceiling no layer can loosen). Decide before P3.3.
+Invariants (§8.2) aren't a layer: code enforces them whatever the policy says. Plan maximums (`LIMIT_CAPS`) bound every layer's limits when it is parsed. So nothing is ever looser than the org guardrails, `.pipeheal.yml` can only add restrictions, and an admin can still loosen a default for one repository. The UI shows the effective policy with provenance: the layers each value comes from (`effectivePolicy` in `packages/policy`).
 
 ### 8.2 Invariants (hard-coded, not configurable)
 - `INV-GITHUB-DIR`: no changes under `.github/**`
@@ -408,7 +409,15 @@ type CustomRule = {
 In code (`packages/policy`, P3.1): every limit has a plan maximum no layer can exceed (`LIMIT_CAPS`: 50 files, 2,000 lines, 5 attempts, 30 iterations, 2,000,000 model tokens, 25 minutes, since the healer job times out at 30). Globs are repository-relative POSIX. The schemas are strict: an unknown key is an error, because a typo silently ignored could leave a rule looser than meant. A complete policy fills defaults (`policyRulesSchema`); a single layer is parsed as written, without defaults (`policyLayerSchema`), so the merge can tell what each layer set.
 
 ### 8.4 Merge semantics
-Deny lists: union. Allow lists: intersection when several layers set them. Forbid flags: OR. Limits: minimum. Categories: intersection. `dependencies.mode`: most restrictive (`frozen` < `patch` < `minor` < `any`). `tests.mode`: `source_only` beats `may_edit_tests`. Property-based tests must prove that the merged policy is never less restrictive than any input layer.
+An override replaces each value its layer sets. Tightening, field by field:
+- Deny lists, `tests.testGlobs`, branch and workflow excludes: union.
+- Allow lists and branch and workflow includes: a path or name must match every layer's list. The effective policy keeps them all (`paths.allowAll`, `scope.*.includeAll`), since the intersection of two glob lists isn't a glob list. An override replaces them with its own list.
+- Forbid flags, `protectedConfigs`, `review.requestCommitAuthor`: `true` wins. `dependencies.allowNew`, `scope.retryBeforeHeal`: `false` wins.
+- Limits: minimum. Categories: intersection.
+- `dependencies.mode`: most restrictive (`frozen` < `patch` < `minor` < `any`). `tests.mode`: `source_only` beats `may_edit_tests`. `review.draftBelowConfidence`: more drafting wins (`medium` beats `low` beats `never`).
+- Custom rules: every layer's rules apply, each labelled with its layer; a `code` rule's compiled form tightens like a layer.
+
+Property-based tests (fast-check) prove that the effective policy is never looser than the repo file or the org guardrails, whatever the other layers say; that adding a tightening layer never loosens it; and that limits stay within plan maximums. `looserThan(policy, layer)` lists the fields where a policy is looser than a layer.
 
 ### 8.5 Static checks (on diffs the server recomputed from full old/new file contents)
 Each check reads `Change { path, oldPath, status, oldKind, newKind, isBinary, modeChanged, oldContent, newContent, hunks, addedLines, removedLines }` (P3.2: `oldKind`/`newKind` say whether each side is absent, text, binary, a symlink or a submodule, for INV-FILE-TYPES) and returns `Violation { ruleId, path, line?, message, hint }`.
@@ -580,7 +589,8 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 1:** does creating the `pipeheal` label need Issues: write, or is Pull requests: write enough? Verify in P1.4 before registering the App.
 - **Phase 1 (resolved, D8):** GitHub user access tokens are kept, encrypted at rest (§5.2).
 - **Phase 1 (resolved, D10):** who can become OWNER: the installer, when GitHub confirms they are the personal account or an org admin (§5.2).
-- **Phase 3:** policy precedence: split org defaults from org guardrails (§8.1). Merge rules are missing for `scope.branches`, `scope.workflows`, `review.*`, `retryBeforeHeal` and `customRules`.
+- **Phase 3 (resolved, D13):** org defaults are split from org guardrails (§8.1); every field has a merge rule (§8.4).
+- **Phase 3:** `.pipeheal.yml` may declare custom rules. A `judge` rule's text is then written by anyone who can push, so the judge (P4.7) must treat it as untrusted data, like the diff.
 - **Phase 4:** async step protocol instead of ~2-minute synchronous requests (§3.1).
 - **Phase 4:** reserve budget atomically before each model call (worst-case estimate per call, org monthly budget with concurrent attempts), not only check it after.
 - **Phase 4:** redaction beyond CI logs. The recent-changes diff and commit messages already go through the log redactor (P2.5). Tool output (`read_file`, `search_code`) needs a design, because redacting it breaks `apply_edit`'s exact matching.
@@ -607,3 +617,4 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 | D10 | 2026-09-27 | The App requests the organization permission "Members: read"; OWNER binding requires the installer to be the personal account or an active org admin (§5.1, §5.2) | Chosen by Malek. Otherwise a repository admin who installed the App on a few repos could own the whole organization's tenant (P1.3 security review). |
 | D11 | 2026-11-25 | Self-hosted open-weight models on Ollama replace the Anthropic API, for triage and healing, in development and production (§3, §4, §7.5, §12, §13). Default `qwen3:14b` for both. Supersedes D6. | Chosen by Malek: the application's host has a GPU (RTX 3060 12 GB), so no per-token cost and no third-party model provider. Trade-offs: one GPU serializes model calls, and a 14B model heals less than a frontier model (measured by the Phase 8 evals). |
 | D12 | 2026-11-25 | The per-attempt cost cap becomes a model-token cap: `limits.maxModelTokensPerAttempt`, default 300,000, plan maximum 2,000,000 (§8.2 INV-CAPS, §8.3) | Chosen by Malek. With self-hosted models (D11) a dollar cap never triggers; tokens are what an attempt spends on the GPU, and Ollama reports them per call. The wall-clock cap stays. |
+| D13 | 2026-11-25 | Org defaults and the repo dashboard override (an admin may loosen); `.pipeheal.yml`, `code` custom rules and org guardrails only tighten (§8.1, §8.4) | Chosen by Malek over "most restrictive wins everywhere", where the org defaults were a floor no repository could go below. Guardrails keep a ceiling; the repo file, which anyone who can push may edit, still can't loosen anything. |
