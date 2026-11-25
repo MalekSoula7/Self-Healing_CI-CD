@@ -566,3 +566,29 @@ Newest entry at the bottom. One entry per task. Format:
   - for development over the LAN, make Ollama listen beyond localhost (`OLLAMA_HOST=0.0.0.0`) with the firewall allowing only your LAN, and put `OLLAMA_URL=http://<that machine's LAN IP>:11434` in this machine's `.env`;
   - optionally `OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0`, which roughly halve the context's memory.
   - In production the app runs there and uses `http://localhost:11434`; Ollama should then listen on localhost only.
+
+## 2026-11-25 · CHECKPOINT 2b · Acceptance run deferred
+
+- Malek is downloading `qwen3:14b` on the Ollama machine and asked to keep developing. The CHECKPOINT 2b acceptance run (each `pnpm break` scenario detected, classified, with recent changes and a flaky check; no planted secret anywhere) needs that model and the dev servers, so it stays open, unticked in PLAN, and comes back once `OLLAMA_URL` points at the model.
+- Open decision kept as specified until Malek says otherwise: flaky re-runs for every category (SPEC §6.2 step 8), not only `test`, `infra` and `unknown`.
+
+## 2026-11-25 · P3.1 · Policy rules schema, defaults, invariants
+
+- Done (`packages/policy`, pure; tests first):
+  - `policyRulesSchema`: SPEC §8.3 in zod. Every missing value gets its default, through factories so parsed policies never share arrays. `DEFAULT_POLICY` is the frozen result of parsing `{}`.
+  - `policyLayerSchema`: one layer exactly as written, no defaults, for P3.3's merge to tell "set" from "left alone".
+  - Both share the same field rules and are strict: an unknown key is an error (a typo silently ignored could leave a rule looser than meant).
+  - Globs must be repository-relative POSIX: no leading `/` or `./`, no `..`, no backslash, no control characters, at most 300 characters and 200 per list. Matching semantics are P3.4's.
+  - Limits are integers from 1 up to plan maximums (`LIMIT_CAPS`, INV-CAPS): 50 files, 2,000 lines, 5 attempts, 30 iterations, 2,000,000 model tokens, 25 minutes (the healer job times out at 30).
+  - Custom rules: `CR-n` IDs, unique; a `code` rule must carry its compiled form (a layer, without custom rules of its own), and a `judge` rule must not; at most 50.
+  - `scope.categories` accepts only SPEC §6.1's healable categories (`HEALABLE_CATEGORIES`).
+  - `INVARIANTS` (the seven of §8.2) and `INVARIANT_PATHS` (INV-GITHUB-DIR and INV-SECRETS globs), deep-frozen. Their checks are P3.4's.
+- Decisions:
+  - **D12 (Malek):** `maxCostUsdPerAttempt` becomes `maxModelTokensPerAttempt` (default 300,000). With self-hosted models a dollar cap never triggers.
+  - Mine, recorded in SPEC §8.3:
+    - default `scope.branches`/`scope.workflows` include is `**`, since SPEC's `*` wouldn't match `feature/x` under glob rules;
+    - `Dockerfile*` and `docker-compose*` become `**/Dockerfile*` and `**/docker-compose*`, to match anywhere as clearly intended;
+    - `review` defaults `requestCommitAuthor: true` and `draftBelowConfidence: "low"` ("draft when confidence is at or below"), which SPEC hadn't defined.
+- Tests: 26 policy tests, coverage 100%. Mutation-checked: a loose (non-strict) object and a missing code-rule check each fail a test. Full suite 1,063.
+- `policy-red-team` not run for this task: there's no engine to attack yet (only the schema). It runs in P3.6, after the checks exist.
+- Still open for P3.3 (SPEC §8.1/§15): split org *defaults* from org *guardrails* before writing the merge.

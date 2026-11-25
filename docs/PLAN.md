@@ -70,7 +70,7 @@ Acceptance: each `break.ts` scenario shows up within ~1 minute and has the right
 
 ## Phase 3: Policy engine (the core of the product)
 
-- [ ] **P3.1** `PolicyRules` zod schema, defaults, invariants as code (SPEC §8.2–8.3). Export types.
+- [x] **P3.1** `PolicyRules` zod schema, defaults, invariants as code (SPEC §8.2–8.3). Export types.
 - [ ] **P3.2** Diff model: build `Change { path, oldPath, status, isBinary, modeChanged, oldContent, newContent, hunks }` from old/new file contents. Tests.
 - [ ] **P3.3** Layer merge with provenance (SPEC §8.4). Property-based tests (fast-check): the merged policy is never less restrictive than any layer.
 - [ ] **P3.4** Static checks, one module per family (SPEC §8.5), each with allowed and forbidden fixtures in `packages/policy/fixtures/`. Test-first. INV-GITHUB-DIR and path rules use the same NTFS/HFS-aware normalizer as `packages/github`'s `assertWritablePath` (move it to `packages/shared`).

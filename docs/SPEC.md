@@ -351,14 +351,14 @@ Open for Phase 3 (§15): as written, no repo can be looser than the org defaults
 - `INV-TEST-DELETE`: no deletion or rename-away of test files
 - `INV-BRANCH`: writes only to `pipeheal/*` branches created by the App; no merge; no force-push
 - `INV-FORKS`: never act on fork PRs
-- `INV-CAPS`: attempts, iterations, cost and time are always capped (plan maximums)
+- `INV-CAPS`: attempts, iterations, model tokens and time are always capped (plan maximums, `LIMIT_CAPS` in `packages/policy`; D12)
 
 ### 8.3 Rules schema (zod in code; TypeScript shape here)
 
 ```ts
 type PolicyRules = {
   paths: {
-    deny: string[];          // globs. Default: ["infra/**","terraform/**","**/migrations/**","Dockerfile*","docker-compose*"]
+    deny: string[];          // globs. Default: ["infra/**","terraform/**","**/migrations/**","**/Dockerfile*","**/docker-compose*"]
     allow?: string[];        // optional whitelist mode: only these may change
   };
   protectedConfigs: boolean; // default true: tsconfig*, jest/vitest/playwright config, pytest.ini, setup.cfg,
@@ -381,16 +381,19 @@ type PolicyRules = {
     maxLinesChanged: number;       // default 150
     maxAttemptsPerFailure: number; // default 2
     maxIterationsPerAttempt: number; // default 10
-    maxCostUsdPerAttempt: number;  // default 1.00
+    maxModelTokensPerAttempt: number; // default 300,000 (input + output across the attempt; D12)
     maxWallClockMinutes: number;   // default 25
   };
   scope: {
-    branches: { include: string[]; exclude: string[] }; // default include ["*"]
+    branches: { include: string[]; exclude: string[] }; // default include ["**"] (any branch, slashes included)
     workflows: { include: string[]; exclude: string[] }; // narrows the repo's selected workflows (§2.1), never widens
-    categories: Category[];        // default all healable ones except "dependency"
+    categories: HealableCategory[]; // only §6.1's healable categories; default all of them except "dependency"
     retryBeforeHeal: boolean;      // default true
   };
-  review: { requestCommitAuthor: boolean; draftBelowConfidence: "low" | "medium" | "never" };
+  review: {
+    requestCommitAuthor: boolean;                     // default true
+    draftBelowConfidence: "low" | "medium" | "never"; // draft when confidence is at or below it; default "low"
+  };
   customRules: CustomRule[];
 };
 
@@ -401,6 +404,8 @@ type CustomRule = {
   compiled?: Partial<PolicyRules>; // present when enforcement === "code", confirmed by a user
 };
 ```
+
+In code (`packages/policy`, P3.1): every limit has a plan maximum no layer can exceed (`LIMIT_CAPS`: 50 files, 2,000 lines, 5 attempts, 30 iterations, 2,000,000 model tokens, 25 minutes, since the healer job times out at 30). Globs are repository-relative POSIX. The schemas are strict: an unknown key is an error, because a typo silently ignored could leave a rule looser than meant. A complete policy fills defaults (`policyRulesSchema`); a single layer is parsed as written, without defaults (`policyLayerSchema`), so the merge can tell what each layer set.
 
 ### 8.4 Merge semantics
 Deny lists: union. Allow lists: intersection when several layers set them. Forbid flags: OR. Limits: minimum. Categories: intersection. `dependencies.mode`: most restrictive (`frozen` < `patch` < `minor` < `any`). `tests.mode`: `source_only` beats `may_edit_tests`. Property-based tests must prove that the merged policy is never less restrictive than any input layer.
@@ -601,3 +606,4 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 | D9 | 2026-09-27 | The GitHub App requests the account permission "Email addresses: read" (§5.1) | Better Auth needs an email at sign-in, and Phase 6 notifications use it. |
 | D10 | 2026-09-27 | The App requests the organization permission "Members: read"; OWNER binding requires the installer to be the personal account or an active org admin (§5.1, §5.2) | Chosen by Malek. Otherwise a repository admin who installed the App on a few repos could own the whole organization's tenant (P1.3 security review). |
 | D11 | 2026-11-25 | Self-hosted open-weight models on Ollama replace the Anthropic API, for triage and healing, in development and production (§3, §4, §7.5, §12, §13). Default `qwen3:14b` for both. Supersedes D6. | Chosen by Malek: the application's host has a GPU (RTX 3060 12 GB), so no per-token cost and no third-party model provider. Trade-offs: one GPU serializes model calls, and a 14B model heals less than a frontier model (measured by the Phase 8 evals). |
+| D12 | 2026-11-25 | The per-attempt cost cap becomes a model-token cap: `limits.maxModelTokensPerAttempt`, default 300,000, plan maximum 2,000,000 (§8.2 INV-CAPS, §8.3) | Chosen by Malek. With self-hosted models (D11) a dollar cap never triggers; tokens are what an attempt spends on the GPU, and Ollama reports them per call. The wall-clock cap stays. |
