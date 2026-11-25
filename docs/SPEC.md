@@ -481,7 +481,7 @@ Iterations: <n> · Model: <id> · Cost: $<x> · [Full timeline](<dashboard link>
 - `Policy` (orgId, repoId nullable for org default, version, rules JSON, createdById) with history
 - `PipelineFailure` (orgId, repoId, headSha, headBranch, category, confidence, summary, status, skipReason, windowClosesAt, windowClosedAt, recentChanges JSON (the base commit and how it was found, plus the redacted, budgeted diff, §6.2 step 7), createdAt). Unique on (repoId, headSha) (§2.1).
   - status: DETECTED | TRIAGED | SKIPPED | FLAKY | QUEUED | HEALING | PR_OPENED | VERIFIED | UNVERIFIED | NEEDS_HUMAN | NEEDS_SETUP | NOT_REPRODUCIBLE | FAILED
-- `FailedRun` (orgId, repoId, failureId, runId, runAttempt, workflowId, workflowName, workflowPath, conclusion, rerunByUs, lateArrival, createdAt). Unique on (repoId, runId); a higher `runAttempt` updates the row.
+- `FailedRun` (orgId, repoId, failureId, runId, runAttempt, workflowId, workflowName, workflowPath, conclusion, rerunByUs, rerunFromAttempt, lateArrival, createdAt). Unique on (repoId, runId); a higher `runAttempt` updates the row. The flaky re-run is pending while `runAttempt` still equals `rerunFromAttempt`.
 - `FailedJob` (orgId, failedRunId, githubJobId, name, failedStep, category, confidence, summary, errorWindow (redacted), signals JSON)
 - `HealAttempt` (orgId, failureId, attemptNo, status, sessionTokenHash, targetSha, promptVersion, model, iterations, inputTokens, outputTokens, costUsd, policyHash, policyResult JSON, prNumber, prUrl, branch, confidence, outcome: MERGED | CLOSED | OPEN, startedAt, finishedAt)
 - `AgentEvent` (attemptId, seq, type: MODEL_CALL | TOOL_CALL | TOOL_RESULT | POLICY_CHECK | INFO, payload JSON, createdAt)

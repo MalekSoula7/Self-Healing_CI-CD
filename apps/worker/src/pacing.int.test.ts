@@ -116,6 +116,7 @@ describe("webhooks worker with a rate-limited installation", () => {
           scheduleWindowClose: () => Promise.resolve(),
           enqueueTriage: () => Promise.resolve(),
           enqueueRecentChanges: () => Promise.resolve(),
+          enqueueFlakyCheck: () => Promise.resolve(),
         },
         pacing,
       },

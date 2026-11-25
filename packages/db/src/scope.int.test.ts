@@ -132,6 +132,8 @@ interface Tenant {
   /** An open failure of `repo`, with one failed run and job. */
   failure: PipelineFailure;
   failureRun: FailedRunInput;
+  /** The failure's one failed run (its row ID). */
+  failedRunId: string;
   /** The failure's one failed job. */
   failedJobId: string;
   admin: User;
@@ -193,6 +195,7 @@ async function createTenant(): Promise<Tenant> {
     workflow,
     failure,
     failureRun,
+    failedRunId: run.id,
     failedJobId: failedJob.id,
     admin,
     member,
@@ -302,6 +305,9 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
     await expect(
       a.system.failures.recordJobTriage(b.failedJobId, { errorWindow: "planted" }),
     ).rejects.toThrow(NotFoundError);
+  },
+  "failures.claimRerun": async () => {
+    await expect(a.system.failures.claimRerun(b.failedRunId)).rejects.toThrow(NotFoundError);
   },
   "failures.recordModelCall": async () => {
     await expect(a.system.failures.recordModelCall(b.failure.id, modelCall())).rejects.toThrow(
@@ -482,6 +488,18 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
           headSha: a.failure.headSha,
           lateArrival: false,
         },
+      },
+    ];
+  },
+  "failures.claimRerun": async () => {
+    await a.system.failures.claimRerun(a.failedRunId);
+    return [
+      {
+        actorType: "SYSTEM",
+        actorId: "test",
+        action: "failure.rerun_requested",
+        target: `failure:${a.failure.id}`,
+        metadata: { runId: String(a.failureRun.runId), runAttempt: 1 },
       },
     ];
   },
@@ -1341,6 +1359,30 @@ describe("failures (SPEC §2.1)", () => {
         a.system.failures.recordRecentChanges(a.failure.id, bad as never),
       ).rejects.toThrow(ZodError);
     }
+  });
+
+  it("claims a run for the flaky re-run once, and links the re-run's result to it", async () => {
+    const claimed = await a.system.failures.claimRerun(a.failedRunId);
+    expect(claimed).toMatchObject({ rerunByUs: true, rerunFromAttempt: 1 });
+    await expect(a.system.failures.claimRerun(a.failedRunId)).resolves.toBeNull();
+    const [first, second] = await Promise.all([
+      b.system.failures.claimRerun(b.failedRunId),
+      b.system.failures.claimRerun(b.failedRunId),
+    ]);
+    expect([first, second].filter((run) => run !== null)).toHaveLength(1);
+
+    const passed = await a.system.failures.recordPassedRun(a.repo.id, {
+      runId: a.failureRun.runId,
+      runAttempt: 2,
+    });
+    expect(passed?.outcome).toBe("flaky");
+    const audit = await db.auditLog.findFirstOrThrow({
+      where: { orgId: a.org.id, action: "failure.run_passed" },
+    });
+    expect(audit.metadata).toMatchObject({ rerunByUs: true, runAttempt: 2 });
+    // A run that passed isn't failing any more: nothing to re-run.
+    await db.failedRun.update({ where: { id: a.failedRunId }, data: { rerunByUs: false } });
+    await expect(a.system.failures.claimRerun(a.failedRunId)).resolves.toBeNull();
   });
 
   it("records a model call's tokens and cost exactly", async () => {

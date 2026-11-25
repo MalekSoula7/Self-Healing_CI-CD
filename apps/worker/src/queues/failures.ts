@@ -1,8 +1,8 @@
 // The `failures` queue: the timed and GitHub-heavy steps of a failure's life (SPEC §2.1, §6.2).
 // `close-window` closes the collection window when its time is up, then queues `triage`, which
 // fetches, cleans and redacts the failed jobs' logs and classifies them, then queues
-// `recent-changes` (what changed since the last green commit). Both call GitHub, so their jobs
-// are paced per installation like webhook jobs.
+// `recent-changes` (what changed since the last green commit) and `flaky-check` (re-run the failed
+// jobs once). All three call GitHub, so their jobs are paced per installation like webhook jobs.
 import { NotFoundError, forSystem, type Db } from "@pipeheal/db";
 import type { GitHubApp } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
@@ -15,6 +15,7 @@ import {
   pauseIfRateLimited,
   type InstallationPacing,
 } from "../pacing";
+import { checkFlaky, type FlakyCheckDeps } from "./flaky-check";
 import { resolveRecentChanges } from "./recent-changes";
 import { triageFailure, type FailureTarget, type TriageDeps } from "./triage";
 
@@ -25,7 +26,8 @@ const targetSchema = z
   .strictObject({ orgId: z.uuid(), failureId: z.uuid(), installationId: z.string().regex(/^\d+$/) })
   .transform(({ installationId, ...ids }) => ({ ...ids, installationId: BigInt(installationId) }));
 type FailureJobData = z.input<typeof targetSchema>;
-type FailureJobName = "close-window" | "triage" | "recent-changes";
+type FailureJobName = "close-window" | "triage" | "recent-changes" | "flaky-check";
+const JOB_NAMES = new Set<string>(["close-window", "triage", "recent-changes", "flaky-check"]);
 
 export type FailuresQueue = Queue<FailureJobData, void, FailureJobName>;
 
@@ -40,9 +42,14 @@ export interface FailureJobs {
   enqueueTriage: (target: FailureTarget, key?: string) => Promise<void>;
   /** Resolves what changed since the last green commit. Idempotent: one job per failure. */
   enqueueRecentChanges: (target: FailureTarget) => Promise<void>;
+  /**
+   * Re-runs failed jobs once to tell flaky from real (SPEC §6.2 step 8). Idempotent per `key`,
+   * like triage: each triage (the window's, a late run's) queues its own.
+   */
+  enqueueFlakyCheck: (target: FailureTarget, key?: string) => Promise<void>;
 }
 
-export interface FailuresDeps extends TriageDeps {
+export interface FailuresDeps extends TriageDeps, FlakyCheckDeps {
   db: Db;
   githubApp: GitHubApp | null;
   logger: Logger;
@@ -57,7 +64,7 @@ interface QueueJob {
 }
 
 export async function processFailuresJob(job: QueueJob, deps: FailuresDeps): Promise<void> {
-  if (job.name !== "close-window" && job.name !== "triage" && job.name !== "recent-changes") {
+  if (!JOB_NAMES.has(job.name)) {
     throw new UnrecoverableError(`unknown failures job "${job.name}"`);
   }
   const target = targetSchema.parse(job.data);
@@ -76,8 +83,13 @@ export async function processFailuresJob(job: QueueJob, deps: FailuresDeps): Pro
         await resolveRecentChanges(deps, target, log);
         return;
       }
+      if (job.name === "flaky-check") {
+        await checkFlaky(deps, target, log);
+        return;
+      }
       await triageFailure(deps, target, log);
       await deps.jobs.enqueueRecentChanges(target);
+      await deps.jobs.enqueueFlakyCheck(target, triageKey(job.id, target.failureId));
     } catch (error) {
       await pauseIfRateLimited(deps.pacing, target.installationId, error);
       throw error;
@@ -87,6 +99,12 @@ export async function processFailuresJob(job: QueueJob, deps: FailuresDeps): Pro
     if (!(error instanceof NotFoundError)) throw error;
     log.info("failure no longer exists");
   }
+}
+
+/** A late run's triage job ID ends with its key (`triage-<failure>-<run>-<attempt>`). */
+function triageKey(jobId: string | undefined, failureId: string): string | undefined {
+  const prefix = `triage-${failureId}-`;
+  return jobId?.startsWith(prefix) === true ? jobId.slice(prefix.length) : undefined;
 }
 
 export function createFailuresQueue(
@@ -126,6 +144,11 @@ export function failureJobs(queue: FailuresQueue): FailureJobs {
     async enqueueRecentChanges(target) {
       await queue.add("recent-changes", jobData(target), {
         jobId: `recent-changes-${target.failureId}`,
+      });
+    },
+    async enqueueFlakyCheck(target, key) {
+      await queue.add("flaky-check", jobData(target), {
+        jobId: `flaky-check-${target.failureId}${key === undefined ? "" : `-${key}`}`,
       });
     },
     async enqueueTriage(target, key) {

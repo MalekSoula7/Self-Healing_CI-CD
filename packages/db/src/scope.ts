@@ -530,7 +530,8 @@ function buildSystemScope(ctx: ScopeContext) {
           await writeAudit(tx, orgId, actor, {
             action: "failure.run_passed",
             target: auditTarget("failure", failure.id),
-            metadata: { runId: String(runId), runAttempt },
+            // rerunByUs: our flaky check's re-run passed (SPEC §6.2 step 8).
+            metadata: { runId: String(runId), runAttempt, rerunByUs: run.rerunByUs },
           });
           const failing = await tx.failedRun.count({
             where: { orgId, failureId: failure.id, conclusion: { not: "success" } },
@@ -643,6 +644,30 @@ function buildSystemScope(ctx: ScopeContext) {
             metadata: { category, confidence, status: updated.status },
           });
           return updated;
+        });
+      },
+
+      /**
+       * Claims a failed run for the flaky check's re-run (SPEC §6.2 step 8): at most once per run,
+       * atomically, before GitHub is asked, so a retried job can never re-run it twice. Returns
+       * the run when claimed; null when it was claimed before or isn't failing.
+       */
+      async claimRerun(failedRunId: string) {
+        const id = requireId(failedRunId, "failed run");
+        return db.$transaction(async (tx) => {
+          const run = await tx.failedRun.findFirst({ where: { id, orgId } });
+          if (run === null) throw new NotFoundError("failed run not found");
+          const { count } = await tx.failedRun.updateMany({
+            where: { id, orgId, rerunByUs: false, conclusion: { in: ["failure", "timed_out"] } },
+            data: { rerunByUs: true, rerunFromAttempt: run.runAttempt },
+          });
+          if (count === 0) return null;
+          await writeAudit(tx, orgId, actor, {
+            action: "failure.rerun_requested",
+            target: auditTarget("failure", run.failureId),
+            metadata: { runId: String(run.runId), runAttempt: run.runAttempt },
+          });
+          return { ...run, rerunByUs: true, rerunFromAttempt: run.runAttempt };
         });
       },
 

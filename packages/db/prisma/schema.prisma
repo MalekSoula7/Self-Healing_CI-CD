@@ -308,8 +308,11 @@ model FailedRun {
   /// GitHub's conclusion for `runAttempt`: failure or timed_out, or success once a re-run passed.
   conclusion   String
   htmlUrl      String?
-  /// We asked GitHub to re-run it (flaky check, SPEC §6.2 step 8).
-  rerunByUs    Boolean         @default(false)
+  /// We asked GitHub to re-run it (flaky check, SPEC §6.2 step 8). At most once per run.
+  rerunByUs        Boolean         @default(false)
+  /// The attempt we asked GitHub to re-run. While `runAttempt` still equals it, the re-run's
+  /// result hasn't arrived; a newer attempt is that result.
+  rerunFromAttempt Int?
   /// Attached after the failure's collection window closed (SPEC §2.1).
   lateArrival  Boolean         @default(false)
   createdAt    DateTime        @default(now())

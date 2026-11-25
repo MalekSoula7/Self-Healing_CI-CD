@@ -68,6 +68,7 @@ const openPacing: InstallationPacing = {
 function deps(overrides: Partial<FailuresDeps> = {}) {
   const triaged: { target: FailureTarget; key: string | undefined }[] = [];
   const recentChanges: FailureTarget[] = [];
+  const flakyChecks: { target: FailureTarget; key: string | undefined }[] = [];
   const jobs: FailureJobs = {
     scheduleWindowClose: () => Promise.resolve(),
     enqueueTriage: (target, key) => {
@@ -76,6 +77,10 @@ function deps(overrides: Partial<FailuresDeps> = {}) {
     },
     enqueueRecentChanges: (target) => {
       recentChanges.push(target);
+      return Promise.resolve();
+    },
+    enqueueFlakyCheck: (target, key) => {
+      flakyChecks.push({ target, key });
       return Promise.resolve();
     },
   };
@@ -88,7 +93,7 @@ function deps(overrides: Partial<FailuresDeps> = {}) {
     triageModel: null,
     ...overrides,
   };
-  return { deps: all, triaged, recentChanges };
+  return { deps: all, triaged, recentChanges, flakyChecks };
 }
 
 /** An org with a repo and a failure with one failed job; its window still open. */
@@ -830,5 +835,213 @@ describe("recent-changes job (SPEC §6.2 step 7)", () => {
       processFailuresJob(recentChangesJob(target), deps({ pacing }).deps),
     ).rejects.toThrow(RateLimitedError);
     expect(await storedChanges(target.failureId)).toBeNull();
+  });
+});
+
+describe("flaky-check job (SPEC §6.2 step 8)", () => {
+  const CI_YAML = "on: [push]\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps: []\n";
+  const DEPLOY_YAML =
+    "on: [push]\njobs:\n  ship:\n    runs-on: ubuntu-latest\n    environment: production\n    steps: []\n";
+
+  function flakyCheckJob(target: FailureTarget) {
+    return {
+      name: "flaky-check",
+      data: { ...target, installationId: String(target.installationId) },
+    };
+  }
+
+  /** A triaged failure on a watched workflow (CI, GitHub workflow ID 1). */
+  async function triagedFailure(options: { selected?: boolean; usesEnvironment?: boolean } = {}) {
+    const opened = await openFailure();
+    await opened.system.workflows.syncInstalled(opened.repoId, [
+      {
+        githubWorkflowId: 1n,
+        path: ".github/workflows/ci.yml",
+        name: "CI",
+        selected: options.selected ?? true,
+        usesEnvironment: options.usesEnvironment ?? false,
+      },
+    ]);
+    await opened.system.failures.recordTriage(opened.target.failureId, {
+      category: "test",
+      confidence: 0.9,
+      summary: "1 failing test",
+    });
+    const run = await db.failedRun.findUniqueOrThrow({ where: { id: opened.failedRunId } });
+    return { ...opened, runId: run.runId };
+  }
+
+  /** GitHub for this repo: the workflow file at the failing commit, the run, and re-runs. */
+  function mockRerun(fullName: string, runId: bigint, workflowYaml: string | null, status = 201) {
+    const calls: string[] = [];
+    const api = `https://api.github.com/repos/${fullName}`;
+    github.use(
+      http.get(`${api}/contents/*`, ({ request }) => {
+        calls.push(`file ${new URL(request.url).searchParams.get("ref") ?? ""}`);
+        if (workflowYaml === null)
+          return HttpResponse.json({ message: "Not Found" }, { status: 404 });
+        const content = Buffer.from(workflowYaml).toString("base64");
+        return HttpResponse.json({
+          type: "file",
+          path: ".github/workflows/ci.yml",
+          size: workflowYaml.length,
+          encoding: "base64",
+          content,
+        });
+      }),
+      http.get(`${api}/actions/runs/${String(runId)}`, () =>
+        HttpResponse.json({
+          id: Number(runId),
+          run_attempt: 1,
+          workflow_id: 1,
+          name: "CI",
+          path: ".github/workflows/ci.yml",
+          head_sha: "a".repeat(40),
+          head_branch: "main",
+          event: "push",
+          status: "completed",
+          conclusion: "failure",
+          html_url: "https://github.com/x/y/actions/runs/1",
+          repository: { id: 1, full_name: fullName },
+          head_repository: { id: 1, full_name: fullName },
+        }),
+      ),
+      http.post(`${api}/actions/runs/${String(runId)}/rerun-failed-jobs`, () => {
+        calls.push("rerun");
+        return status === 201
+          ? new HttpResponse(null, { status: 201 })
+          : HttpResponse.json({ message: "Refused" }, { status });
+      }),
+    );
+    return calls;
+  }
+
+  it("is queued by triage, under the triage job's key", async () => {
+    const { target, repoFullName, githubJobId } = await openFailure();
+    mockToken();
+    mockLog(repoFullName, githubJobId, LOG);
+    const { deps: d, flakyChecks } = deps();
+    const data = { ...target, installationId: String(target.installationId) };
+
+    await processFailuresJob({ id: `triage-${target.failureId}`, name: "triage", data }, d);
+    await processFailuresJob({ id: `triage-${target.failureId}-77-2`, name: "triage", data }, d);
+
+    expect(flakyChecks).toEqual([
+      { target, key: undefined },
+      { target, key: "77-2" },
+    ]);
+  });
+
+  it("re-runs the failed jobs once, reading the workflow at the failing commit", async () => {
+    const { target, repoFullName, failedRunId, runId } = await triagedFailure();
+    mockToken();
+    const calls = mockRerun(repoFullName, runId, CI_YAML);
+
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+
+    expect(calls).toEqual([`file ${"a".repeat(40)}`, "rerun"]);
+    expect(await db.failedRun.findUniqueOrThrow({ where: { id: failedRunId } })).toMatchObject({
+      rerunByUs: true,
+      rerunFromAttempt: 1,
+    });
+    const audit = await db.auditLog.findFirstOrThrow({
+      where: { orgId: target.orgId, action: "failure.rerun_requested" },
+    });
+    expect(audit.metadata).toMatchObject({ runId: String(runId), runAttempt: 1 });
+  });
+
+  it("never re-runs a workflow that declares an environment at the failing commit, and remembers it", async () => {
+    const { target, repoId, repoFullName, failedRunId, runId } = await triagedFailure();
+    mockToken();
+    const calls = mockRerun(repoFullName, runId, DEPLOY_YAML);
+
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+
+    expect(calls).toEqual([`file ${"a".repeat(40)}`]);
+    const workflow = await db.repoWorkflow.findFirstOrThrow({ where: { repoId } });
+    expect(workflow.usesEnvironment).toBe(true);
+    expect(await db.failedRun.findUniqueOrThrow({ where: { id: failedRunId } })).toMatchObject({
+      rerunByUs: false,
+    });
+  });
+
+  it.each([
+    ["an environment is already known", { usesEnvironment: true }, CI_YAML],
+    ["the workflow is no longer watched", { selected: false }, CI_YAML],
+    ["the workflow file can't be read", {}, null],
+    ["the workflow file isn't a workflow", {}, "- just\n- a list\n"],
+  ])("doesn't re-run when %s", async (_label, options, yaml) => {
+    const { target, repoFullName, failedRunId, runId } = await triagedFailure(options);
+    mockToken();
+    const calls = mockRerun(repoFullName, runId, yaml);
+
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+
+    expect(calls).not.toContain("rerun");
+    expect(await db.failedRun.findUniqueOrThrow({ where: { id: failedRunId } })).toMatchObject({
+      rerunByUs: false,
+    });
+  });
+
+  it("does nothing when retryBeforeHeal is off", async () => {
+    const { target, repoFullName, runId } = await triagedFailure();
+    mockToken();
+    const calls = mockRerun(repoFullName, runId, CI_YAML);
+
+    await processFailuresJob(flakyCheckJob(target), deps({ retryBeforeHeal: false }).deps);
+
+    expect(calls).toEqual([]);
+  });
+
+  it("only checks a triaged failure", async () => {
+    const { target, repoFullName, runId } = await triagedFailure();
+    await db.pipelineFailure.update({ where: { id: target.failureId }, data: { status: "FLAKY" } });
+    mockToken();
+    const calls = mockRerun(repoFullName, runId, CI_YAML);
+
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+
+    expect(calls).toEqual([]);
+  });
+
+  it("keeps the claim when GitHub refuses the re-run, and never asks again", async () => {
+    const { target, repoFullName, failedRunId, runId } = await triagedFailure();
+    mockToken();
+    const calls = mockRerun(repoFullName, runId, CI_YAML, 403);
+
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+
+    expect(calls.filter((call) => call === "rerun")).toHaveLength(1);
+    expect(await db.failedRun.findUniqueOrThrow({ where: { id: failedRunId } })).toMatchObject({
+      rerunByUs: true,
+    });
+  });
+
+  it("marks the failure FLAKY when the re-run passes", async () => {
+    const { target, system, repoId, repoFullName, runId } = await triagedFailure();
+    mockToken();
+    mockRerun(repoFullName, runId, CI_YAML);
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+
+    // The re-run's result, as the workflow_run processor records it.
+    await system.failures.recordPassedRun(repoId, { runId, runAttempt: 2 });
+
+    expect(
+      await db.pipelineFailure.findUniqueOrThrow({ where: { id: target.failureId } }),
+    ).toMatchObject({ status: "FLAKY" });
+  });
+
+  it("waits, without calling GitHub, while the installation is paused", async () => {
+    const { target } = await triagedFailure();
+    const pacing: InstallationPacing = {
+      ...openPacing,
+      pausedUntil: () => Promise.resolve(new Date(Date.now() + 60_000)),
+    };
+
+    await expect(processFailuresJob(flakyCheckJob(target), deps({ pacing }).deps)).rejects.toThrow(
+      RateLimitedError,
+    );
   });
 });

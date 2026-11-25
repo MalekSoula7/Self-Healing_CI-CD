@@ -59,7 +59,7 @@ Acceptance: installing the App on the sandbox org shows the org and repos in the
 - [x] **P2.3** Error-window extractor and signal parsers for tsc, eslint, jest/vitest, pytest, mypy, ruff, pip/npm install errors. Real log samples in `packages/agent-core/fixtures/logs/`, test-first.
 - [x] **P2.4** Heuristic classifier + `TRIAGE_MODEL` fallback with zod-validated JSON and one retry. Cost recorded.
 - [x] **P2.5** Last-green resolver + recent-changes fetcher with token-budget truncation.
-- [ ] **P2.6** Flaky check: re-run failed jobs once when `retryBeforeHeal` is on, with the guards in SPEC §6.2 step 8 (selected workflows only, never with `environment:`); link the re-run's result to the failure.
+- [x] **P2.6** Flaky check: re-run failed jobs once when `retryBeforeHeal` is on, with the guards in SPEC §6.2 step 8 (selected workflows only, never with `environment:`); link the re-run's result to the failure.
 - [ ] **P2.7** UI: failures list and detail page (category, summary, error window, signals, recent changes).
 
 Acceptance: each `break.ts` scenario shows up within ~1 minute and has the right category once its collection window closes; no planted secret appears in the DB or logs.
@@ -77,7 +77,7 @@ Acceptance: each `break.ts` scenario shows up within ~1 minute and has the right
 - [ ] **P3.5** Behavioral checks: JUnit parser + inventory comparison (SPEC §8.6). Fixtures from Jest, Vitest and pytest reports.
 - [ ] **P3.6** Run the `policy-red-team` subagent. Turn every bypass it finds into a failing fixture, then fix the engine. Repeat until it finds nothing new.
 - [ ] **P3.7** `.pipeheal.yml` loader from the default branch, validated; errors shown in the UI, never crash the pipeline.
-- [ ] **P3.8** Policy UI: org defaults, repo overrides, effective policy with provenance, version history.
+- [ ] **P3.8** Policy UI: org defaults, repo overrides, effective policy with provenance, version history. Wire the effective `retryBeforeHeal` into the flaky check (`FlakyCheckDeps.retryBeforeHeal`, the default until then).
 - [ ] **P3.9** Custom rules: plain-language → structured compiler, confirmation UI, `code` vs `judge` labels (judge runs in P4.7).
 - [ ] **P3.10** Dry run: evaluate a policy against a pasted diff.
 
@@ -98,7 +98,7 @@ Acceptance: coverage ≥ 95% on `packages/policy`; all red-team fixtures rejecte
 - [ ] **P4.5** `packages/heal-action`: JavaScript action bundled to `dist/`. OIDC exchange, install, reproduce, baseline JUnit, tool executor (path-traversal protection, output truncation, commands only from config, args as arrays), final checks, submission upload.
 - [ ] **P4.6** Local mode: `pnpm heal:local --repo examples/demo-node --scenario <name>` runs the same executor inside a Linux Docker container against a local copy of the repo and a local gateway. A dev CLI creates a real attempt and session token; there is no auth bypass (SPEC §12). This is the main dev loop for agent work.
 - [ ] **P4.7** Soft-rule judge (SPEC §8.7 step 3).
-- [ ] **P4.8** Dispatcher: healable + in scope + within budget → create `HealAttempt` → `workflow_dispatch` on the default branch. Missing workflow → `NEEDS_SETUP`.
+- [ ] **P4.8** Dispatcher: healable + in scope + within budget → create `HealAttempt` → `workflow_dispatch` on the default branch. Missing workflow → `NEEDS_SETUP`. Wait while a flaky re-run is pending (`FailedRun.rerunByUs` and `runAttempt` still equal to `rerunFromAttempt`); the §2.2 reconciler gives up on a re-run that never reports.
 
 Acceptance: local mode fixes at least 4 of the 6 fixable demo scenarios; both trap scenarios end in a code fix or `give_up`, never a test change or deletion; every iteration is visible in the DB.
 

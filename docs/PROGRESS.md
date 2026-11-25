@@ -503,3 +503,16 @@ Newest entry at the bottom. One entry per task. Format:
 - Follow-ups:
   - Not seen live yet: push a scenario on a demo repo with the dev servers running and check the stored `recentChanges` (part of CHECKPOINT 2b's acceptance run).
   - Token estimate is a character heuristic; Phase 4 can switch to the API's token counting if prompts get close to their limits.
+
+## 2026-11-25 · P2.6 · Flaky check
+
+- Done:
+  - **`flaky-check` job** (`apps/worker/src/queues/flaky-check.ts`) on the `failures` queue, queued by every triage (the window's, and each late run's under its own key). For a `TRIAGED` failure, each failed or timed-out run not re-run yet gets `rerun-failed-jobs` (never the whole run), when:
+    - its workflow is still selected for the repo;
+    - `environment:` appears neither in the cached `RepoWorkflow.usesEnvironment` nor in the workflow file **at the failing commit** (a branch can add one); an unreadable or unparseable file means no re-run (fail closed); finding one sets the cache;
+    - `retryBeforeHeal` is on (`FlakyCheckDeps.retryBeforeHeal`, default on until the policy engine supplies it, noted in P3.8).
+  - **At most once per run**: `failures.claimRerun` claims the run atomically (`rerunByUs`, and the new `FailedRun.rerunFromAttempt`, migration `20261125…_flaky_rerun`) before GitHub is asked, with audit `failure.rerun_requested`. A retried job, or GitHub refusing the re-run, never leads to a second request: the claim stays (a refusal is logged, and the failure goes on without a flaky check).
+  - **The result** arrives as the run's next attempt through P2.1's paths: passing → `recordPassedRun` (its audit now says `rerunByUs`), FLAKY once every run of the failure passed; failing again → `recordFailedRun` replaces the jobs and they're triaged again (that triage's flaky check finds the run already claimed). The re-run is pending while `runAttempt` still equals `rerunFromAttempt`; P4.8's dispatcher waits on it.
+- Tests: DB (claim once, concurrent claims give one, run_passed audit carries `rerunByUs`, a passed run can't be claimed; cross-org and audit meta-tests); worker integration 11 against Postgres and msw's GitHub (queued by triage under its key; re-run once with the file read at the failing SHA and the claim audited; environment at the failing commit blocks and is cached; cached environment, unwatched workflow, unreadable file, non-workflow YAML; only TRIAGED; `retryBeforeHeal` off; refused re-run keeps the claim and isn't retried; the re-run passing makes it FLAKY; paused installation). Mutation-checked: ignoring `environment:` at the failing commit fails its test. Full suite 974.
+- **For Malek (deviation candidate):** SPEC §6.2 step 8 re-runs failed jobs whatever the category, so a deterministic failure (typecheck, lint, compile, a missing secret) also spends a re-run before healing. Implemented as specified; restricting re-runs to `test`, `infra` and `unknown` would save customer CI minutes and time to a fix. Your call.
+- Follow-ups: a re-run that never reports back is left to the §2.2 reconciler (Phase 5).
