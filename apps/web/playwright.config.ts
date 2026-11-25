@@ -38,6 +38,11 @@ export default defineConfig({
       BETTER_AUTH_SECRET: randomBytes(32).toString("base64url"),
       GITHUB_CLIENT_ID: "e2e-client-id",
       GITHUB_CLIENT_SECRET: "e2e-not-a-secret",
+      // Webhook intake and onboarding settings, also required in production; e2e never uses
+      // them (no Redis in the e2e CI job either: signed-out pages never enqueue).
+      GITHUB_APP_SLUG: "pipeheal-e2e",
+      GITHUB_WEBHOOK_SECRET: randomBytes(32).toString("base64url"),
+      REDIS_URL: "redis://localhost:6379",
     },
     timeout: 180_000,
   },
