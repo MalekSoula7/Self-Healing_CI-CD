@@ -116,7 +116,7 @@ export const dependencies: FixtureFamily = {
       name: "a dependency swapped for a git URL (minor)",
       policy: mode("minor"),
       changes: [edit("package.json", pkg({ zod: "^4.1.0" }), pkg({ zod: "github:someone/zod" }))],
-      violations: ["dependencies.mode"],
+      violations: ["dependencies.allowNew", "dependencies.mode"],
     },
     {
       name: "a new package (patch, no new packages)",

@@ -56,6 +56,10 @@ export function writablePathProblem(path: string): string | null {
   if (GITHUB_DIR.test(segments[0] ?? "")) return "the App never writes under .github/";
   for (const segment of segments) {
     if (GIT_NAME.test(segment)) return "the App never writes .git or .gitmodules";
+    // A Windows 8.3 short name (`ENV~1`, `TERRAF~1`) can alias another file or directory.
+    if (/~\d+(\.[^.]*)?$/.test(segment)) {
+      return "the path can't be checked out safely on Windows or macOS";
+    }
     if (
       HFS_IGNORABLE.test(segment) ||
       WINDOWS_RESERVED.test(segment) ||
@@ -69,23 +73,35 @@ export function writablePathProblem(path: string): string | null {
 }
 
 /**
- * The file a path names on a case-insensitive Windows or macOS checkout, for matching: Unicode
- * NFC (macOS stores decomposed names), lowercase, without the code points macOS ignores, without
- * the trailing dots and spaces Windows drops, and with the 8.3 aliases of `.github` and `.git`
- * spelled out. Two paths with the same canonical form can be the same file somewhere.
+ * What a path can name somewhere, for matching deny-style globs: `\` as `/`, `.` and empty
+ * segments dropped and `..` resolved; compatibility forms and accents folded (NFKD without
+ * combining marks), case folded through upper case (so `ı`, `ſ` and the Kelvin sign fold too),
+ * code points macOS ignores removed, the trailing dots and spaces Windows drops removed, and the
+ * 8.3 aliases of `.github` and `.git` spelled out. It folds more than any one file system does:
+ * deny-style matching only gets stricter. Two paths with the same canonical form can be the same
+ * file somewhere.
  */
 export function canonicalPath(path: string): string {
-  return path
-    .normalize("NFC")
+  const folded = path
+    .replace(/\\/g, "/")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
     .replace(HFS_IGNORABLE_ALL, "")
+    .toUpperCase()
     .toLowerCase()
-    .split("/")
-    .map((segment) => {
-      const trimmed = segment.replace(/[. ]+$/, "");
-      const name = trimmed === "" ? segment : trimmed;
-      if (/^github~\d+$/.test(name)) return ".github";
-      if (/^git~\d+$/.test(name)) return ".git";
-      return name;
-    })
-    .join("/");
+    .normalize("NFC");
+  const segments: string[] = [];
+  for (const segment of folded.split("/")) {
+    const trimmed = segment.replace(/[. ]+$/, "");
+    const name = trimmed === "" ? segment : trimmed;
+    if (name === "" || name === ".") continue;
+    if (name === "..") {
+      segments.pop();
+      continue;
+    }
+    if (/^github~\d+$/.test(name)) segments.push(".github");
+    else if (/^git~\d+$/.test(name)) segments.push(".git");
+    else segments.push(name);
+  }
+  return segments.join("/");
 }

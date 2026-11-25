@@ -57,12 +57,12 @@ describe("checkChanges", () => {
     ).toEqual([]);
   });
 
-  it("doesn't count a test file moved to a name in no language it knows", () => {
+  it("refuses a test file moved even within its test glob", () => {
     expect(
       check([rename("tests/a.test.ts", "tests/a.test.txt", TEST)], {
         tests: { ...EDITABLE, testGlobs: ["tests/**"] },
-      }),
-    ).toEqual([]);
+      }).map((violation) => violation.ruleId),
+    ).toEqual(["INV-TEST-DELETE"]);
   });
 
   it("reports a new package as dependencies.mode while frozen, even if new packages are allowed", () => {
@@ -86,5 +86,44 @@ describe("checkChanges", () => {
     expect(configs("[tool]\nblack = 1\n", "[tool]\nblack = 2\n")).toEqual(["protectedConfigs"]);
     expect(configs(null, "[tool.ruff]\nline-length = 200\n")).toEqual(["protectedConfigs"]);
     expect(configs(null, '[tool.poetry.dependencies]\nzod = "1.0.0"\n')).toEqual([]);
+  });
+
+  it("reads early exits inside tests, not in helpers and callbacks", () => {
+    const js = (body: string) =>
+      check([add("src/a.test.ts", `it("a", () => {\n${body}\n  expect(1).toBe(1);\n});\n`)], {
+        tests: EDITABLE,
+      }).map((violation) => violation.ruleId);
+    const py = (body: string) =>
+      check([add("tests/test_a.py", `def test_a():\n${body}\n    assert 1\n`)], {
+        tests: EDITABLE,
+      }).map((violation) => violation.ruleId);
+
+    expect(js("  if (process.env.CI) {\n    return;\n  }")).toEqual(["tests.forbidSkips"]);
+    expect(js("  items.forEach((item) => {\n    if (!item) return;\n  });")).toEqual([]);
+    expect(js("  function helper(x) {\n    if (x) {\n      return 1;\n    }\n  }")).toEqual([]);
+    expect(js("  process.exit(0);")).toEqual(["tests.forbidSkips"]);
+    expect(js("  const s = 'a \\\n b';")).toEqual(["tests.forbidSkips"]);
+    expect(py("    if os.environ.get('CI'):\n        return")).toEqual(["tests.forbidSkips"]);
+    expect(py("    def helper():\n        if True:\n            return 1")).toEqual([]);
+    expect(py("    sys.exit(0)")).toEqual(["tests.forbidSkips"]);
+  });
+
+  it("refuses a test file with line breaks runners read differently", () => {
+    for (const odd of ["\r", " "]) {
+      expect(
+        check([add("tests/test_a.py", `def test_a():${odd}    return\n    assert 1\n`)], {
+          tests: EDITABLE,
+        }).map((violation) => violation.ruleId),
+      ).toEqual(["tests.forbidSkips"]);
+    }
+  });
+
+  it("follows a skip alias defined anywhere in the file", () => {
+    const before = 'const later = cond ? it : it.skip;\nit("a", () => {});\n';
+    const after = 'const later = cond ? it : it.skip;\nlater("a", () => {});\n';
+
+    expect(
+      check([edit("src/a.test.ts", before, after)], { tests: EDITABLE }).map((v) => v.ruleId),
+    ).toContain("tests.forbidSkips");
   });
 });

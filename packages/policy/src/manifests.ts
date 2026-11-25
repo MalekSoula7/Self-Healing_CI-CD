@@ -37,21 +37,65 @@ function basename(path: string): string {
   return (path.split("/").pop() ?? path).toLowerCase();
 }
 
-const LOCKFILES = new Set([
-  "package-lock.json",
-  "npm-shrinkwrap.json",
-  "yarn.lock",
-  "pnpm-lock.yaml",
-  "bun.lock",
-  "bun.lockb",
-  "poetry.lock",
-  "uv.lock",
-  "pipfile.lock",
-  "pdm.lock",
-]);
+export type Ecosystem = "npm" | "python";
+
+const LOCKFILES: Record<string, Ecosystem> = {
+  "package-lock.json": "npm",
+  "npm-shrinkwrap.json": "npm",
+  "yarn.lock": "npm",
+  "pnpm-lock.yaml": "npm",
+  "bun.lock": "npm",
+  "bun.lockb": "npm",
+  "deno.lock": "npm",
+  "poetry.lock": "python",
+  "uv.lock": "python",
+  "pipfile.lock": "python",
+  "pdm.lock": "python",
+  "pixi.lock": "python",
+};
+
+/** The ecosystem whose lockfile `path` is, or null. */
+export function lockfileEcosystem(path: string): Ecosystem | null {
+  const name = basename(path);
+  if (/^pylock(\.[^.]+)?\.toml$/.test(name)) return "python";
+  return LOCKFILES[name] ?? null;
+}
 
 export function isLockfile(path: string): boolean {
-  return LOCKFILES.has(basename(path));
+  return lockfileEcosystem(path) !== null;
+}
+
+/**
+ * Files that move dependency versions or sources without being a manifest we read: workspace
+ * catalogs and overrides, registry settings, install hooks, patches to installed packages,
+ * conda environments, setup.py/setup.cfg, and toolchain pins. Any change to one needs mode `any`.
+ */
+export function isDependencySettingsFile(path: string): boolean {
+  const name = basename(path);
+  return (
+    /^(pnpm-workspace\.yaml|\.npmrc|\.yarnrc(\.yml)?|\.pnpmfile\.c?js|\.pnpmfile\.mjs|environment\.ya?ml|setup\.py|setup\.cfg|\.nvmrc|\.node-version|\.python-version|\.tool-versions)$/.test(
+      name,
+    ) || /(^|\/)patches\/[^/]+\.(patch|diff)$/i.test(path)
+  );
+}
+
+/** A spec that installs from somewhere other than the registry under its name. */
+export function isForeignSource(dependency: Dependency): boolean {
+  const spec = dependency.spec.trim();
+  if (dependency.syntax === "pep440") return false;
+  return (
+    /^(npm:|git(\+[a-z]+)?:|github:|gitlab:|bitbucket:|https?:|file:|link:|portal:|patch:)/i.test(
+      spec,
+    ) ||
+    /^[\w.-]+\/[\w.-]+(#.*)?$/.test(spec) ||
+    spec.startsWith("@") ||
+    /"(git|url|path)"\s*:/.test(spec)
+  );
+}
+
+/** The ecosystem of the manifest at `path` (call only for manifests). */
+export function manifestEcosystem(path: string): Ecosystem {
+  return basename(path) === "package.json" ? "npm" : "python";
 }
 
 const setting = (value: unknown): Dependency => ({
@@ -121,7 +165,14 @@ function readRequirements(content: string): Map<string, Dependency> {
       dependencies.set(`option:${line}`, { syntax: "opaque", spec: line, kind: "setting" });
     } else {
       const [name, dependency] = requirement(line);
-      dependencies.set(name, dependency);
+      const earlier = dependencies.get(name);
+      // A name listed twice: keep both, so a change to either is seen (and needs `any`).
+      dependencies.set(
+        name,
+        earlier === undefined
+          ? dependency
+          : { syntax: "opaque", spec: `${earlier.spec} && ${dependency.spec}`, kind: "package" },
+      );
     }
   }
   return dependencies;
@@ -219,6 +270,8 @@ function readPyproject(toml: Record<string, unknown>): Map<string, Dependency> {
     ["tool.poetry.source", child(toml, ...poetry, "source")],
     ["tool.uv.sources", child(toml, "tool", "uv", "sources")],
     ["tool.uv.index", child(toml, "tool", "uv", "index")],
+    ["tool.uv.override-dependencies", child(toml, "tool", "uv", "override-dependencies")],
+    ["tool.uv.constraint-dependencies", child(toml, "tool", "uv", "constraint-dependencies")],
   ] as const) {
     if (value !== undefined) dependencies.set(key, setting(value));
   }
@@ -247,7 +300,7 @@ function readerFor(path: string): Reader | null {
   if (name === "pyproject.toml") return (content) => readPyproject(parseToml(content));
   if (name === "pipfile") return (content) => readPipfile(parseToml(content));
   const requirements =
-    /^(requirements|constraints).*\.(txt|in)$/.test(name) ||
+    /(requirements|constraints).*\.(txt|in)$/.test(name) ||
     /(^|\/)requirements\/[^/]+\.(txt|in)$/i.test(path);
   return requirements ? readRequirements : null;
 }

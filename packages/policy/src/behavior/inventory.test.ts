@@ -18,8 +18,15 @@ function parsed(xml: string): TestInventory {
   return read.inventory;
 }
 
-function inventory(tests: Record<string, TestOutcome>): TestInventory {
-  return { tests: new Map(Object.entries(tests)) };
+function inventory(tests: Record<string, TestOutcome | TestOutcome[]>): TestInventory {
+  return {
+    tests: new Map(
+      Object.entries(tests).map(([id, outcome]) => [
+        id,
+        Array.isArray(outcome) ? outcome : [outcome],
+      ]),
+    ),
+  };
 }
 
 const BASELINE = inventory({ a: "passed", b: "failed", c: "skipped", d: "passed" });
@@ -29,6 +36,21 @@ function ruleIds(after: Record<string, TestOutcome>): string[] {
 }
 
 describe("compareInventories", () => {
+  it("compares repeated IDs as groups", () => {
+    const twice = inventory({ t: ["passed", "failed"] });
+
+    expect(compareInventories(twice, inventory({ t: ["passed", "passed"] }))).toEqual([]);
+    expect(
+      compareInventories(twice, inventory({ t: ["passed", "passed", "failed"] })).map(
+        (v) => v.ruleId,
+      ),
+    ).toEqual(["behavior.stillFailing"]);
+    expect(compareInventories(twice, inventory({ t: ["passed"] })).map((v) => v.ruleId)).toEqual([
+      "behavior.missingTests",
+      "behavior.testCount",
+    ]);
+  });
+
   it.each([
     ["Jest", JEST_BASELINE, JEST_FIXED],
     ["Vitest", VITEST_BASELINE, VITEST_FIXED],

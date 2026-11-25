@@ -346,11 +346,11 @@ Two kinds of layers, applied in this order:
 Invariants (§8.2) aren't a layer: code enforces them whatever the policy says. Plan maximums (`LIMIT_CAPS`) bound every layer's limits when it is parsed. So nothing is ever looser than the org guardrails, `.pipeheal.yml` can only add restrictions, and an admin can still loosen a default for one repository. The UI shows the effective policy with provenance: the layers each value comes from (`effectivePolicy` in `packages/policy`).
 
 ### 8.2 Invariants (hard-coded, not configurable)
-- `INV-GITHUB-DIR`: no changes under `.github/**`
-- `INV-PATH`: every path is safe to check out everywhere: no `.git` or `.gitmodules` at any depth, no name Windows reserves or would read differently (trailing dot or space, `<>:"|?*`), no code point macOS ignores (git's protectNTFS/protectHFS; `@pipeheal/shared/repo-path`, also enforced by the GitHub client)
-- `INV-SECRETS`: no changes to `.env*`, `**/*.pem`, `**/*.key`, `**/secrets/**`, `**/*.p12`
+- `INV-GITHUB-DIR`: no changes under `.github/**`, nor to local action definitions (`**/action.yml`, `**/action.yaml`): both are CI code
+- `INV-PATH`: every path is safe to check out everywhere: no `.git` or `.gitmodules` at any depth, no name Windows reserves or would read differently (trailing dot or space, `<>:"|?*`), no code point macOS ignores, no Windows 8.3 short name (`ENV~1`) (git's protectNTFS/protectHFS; `@pipeheal/shared/repo-path`, also enforced by the GitHub client)
+- `INV-SECRETS`: no changes to `.env*`, `**/*.pem`, `**/*.key`, `**/secrets/**`, `**/*.p12`, `*.pfx`, `*.jks`, `*.keystore`, SSH keys (`id_rsa*`, ...), `.npmrc`, `.pypirc`, `.netrc`, `.aws/**`, `.docker/config.json`, `credentials*.json`, `service-account*.json`
 - `INV-FILE-TYPES`: no binary files, symlinks, submodule changes, or file-mode changes
-- `INV-TEST-DELETE`: no deletion or rename-away of test files
+- `INV-TEST-DELETE`: no deletion or rename of test files (a rename inside a directory glob, or to `.test.ts.off`, can still drop it from what the runner collects; a fix never needs one)
 - `INV-BRANCH`: writes only to `pipeheal/*` branches created by the App; no merge; no force-push
 - `INV-FORKS`: never act on fork PRs
 - `INV-CAPS`: attempts, iterations, model tokens and time are always capped (plan maximums, `LIMIT_CAPS` in `packages/policy`; D12)
@@ -370,7 +370,10 @@ type PolicyRules = {
     forbidSkips: boolean;                     // default true
     forbidAssertionReduction: boolean;        // default true
     testGlobs: string[];                      // defaults for JS/TS and Python, plus snapshots and test data:
-                                              // **/__snapshots__/**, **/*.snap, **/fixtures/**, **/testdata/**
+                                              // **/__snapshots__/**, **/*.snap, **/fixtures/**, **/testdata/**,
+                                              // and what steers tests (P3.6): Jest's test.ts/spec.ts,
+                                              // Mocha's test/, Django's tests.py, *.cy.*, setup
+                                              // files, __mocks__/, testing/ helpers
                                               // (so source_only also protects expected outputs)
   };
   suppressions: { forbid: boolean };         // default true
@@ -442,7 +445,7 @@ Static checks can be gamed; behavior is harder to fake. Repos configure a JUnit 
 - If JUnit isn't configured, behavioral checks are "unavailable": `tests.mode` is forced to `source_only`, the PR opens as draft, and the PR body says so.
 - The PR's own CI run is the final independent check.
 
-In code (P3.5, `packages/policy/src/behavior`): the runner sends the raw report files and the server parses them itself (`parseJunit`, `mergeInventories` for several files). The reader takes only this format: root `testsuites` or `testsuite`, no DOCTYPE or entity declarations, only predefined and numeric entities, at most 20 MB, 50,000 tests and 64 levels; anything else is refused, never half-read. A test's ID is `classname::name` (or `name`), capped at 1,000 characters; a repeated ID becomes `id (#2)`. A test case is failed if it has a `failure` or `error`, skipped if it has only `skipped`. `compareInventories(baseline, after)` reports `behavior.missingTests`, `behavior.testCount`, `behavior.newlySkipped`, `behavior.stillFailing` and `behavior.regressed`, naming up to 10 tests each. A baseline test that was already skipped may stay skipped.
+Since P3.6 an ID maps to the outcomes of every test case with that ID, compared as a multiset (as many must run, no more skipped, none failing if any failed before), long IDs are hashed rather than truncated, and nested testcases, `failure`/`error`/`skipped` outside a testcase and namespaced elements are refused. In code (P3.5, `packages/policy/src/behavior`): the runner sends the raw report files and the server parses them itself (`parseJunit`, `mergeInventories` for several files). The reader takes only this format: root `testsuites` or `testsuite`, no DOCTYPE or entity declarations, only predefined and numeric entities, at most 20 MB, 50,000 tests and 64 levels; anything else is refused, never half-read. A test's ID is `classname::name` (or `name`), capped at 1,000 characters; a repeated ID becomes `id (#2)`. A test case is failed if it has a `failure` or `error`, skipped if it has only `skipped`. `compareInventories(baseline, after)` reports `behavior.missingTests`, `behavior.testCount`, `behavior.newlySkipped`, `behavior.stillFailing` and `behavior.regressed`, naming up to 10 tests each. A baseline test that was already skipped may stay skipped.
 
 ### 8.7 Custom (plain-language) rules
 1. User writes a rule ("don't touch the payments module", "never change public API signatures").
@@ -595,6 +598,8 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 1 (resolved, D8):** GitHub user access tokens are kept, encrypted at rest (§5.2).
 - **Phase 1 (resolved, D10):** who can become OWNER: the installer, when GitHub confirms they are the personal account or an org admin (§5.2).
 - **Phase 3 (resolved, D13):** org defaults are split from org guardrails (§8.1); every field has a merge rule (§8.4).
+- **CHECKPOINT 3 (from the P3.6 red team):** rules no stated rule covers, each cheap and statically checkable, to add or not: tautological assertions (`expect(true).toBe(true)`, `assert True`, tuple asserts); assertions inside `try/catch` or `except AssertionError`; unawaited `.resolves`/`.rejects`; retry settings (`jest.retryTimes`, `{ retry }`); mocking the module under test; in source, test-environment detection (`VITEST`, `"pytest" in sys.modules`), empty `catch {}`/`except: pass`, test-framework monkeypatching or pytest hooks, `as any`/`as unknown as`, warning filters; imports of packages no manifest declares. Decisions: a byte cap next to `maxLinesChanged` (400 statements on one line pass today); doctests as tests; edits in files that already carry `@ts-nocheck`/`eslint-disable`; checking that a lockfile only moves the bumped packages.
+- **Phase 4 (from P3.6):** the server must refuse a path whose ancestor isn't a directory in the base tree (writing through a symlinked directory, or under an existing file); treat an empty JUnit baseline (the suite didn't compile) and a missing or zero-test report as "behavioral checks unavailable" or a failure; resolve protected configs' `extends` and local plugins.
 - **Phase 3:** `.pipeheal.yml` may declare custom rules. A `judge` rule's text is then written by anyone who can push, so the judge (P4.7) must treat it as untrusted data, like the diff.
 - **Phase 4:** async step protocol instead of ~2-minute synchronous requests (§3.1).
 - **Phase 4:** reserve budget atomically before each model call (worst-case estimate per call, org monthly budget with concurrent attempts), not only check it after.

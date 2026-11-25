@@ -14,18 +14,18 @@ export const invariants: FixtureFamily = {
       violations: [],
     },
     {
-      name: "a test file renamed to another test file (may_edit_tests)",
-      policy: { tests: { mode: "may_edit_tests" } },
-      changes: [rename("src/a.test.ts", "src/b.test.ts", "it('x', () => {});\n")],
-      violations: [],
-    },
-    {
       name: "an executable script edited without changing its mode",
       changes: [{ path: "bin/run.sh", old: text("a\n", "100755"), new: text("b\n", "100755") }],
       violations: [],
     },
   ],
   forbidden: [
+    {
+      name: "a test file renamed, even to another test file",
+      policy: { tests: { mode: "may_edit_tests" } },
+      changes: [rename("src/a.test.ts", "src/b.test.ts", "it('x', () => {});\n")],
+      violations: ["INV-TEST-DELETE"],
+    },
     {
       name: "a workflow edit",
       changes: [edit(".github/workflows/ci.yml", "a\n", "b\n")],

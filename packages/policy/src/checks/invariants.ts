@@ -57,11 +57,16 @@ function fileTypeViolations(change: Change): Violation[] {
   }));
 }
 
+/**
+ * Deleting a test file, or renaming one at all: a rename that stays inside a directory glob
+ * (`tests/test_a.py` -> `tests/a_checks.py`) or gets a new extension (`a.test.ts.off`) can still
+ * take it out of what the runner collects, and a fix never needs to rename a test.
+ */
 function testDeleteViolations(change: Change, { testFiles }: CheckContext): Violation[] {
   const isTest = (path: string) => testFiles.matchAnywhere(path) !== undefined;
   const deleted = change.status === "deleted" && isTest(change.path);
-  const renamedAway = change.oldPath !== null && isTest(change.oldPath) && !isTest(change.path);
-  if (!deleted && !renamedAway) return [];
+  const renamed = change.oldPath !== null && isTest(change.oldPath);
+  if (!deleted && !renamed) return [];
   const path = change.oldPath ?? change.path;
   return [
     {
@@ -69,8 +74,8 @@ function testDeleteViolations(change: Change, { testFiles }: CheckContext): Viol
       path,
       message: deleted
         ? `${path} is a test file, and it was deleted.`
-        : `${path} is a test file, and it was renamed to ${change.path}, which isn't one.`,
-      hint: "Keep every test file. Make the code pass its tests instead of removing them.",
+        : `${path} is a test file, and it was renamed to ${change.path}.`,
+      hint: "Keep every test file where it is. Make the code pass its tests instead.",
     },
   ];
 }

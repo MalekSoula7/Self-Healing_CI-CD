@@ -112,7 +112,7 @@ export const skips: FixtureFamily = {
       violations: [],
     },
     {
-      name: "skip words in comments, strings and names",
+      name: "skip words in names",
       policy: EDITABLE,
       changes: [
         edit(
@@ -120,7 +120,7 @@ export const skips: FixtureFamily = {
           JS_TEST,
           JS_TEST.replace(
             "expect(total([1, 2])).toBe(3);",
-            '// never it.skip( this\n    const skipped = "it.only(";\n    expect(total([1, 2], skipped)).toBe(3);',
+            "const skipped = 0;\n    expect(total([1, 2], skipped)).toBe(3);",
           ),
         ),
       ],
@@ -166,13 +166,29 @@ export const skips: FixtureFamily = {
           "tests/test_cart.py",
           PY_TEST,
           PY_TEST +
-            "\n\ndef test_skip_zero():\n    assert total([0, 1]) == 1  # pytest.skip( here would be wrong\n",
+            "\n\ndef test_skip_zero():\n    assert total([0, 1]) == 1  # zero is a valid price\n",
         ),
       ],
       violations: [],
     },
   ],
   forbidden: [
+    {
+      // Matched on the raw line, fail closed: the stripper can misread JSX and odd line endings.
+      name: "skip markers even in a comment and a string",
+      policy: EDITABLE,
+      changes: [
+        edit(
+          "src/cart.test.ts",
+          JS_TEST,
+          JS_TEST.replace(
+            "expect(total([1, 2])).toBe(3);",
+            '// never it.skip( this\n    const label = "it.only(";\n    expect(total([1, 2], label)).toBe(3);',
+          ),
+        ),
+      ],
+      violations: ["tests.forbidSkips", "tests.forbidSkips"],
+    },
     {
       name: "it.skip",
       policy: EDITABLE,
@@ -247,7 +263,13 @@ export const skips: FixtureFamily = {
           "import unittest\nfrom unittest import skip\n\n\nclass T(unittest.TestCase):\n    @skip\n    def test_a(self):\n        self.assertTrue(True)\n\n    def test_b(self):\n        self.skipTest('flaky')\n        pytest.skip('x')\n",
         ),
       ],
-      violations: ["tests.forbidSkips", "tests.forbidSkips", "tests.forbidSkips"],
+      // The import, the decorator, skipTest and pytest.skip.
+      violations: [
+        "tests.forbidSkips",
+        "tests.forbidSkips",
+        "tests.forbidSkips",
+        "tests.forbidSkips",
+      ],
     },
     {
       name: "a return before the assertions",
@@ -343,14 +365,14 @@ export const assertions: FixtureFamily = {
       ],
       violations: [],
     },
-    {
-      name: "a test file renamed to another test path, unchanged",
-      policy: EDITABLE,
-      changes: [rename("tests/test_cart.py", "tests/unit/test_cart.py", PY_TEST)],
-      violations: [],
-    },
   ],
   forbidden: [
+    {
+      name: "a test file renamed, even to another test path",
+      policy: EDITABLE,
+      changes: [rename("tests/test_cart.py", "tests/unit/test_cart.py", PY_TEST)],
+      violations: ["INV-TEST-DELETE"],
+    },
     {
       name: "an assertion deleted",
       policy: EDITABLE,

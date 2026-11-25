@@ -10,6 +10,8 @@ const ASSERTIONS: Record<Language, readonly RegExp[]> = {
     // expect(...), expect.soft(...), expectTypeOf(...), assert(...), assert.equal(...)
     /\b(expect|expectTypeOf|assert|assertType)\b\s*(\.\s*[\w$]+\s*)*\(/g,
     /\.\s*should\b/g,
+    // AVA and tap: t.is(...), t.deepEqual(...), t.throws(...); not t.pass().
+    /\bt\s*\.\s*(is|not|deepEqual|notDeepEqual|like|true|false|truthy|falsy|regex|notRegex|throws|throwsAsync|notThrows|notThrowsAsync|snapshot|assert|equal|same|strictSame|match|ok|notOk|rejects|resolves|has)\s*\(/g,
   ],
   python: [
     /(?<![.\w])assert\b/g,

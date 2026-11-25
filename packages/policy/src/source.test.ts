@@ -102,6 +102,42 @@ describe("stripCode (Python)", () => {
   });
 });
 
+describe("stripCode (red-team cases, P3.6)", () => {
+  it("reads f-string fields as code, with their own strings blanked", () => {
+    const stripped = strip(
+      `x = f"{ {'assert': 1}["assert"] } {{assert}} \\n {g(f'{h("assert")}')}"\nassert y`,
+      "python",
+    );
+
+    expect(stripped.match(/assert/g)).toHaveLength(1);
+    expect(stripped).toContain("g(f'{h(");
+    expect(strip(`s = F"""a\n{b}\n"""\nassert c`, "python")).toContain("{b}");
+    expect(strip(`s = f"open {a}\nassert c`, "python")).toContain("assert c");
+    expect(strip(`s = f"{a`, "python")).toBe(`s = f"{a`);
+  });
+
+  it("stops reading nested f-strings as code past a depth", () => {
+    const deep = `${'f"{'.repeat(20)}x${'}"'.repeat(20)}`;
+
+    expect(strip(deep, "python")).toHaveLength(deep.length);
+  });
+
+  it("reads HTML-like comments in scripts", () => {
+    expect(strip("x = 1 <!-- expect(1)\nexpect(2)", "js").match(/expect/g)).toHaveLength(1);
+    expect(strip("x = 1\n  --> expect(1)\ny-- > 0", "js")).not.toContain("expect");
+    expect(strip("y --> 0; expect(1)", "js")).toContain("expect(1)");
+  });
+
+  it("divides after a postfix ++ or --", () => {
+    expect(strip("n++ / 2; it.skip(x) // it(s) /", "js")).toContain("it.skip(x)");
+    expect(strip("n-- / 2; expect(1) /", "js")).toContain("expect(1)");
+  });
+
+  it("continues a quoted string over a backslash and CRLF", () => {
+    expect(strip('a = "x \\\r\n"; expect(1)', "js")).toContain("expect(1)");
+  });
+});
+
 describe("addedLines", () => {
   it("lists each added line with its 1-based number in the new content", () => {
     const change = buildChange({

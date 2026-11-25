@@ -5,9 +5,13 @@
 
 export type TestOutcome = "passed" | "failed" | "skipped";
 
-/** Test ID (`classname::name`, or `name`) to outcome. */
+/**
+ * Test ID (`classname::name`, or `name`) to the outcome of every test case with that ID, in report
+ * order. IDs repeat (parametrized names, retries, a test in two reports): comparing them as
+ * multisets means no renaming or reordering can move a failure onto an ID the baseline lacks.
+ */
 export interface TestInventory {
-  tests: ReadonlyMap<string, TestOutcome>;
+  tests: ReadonlyMap<string, readonly TestOutcome[]>;
 }
 
 export type JunitRead = { ok: true; inventory: TestInventory } | { ok: false; error: string };
@@ -75,28 +79,34 @@ interface OpenCase {
   outcome: TestOutcome;
 }
 
+/** FNV-1a, 32 bits: enough to keep two long IDs apart; not a security boundary. */
+function hash(value: string): string {
+  let result = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    result ^= value.charCodeAt(index);
+    result = Math.imul(result, 0x01000193) >>> 0;
+  }
+  return result.toString(16).padStart(8, "0");
+}
+
 function caseId(attrs: Map<string, string>): string {
   const name = attrs.get("name");
   if (name === undefined || name === "") throw new JunitError("a testcase without a name");
   const classname = attrs.get("classname") ?? "";
-  return (classname === "" ? name : `${classname}::${name}`).slice(0, MAX_ID_CHARS);
+  const id = classname === "" ? name : `${classname}::${name}`;
+  // Past the cap, keep a hash of the whole ID so two long IDs never collide.
+  return id.length <= MAX_ID_CHARS ? id : `${id.slice(0, MAX_ID_CHARS - 20)}... #${hash(id)}`;
 }
 
-/** Builds an inventory, telling repeated IDs apart by occurrence: `t`, `t (#2)`, ... */
 class InventoryBuilder {
-  readonly tests = new Map<string, TestOutcome>();
-  /** The last occurrence number used for each ID, so each add is O(1) on average. */
-  private readonly occurrences = new Map<string, number>();
+  readonly tests = new Map<string, TestOutcome[]>();
+  size = 0;
 
   add(id: string, outcome: TestOutcome): void {
-    let occurrence = this.occurrences.get(id) ?? 0;
-    let key: string;
-    do {
-      occurrence += 1;
-      key = occurrence === 1 ? id : `${id} (#${String(occurrence)})`;
-    } while (this.tests.has(key));
-    this.occurrences.set(id, occurrence);
-    this.tests.set(key, outcome);
+    const outcomes = this.tests.get(id);
+    if (outcomes === undefined) this.tests.set(id, [outcome]);
+    else outcomes.push(outcome);
+    this.size += 1;
   }
 }
 
@@ -155,12 +165,16 @@ class JunitReader {
       }
       this.rootSeen = true;
     }
+    // Refuse shapes no runner writes rather than guess what they mean.
+    if (name.includes(":")) throw new JunitError(`namespaced element <${name}>`);
     const current = this.current;
-    if (name === "testcase") this.current = { id: caseId(attrs), outcome: "passed" };
-    else if (current !== null && (name === "failure" || name === "error")) {
-      current.outcome = "failed";
-    } else if (current !== null && name === "skipped" && current.outcome === "passed") {
-      current.outcome = "skipped";
+    if (name === "testcase") {
+      if (current !== null) throw new JunitError("a testcase inside a testcase");
+      this.current = { id: caseId(attrs), outcome: "passed" };
+    } else if (name === "failure" || name === "error" || name === "skipped") {
+      if (current === null) throw new JunitError(`<${name}> outside a testcase`);
+      if (name !== "skipped") current.outcome = "failed";
+      else if (current.outcome === "passed") current.outcome = "skipped";
     }
     if (selfClosing) this.close(name);
     else if (this.stack.push(name) > MAX_DEPTH) throw new JunitError("nested too deeply");
@@ -169,7 +183,7 @@ class JunitReader {
   private close(name: string): void {
     if (name !== "testcase" || this.current === null) return;
     this.inventory.add(this.current.id, this.current.outcome);
-    if (this.inventory.tests.size > MAX_TESTS) throw new JunitError("too many tests");
+    if (this.inventory.size > MAX_TESTS) throw new JunitError("too many tests");
     this.current = null;
   }
 }
@@ -187,7 +201,16 @@ export function parseJunit(xml: string): JunitRead {
 export function mergeInventories(inventories: readonly TestInventory[]): TestInventory {
   const merged = new InventoryBuilder();
   for (const inventory of inventories) {
-    for (const [id, outcome] of inventory.tests) merged.add(id, outcome);
+    for (const [id, outcomes] of inventory.tests) {
+      for (const outcome of outcomes) merged.add(id, outcome);
+    }
   }
   return { tests: merged.tests };
+}
+
+/** How many test cases an inventory holds. */
+export function testCount(inventory: TestInventory): number {
+  let count = 0;
+  for (const outcomes of inventory.tests.values()) count += outcomes.length;
+  return count;
 }

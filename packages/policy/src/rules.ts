@@ -103,10 +103,21 @@ const DEFAULTS = {
     "**/*.spec.mts",
     "**/*.spec.cts",
     "**/__tests__/**",
+    // Jest's default testMatch also takes files named test.ts or spec.js; Mocha runs test/;
+    // Cypress specs; setup files, manual mocks and shared test helpers steer what tests see.
+    "**/{test,spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+    "**/test/**",
+    "**/*.cy.*",
+    "**/{vitest,jest}.setup.*",
+    "**/{setupTests,setup-tests,test-setup,testSetup}.*",
+    "**/__mocks__/**",
+    "**/testing/**",
     // Python
     "**/test_*.py",
     "**/*_test.py",
     "**/conftest.py",
+    // Django and unittest: app/tests.py
+    "**/tests.py",
     "**/tests/**",
     // Expected outputs: protected like the tests themselves (source_only)
     "**/__snapshots__/**",

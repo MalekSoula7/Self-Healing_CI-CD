@@ -26,7 +26,10 @@ export function deepFreeze<T>(value: T): T {
 }
 
 export const INVARIANTS: readonly Invariant[] = deepFreeze([
-  { id: "INV-GITHUB-DIR", description: "No changes under .github/." },
+  {
+    id: "INV-GITHUB-DIR",
+    description: "No changes under .github/, or to local action definitions (action.yml).",
+  },
   {
     id: "INV-PATH",
     description:
@@ -58,6 +61,25 @@ export const INVARIANTS: readonly Invariant[] = deepFreeze([
 export const INVARIANT_PATHS: Readonly<
   Record<"INV-GITHUB-DIR" | "INV-SECRETS", readonly string[]>
 > = deepFreeze({
-  "INV-GITHUB-DIR": [".github/**"],
-  "INV-SECRETS": ["**/.env", "**/.env*", "**/*.pem", "**/*.key", "**/secrets/**", "**/*.p12"],
+  // Local composite actions (`uses: ./path`) are CI code too, wherever they live.
+  "INV-GITHUB-DIR": [".github/**", "**/action.yml", "**/action.yaml"],
+  "INV-SECRETS": [
+    "**/.env",
+    "**/.env*",
+    "**/*.pem",
+    "**/*.key",
+    "**/secrets/**",
+    "**/*.p12",
+    "**/*.pfx",
+    "**/*.jks",
+    "**/*.keystore",
+    "**/id_{rsa,dsa,ecdsa,ed25519}*",
+    "**/.npmrc",
+    "**/.pypirc",
+    "**/.netrc",
+    "**/.aws/**",
+    "**/.docker/config.json",
+    "**/credentials*.json",
+    "**/service-account*.json",
+  ],
 });

@@ -11,6 +11,9 @@ describe("repoPathProblem and writablePathProblem", () => {
     expect(writablePathProblem("../a")).toBe("not a repository-relative POSIX path");
     expect(writablePathProblem(".github/x")).toBe("the App never writes under .github/");
     expect(writablePathProblem("a/.git/x")).toBe("the App never writes .git or .gitmodules");
+    expect(writablePathProblem("config/ENV~1")).toBe(
+      "the path can't be checked out safely on Windows or macOS",
+    );
     expect(writablePathProblem("a/nul.txt")).toBe(
       "the path can't be checked out safely on Windows or macOS",
     );
@@ -26,7 +29,11 @@ describe("canonicalPath", () => {
     [".github /workflows/ci.yml", ".github/workflows/ci.yml"],
     [".git\u200c/config", ".git/config"],
     ["vendor/GIT~1/config", "vendor/.git/config"],
-    [".e\u0301nv", ".\u00e9nv"],
+    [".e\u0301nv", ".env"],
+    [".g\u0131thub/x", ".github/x"],
+    ["config/\u017fecrets/a", "config/secrets/a"],
+    ["./src//a/../b", "src/b"],
+    ["src\\a.ts", "src/a.ts"],
     ["secrets\ufeff/a.key", "secrets/a.key"],
     ["a/.../b", "a/.../b"],
     ["src/a.ts", "src/a.ts"],

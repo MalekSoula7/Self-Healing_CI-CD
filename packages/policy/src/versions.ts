@@ -90,11 +90,15 @@ function pep440Parts(spec: string): { specifier: string; rest: string } {
 }
 
 /** How far `to` moves from `from`, by the first release component that differs. */
+/** Before 1.0, each component is one step more significant (0.2 -> 0.3 breaks, as in semver). */
+function preReleaseShift(version: readonly number[]): number {
+  const significant = version.findIndex((part) => part !== 0);
+  return significant === -1 ? 2 : Math.min(significant, 2);
+}
+
 function bumpLevel(from: number[], to: number[]): ChangeLevel {
   const length = Math.max(from.length, to.length, 3);
-  // Before 1.0, each component is one step more significant (0.2 -> 0.3 breaks, as in semver).
-  const significant = from.findIndex((part) => part !== 0);
-  const shift = significant === -1 ? 2 : Math.min(significant, 2);
+  const shift = preReleaseShift(from);
   for (let index = 0; index < length; index += 1) {
     const a = from[index] ?? 0;
     const b = to[index] ?? 0;
@@ -107,7 +111,9 @@ function bumpLevel(from: number[], to: number[]): ChangeLevel {
 
 function rangeLevel(from: Range, to: Range): ChangeLevel {
   const bump = bumpLevel(from.min, to.min);
-  const widened = to.width > from.width ? (LEVELS[to.width] ?? "any") : "none";
+  // A wider range lets the version move further; before 1.0 that's a step more significant too.
+  const widened =
+    to.width > from.width ? (LEVELS[to.width + preReleaseShift(from.min)] ?? "any") : "none";
   const level = RANK[bump] >= RANK[widened] ? bump : widened;
   // Same lowest version and no wider: still a change (a narrower range, a pre-release tag).
   return level === "none" ? "patch" : level;

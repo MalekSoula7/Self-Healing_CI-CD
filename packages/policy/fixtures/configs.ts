@@ -82,7 +82,14 @@ export const configs: FixtureFamily = {
         add("ruff.toml", "ignore = ['F401']\n"),
         edit(".coveragerc", "[run]\n", "[run]\nomit = src/*\n"),
       ],
-      violations: ["protectedConfigs", "protectedConfigs", "protectedConfigs", "protectedConfigs"],
+      // setup.cfg also declares dependencies (install_requires).
+      violations: [
+        "protectedConfigs",
+        "protectedConfigs",
+        "dependencies.mode",
+        "protectedConfigs",
+        "protectedConfigs",
+      ],
     },
     {
       name: "a package.json test script",

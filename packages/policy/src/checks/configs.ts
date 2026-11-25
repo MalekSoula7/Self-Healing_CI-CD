@@ -11,19 +11,26 @@ export const PROTECTED_CONFIG_GLOBS: readonly string[] = [
   // TypeScript
   "**/tsconfig*.json",
   "**/jsconfig*.json",
-  // Test runners and coverage
-  "**/jest.config.*",
-  "**/vitest.config.*",
+  // Test runners and coverage (second configs too: jest.unit.config.js, playwright-ct.config.ts)
+  "**/{jest,vitest,vite,playwright,cypress,ava}*.config.*",
+  "**/*jest*.json",
   "**/vitest.workspace.*",
-  "**/vite.config.*",
-  "**/playwright.config.*",
-  "**/cypress.config.*",
   "**/karma.conf.*",
   "**/.mocharc*",
   "**/.nycrc*",
   "**/.c8rc*",
-  "**/codecov.yml",
-  "**/.codecov.yml",
+  "**/{.,}codecov.y{a,}ml",
+  // Transforms test code
+  "**/babel.config.*",
+  "**/.babelrc*",
+  // Task runners that define what CI runs
+  "**/turbo.json",
+  "**/nx.json",
+  "**/project.json",
+  "**/{Makefile,makefile,GNUmakefile,justfile,Justfile}",
+  "**/Taskfile.y{a,}ml",
+  "**/.pre-commit-config.y{a,}ml",
+  "**/deno.json{,c}",
   // Lint and format
   "**/eslint.config.*",
   "**/.eslintrc*",
@@ -34,9 +41,10 @@ export const PROTECTED_CONFIG_GLOBS: readonly string[] = [
   "**/biome.json",
   "**/biome.jsonc",
   "**/.stylelintrc*",
+  "**/.stylelintignore",
   "**/stylelint.config.*",
   // Python
-  "**/pytest.ini",
+  "**/{.,}pytest.ini",
   "**/setup.cfg",
   "**/tox.ini",
   "**/noxfile.py",
@@ -69,6 +77,10 @@ const PACKAGE_JSON_KEYS = [
   "vitest",
   "lint-staged",
   "husky",
+  // The report the behavioral checks read, the transform, and which packages exist at all.
+  "jest-junit",
+  "babel",
+  "workspaces",
 ];
 
 /** pyproject.toml [tool.*] tables that are dependencies, not configuration. */
@@ -98,9 +110,14 @@ function protectedPart(path: string, content: string | null): unknown {
       if (!isRecord(json)) return null;
       return Object.fromEntries(PACKAGE_JSON_KEYS.map((key) => [key, json[key] ?? null]));
     }
-    const tool = parseToml(text).tool;
-    if (!isRecord(tool)) return {};
-    return Object.fromEntries(
+    const toml = parseToml(text);
+    const project = toml.project;
+    const entryPoints = isRecord(project) ? project["entry-points"] : undefined;
+    // pytest11 entry points load pytest plugins.
+    const plugins = isRecord(entryPoints) ? (entryPoints.pytest11 ?? null) : null;
+    const tool = toml.tool;
+    if (!isRecord(tool)) return { plugins, settings: {} };
+    const settings = Object.fromEntries(
       Object.entries(tool).flatMap(([name, table]): [string, unknown][] => {
         if (!isRecord(table)) return [[name, table]];
         const skip = PYPROJECT_DEPENDENCY_KEYS[name] ?? [];
@@ -109,6 +126,7 @@ function protectedPart(path: string, content: string | null): unknown {
         return settings.length === 0 ? [] : [[name, Object.fromEntries(settings)]];
       }),
     );
+    return { plugins, settings };
   } catch {
     return null;
   }

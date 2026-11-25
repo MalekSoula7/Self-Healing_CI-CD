@@ -58,6 +58,8 @@ function startsRegex(out: readonly string[], slash: number): boolean {
   while (index >= 0 && /\s/.test(out[index] ?? "")) index -= 1;
   if (index < 0) return true;
   const previous = out[index] ?? "";
+  // `x++ / 2` and `x-- / 2` divide: a postfix operator ends an operand.
+  if ((previous === "+" || previous === "-") && out[index - 1] === previous) return false;
   if (REGEX_AFTER_CHAR.has(previous)) return true;
   if (!/[\w$]/.test(previous)) return false;
   let start = index;
@@ -91,7 +93,8 @@ function quoted(
 ): { contentEnd: number; next: number } {
   for (let index = open + quote.length; index < source.length; index += 1) {
     const char = source[index];
-    if (char === "\\") index += 1;
+    // A backslash escapes one character, or a CRLF line break as a whole (a continuation).
+    if (char === "\\") index += source.startsWith("\r\n", index + 1) ? 2 : 1;
     else if (source.startsWith(quote, index)) {
       return { contentEnd: index, next: index + quote.length };
     } else if (char === "\n" && !multiline) return { contentEnd: index, next: index };
@@ -130,7 +133,12 @@ function stripJs(source: string): string {
       }
       continue;
     }
-    if (char === "/" && next === "/") {
+    // `<!--` (anywhere) and `-->` (at a line's start) are line comments in scripts (Annex B).
+    const htmlComment =
+      source.startsWith("<!--", index) ||
+      (source.startsWith("-->", index) &&
+        /(^|\n)[ \t]*$/.test(source.slice(Math.max(0, index - 200), index)));
+    if ((char === "/" && next === "/") || htmlComment) {
       const end = lineEnd(source, index);
       text.blank(index, end);
       index = end;
@@ -159,25 +167,75 @@ function stripJs(source: string): string {
   return text.toString();
 }
 
-function stripPython(source: string): string {
-  const text = new Blanker(source);
-  let index = 0;
+const MAX_FSTRING_DEPTH = 16;
+
+/**
+ * Python code from `start`: comments and strings blanked, f-string replacement fields read as
+ * code (PEP 701 lets them hold any expression, strings with the same quotes included). Inside a
+ * field (`depth` > 0) it stops at the field's closing `}` and returns the index after it.
+ */
+function pythonCode(source: string, text: Blanker, start: number, depth: number): number {
+  let index = start;
+  let braces = 0;
   while (index < source.length) {
-    const char = source[index];
+    const char = source[index] ?? "";
     if (char === "#") {
       const end = lineEnd(source, index);
       text.blank(index, end);
       index = end;
     } else if (char === "'" || char === '"') {
-      const triple = source.startsWith(char.repeat(3), index);
-      const quote = triple ? char.repeat(3) : char;
-      const { contentEnd, next } = quoted(source, index, quote, triple);
-      text.blank(index + quote.length, contentEnd);
-      index = next;
+      index = pythonString(source, text, index, depth);
+    } else if (depth > 0 && char === "{") {
+      braces += 1;
+      index += 1;
+    } else if (depth > 0 && char === "}") {
+      if (braces === 0) return index + 1;
+      braces -= 1;
+      index += 1;
     } else {
       index += 1;
     }
   }
+  return index;
+}
+
+/** A string literal opening at `open`; f-string fields stay code. Returns where code resumes. */
+function pythonString(source: string, text: Blanker, open: number, depth: number): number {
+  const char = source[open] ?? "";
+  const triple = source.startsWith(char.repeat(3), open);
+  const quote = triple ? char.repeat(3) : char;
+  const prefix = /[A-Za-z]{0,2}$/.exec(source.slice(Math.max(0, open - 2), open))?.[0] ?? "";
+  const { contentEnd, next } = quoted(source, open, quote, triple);
+  if (!/f/i.test(prefix) || depth >= MAX_FSTRING_DEPTH) {
+    text.blank(open + quote.length, contentEnd);
+    return next;
+  }
+  // An f-string: blank its literal parts, read `{...}` fields as code (`{{` is a literal brace).
+  let index = open + quote.length;
+  while (index < source.length) {
+    if (source.startsWith(quote, index)) return index + quote.length;
+    const current = source[index];
+    if (current === "\\") {
+      text.blank(index, index + 2);
+      index += 2;
+    } else if (current === "{" && source[index + 1] === "{") {
+      text.blank(index, index + 2);
+      index += 2;
+    } else if (current === "{") {
+      index = pythonCode(source, text, index + 1, depth + 1);
+    } else if (current === "\n" && !triple) {
+      return index;
+    } else {
+      text.blank(index, index + 1);
+      index += 1;
+    }
+  }
+  return index;
+}
+
+function stripPython(source: string): string {
+  const text = new Blanker(source);
+  pythonCode(source, text, 0, 0);
   return text.toString();
 }
 

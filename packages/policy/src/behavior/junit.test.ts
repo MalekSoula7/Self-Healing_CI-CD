@@ -7,13 +7,17 @@ import {
   MAX_TESTS,
   mergeInventories,
   parseJunit,
+  testCount,
   type TestInventory,
+  type TestOutcome,
 } from "./junit";
 
 function inventory(xml: string): Record<string, string> {
   const parsed = parseJunit(xml);
   if (!parsed.ok) throw new Error(parsed.error);
-  return Object.fromEntries(parsed.inventory.tests);
+  return Object.fromEntries(
+    [...parsed.inventory.tests].map(([id, outcomes]) => [id, outcomes.join(",")]),
+  );
 }
 
 describe("parseJunit", () => {
@@ -53,10 +57,10 @@ describe("parseJunit", () => {
     });
   });
 
-  it("tells duplicate IDs apart by occurrence", () => {
+  it("keeps every outcome of a repeated ID, in report order", () => {
     const xml = `<testsuites><testsuite><testcase name="t"/><testcase name="t"><failure/></testcase></testsuite></testsuites>`;
 
-    expect(inventory(xml)).toEqual({ t: "passed", "t (#2)": "failed" });
+    expect(inventory(xml)).toEqual({ t: "passed,failed" });
   });
 
   it("keeps a failure over a skip in the same test case", () => {
@@ -65,12 +69,14 @@ describe("parseJunit", () => {
     ).toEqual({ t: "failed" });
   });
 
-  it("caps very long names", () => {
-    const [id = ""] = Object.keys(
-      inventory(`<testsuite><testcase name="${"x".repeat(5000)}"/></testsuite>`),
+  it("caps very long names, keeping two of them apart", () => {
+    const long = "x".repeat(5000);
+    const ids = Object.keys(
+      inventory(`<testsuite><testcase name="${long}a"/><testcase name="${long}b"/></testsuite>`),
     );
 
-    expect(id.length).toBeLessThanOrEqual(1000);
+    expect(ids).toHaveLength(2);
+    for (const id of ids) expect(id.length).toBeLessThanOrEqual(1000);
   });
 
   it.each([
@@ -84,6 +90,12 @@ describe("parseJunit", () => {
     ["an unterminated comment", "<testsuite><!-- x"],
     ["a testcase without a name", "<testsuite><testcase/></testsuite>"],
     ["text after the root", "<testsuite/><testsuite/>"],
+    [
+      "a testcase in a testcase",
+      "<testsuite><testcase name='a'><testcase name='b'/></testcase></testsuite>",
+    ],
+    ["a failure outside a testcase", "<testsuite><failure/></testsuite>"],
+    ["a namespaced element", "<testsuite><x:testcase name='a'/></testsuite>"],
     ["deep nesting", `${"<testsuite>".repeat(200)}${"</testsuite>".repeat(200)}`],
   ])("refuses %s", (_, xml) => {
     expect(parseJunit(xml).ok).toBe(false);
@@ -97,19 +109,17 @@ describe("parseJunit", () => {
 });
 
 describe("mergeInventories", () => {
-  it("joins reports, telling the same ID in two reports apart", () => {
-    const a: TestInventory = { tests: new Map([["t", "passed"]]) };
+  it("joins reports, keeping every outcome of an ID in two reports", () => {
+    const a: TestInventory = { tests: new Map([["t", ["passed"]]]) };
     const b: TestInventory = {
-      tests: new Map([
-        ["t", "failed"],
-        ["u", "skipped"],
+      tests: new Map<string, TestOutcome[]>([
+        ["t", ["failed"]],
+        ["u", ["skipped"]],
       ]),
     };
+    const merged = mergeInventories([a, b]);
 
-    expect(Object.fromEntries(mergeInventories([a, b]).tests)).toEqual({
-      t: "passed",
-      "t (#2)": "failed",
-      u: "skipped",
-    });
+    expect(Object.fromEntries(merged.tests)).toEqual({ t: ["passed", "failed"], u: ["skipped"] });
+    expect(testCount(merged)).toBe(3);
   });
 });

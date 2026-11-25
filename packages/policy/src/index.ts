@@ -52,6 +52,7 @@ export {
   MAX_TESTS,
   mergeInventories,
   parseJunit,
+  testCount,
   type JunitRead,
   type TestInventory,
   type TestOutcome,

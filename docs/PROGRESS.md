@@ -663,3 +663,39 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
 - Not here (Phase 4, SPEC §8.6): sending the reports from the runner, and "behavioral checks unavailable" (forcing `source_only` and a draft PR when no junit glob is configured).
 - Tests: policy 379; coverage 99.5% statements, 96.2% branches.
 
+## 2026-11-25 · P3.6 (round 1) · Red team
+
+- The `policy-red-team` agent wrote 207 attacks (`packages/policy/fixtures/redteam/`); 149 got through. The merge held, and every `.github/` spelling was blocked.
+- Every attack is now a permanent test (`src/checks/redteam.test.ts`): one that names a real rule must be blocked by it. All 173 such tests pass.
+- Fixed:
+  - **Stripper** (`source.ts`): f-string fields are read as code (PEP 701), `x++ /` divides, `<!--`/`-->` are comments, backslash-CRLF continues a string.
+  - **Skips** (`skips.ts`):
+    - Markers and process exits are matched on the raw line, fail closed: the stripper can't follow JSX or odd line endings. The cost is that a skip marker in a comment is refused too.
+    - New markers: `it.fails`/`test.failing`, `it[...]`, destructured `skip`, `.each([])`, aliases bound anywhere in the file; in Python, `mark.skip` without `pytest.`, `SkipTest`, skip imports, `getattr(pytest, ...)`, collection hooks and `collect_ignore`, `parametrize(..., [])`.
+    - New early exits: a `return` under a condition inside a test; `process.exit`, `sys.exit`, `os._exit`, `pytest.exit`.
+    - Refused outright: test files with a lone CR or U+2028/U+2029, and JS lines ending in a backslash.
+  - **Test files:** INV-TEST-DELETE refuses any rename of a test file. The default test globs add Jest's `test.ts`/`spec.ts`, `test/`, `tests.py`, `*.cy.*`, setup files, `__mocks__/` and `testing/`. AVA/tap assertions are counted.
+  - **Paths:**
+    - `canonicalPath` resolves backslashes, `./`, `//` and `..`, and folds compatibility forms, accents and case through upper case (so dotless i, long s and the Kelvin sign fold).
+    - INV-PATH refuses 8.3 short names.
+    - INV-GITHUB-DIR covers `action.yml`.
+    - INV-SECRETS covers SSH keys, keystores, `.npmrc`, `.pypirc`, `.netrc`, cloud credentials.
+  - **Configs:** broader globs (second runner configs, `*jest*.json`, babel, codecov.yaml, turbo/nx/project.json, Makefile/justfile/Taskfile, pre-commit, deno.json); package.json `jest-junit`, `babel` and `workspaces`; pyproject `pytest11` entry points.
+  - **Suppressions:** more spellings (pyright/mypy per-file settings, pylint skip-file, fmt/isort, oxlint, jshint, node:coverage, `/* global */`). A changed line right under an existing next-line directive is refused.
+  - **Dependencies:**
+    - A real bug fixed: any byte change to any manifest unlocked every lockfile. A lockfile now needs an allowed dependency change in its own ecosystem.
+    - More files are read: `*requirements*`/`*constraints*` manifests, `pylock*.toml`, `deno.lock` and `pixi.lock` lockfiles, uv override/constraint dependencies.
+    - Dependency-settings files need mode `any`: pnpm-workspace, .npmrc, .yarnrc, pnpmfile, `patches/`, conda environments, setup.py/setup.cfg, toolchain pins.
+    - A package swapped to a git URL, `npm:` alias or direct reference counts as new.
+    - Duplicate requirement lines are kept, so a change to either is seen.
+    - Pre-1.0 widening is rated one step higher.
+  - **JUnit:** an ID now maps to every outcome with that ID, compared as a multiset, so no duplicate, `(#2)` name, extra report or long-name collision moves a failure onto an ID the baseline lacks. Long IDs are hashed, not truncated. Nested testcases, `failure`/`error`/`skipped` outside a testcase, and namespaced elements are refused.
+- Reclassified, with the reason in each attack:
+  - **`server` (Phase 4):** symlinked-directory and file/directory-conflict paths, tsconfig `extends`, local ESLint plugins, an empty JUnit baseline.
+  - **`behavior.missingTests`:** table rows removed from `it.each`/`parametrize`.
+  - **`decision:*`:** a byte cap, doctests, file-wide suppressions, lockfile contents.
+- Residual: attacks no stated rule covers, all listed in SPEC §15 for CHECKPOINT 3.
+  - **AI judge:** a weaker matcher, `.not`, an assertion in a helper that is never called, a hardcoded expected value, the script behind `test`.
+  - **New rules:** retries, mocking the subject, tautologies, swallowed assertions, floating assertions, test detection and swallowed errors in source, framework monkeypatching, type escapes, warning filters, undeclared imports.
+- `fixtures/redteam/run.ts` removed: it needed Node types in a package that has none, and the permanent test replaces it.
+
