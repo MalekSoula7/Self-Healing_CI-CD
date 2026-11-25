@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@pipeheal/shared": "workspace:*",
+    "smol-toml": "1.9.1",
     "zod": "catalog:"
   }
 }

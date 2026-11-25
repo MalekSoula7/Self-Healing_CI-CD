@@ -1,6 +1,8 @@
 // Every fixture family (packages/policy/fixtures) through every check: an allowed fixture passes
 // all of them, a forbidden one breaks exactly the rules it names.
 import { describe, expect, it } from "vitest";
+import { configs } from "../../fixtures/configs";
+import { dependencies } from "../../fixtures/dependencies";
 import { invariants } from "../../fixtures/invariants";
 import { paths } from "../../fixtures/paths";
 import { size } from "../../fixtures/size";
@@ -17,6 +19,8 @@ const FAMILIES: Record<string, FixtureFamily> = {
   skips,
   assertions,
   suppressions,
+  configs,
+  dependencies,
 };
 
 function check(fixture: PolicyFixture): Violation[] {

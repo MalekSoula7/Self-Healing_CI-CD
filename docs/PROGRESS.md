@@ -643,3 +643,14 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - A changed line that already carried a suppression counts as added; comparing old and new comments would let a suppression move to a new line unnoticed.
 - Tests: policy 232, coverage 99.6% statements, 96.2% branches.
 
+## 2026-11-25 · P3.4 (3/3) · Static checks: protected configs, dependencies
+
+- Done (fixtures first, `packages/policy/fixtures/configs.ts` and `dependencies.ts`); P3.4 is complete:
+  - `checks/configs.ts` (protectedConfigs): protected files by glob; `package.json` and `pyproject.toml` by section, parsed and compared (so a `[project]` header inside a TOML string can't move a `[tool.pytest]` key out of protection; a fixture proves it).
+  - `manifests.ts`: package.json, requirements/constraints files, pyproject.toml (PEP 621, PEP 735, Poetry, uv, PDM) and Pipfile into one entry per dependency; settings that move versions (overrides, resolutions, index URLs, sources, packageManager) are entries too.
+  - `versions.ts`: `changeLevel` for npm/Poetry ranges and PEP 440 specifiers (lowest version + width; downgrades, unreadable specs and multi-clause ranges need `any`; 0.x counts one step more). `levelAllowed(mode, level)`.
+  - `checks/dependencies.ts`: per-entry violations (`dependencies.mode`, `dependencies.allowNew`), lockfiles only with an allowed manifest change or mode `any`, unparseable manifests refused.
+- Dependency: `smol-toml` 1.9.1 (policy): pyproject.toml and Pipfile must be parsed, not scanned line by line, or a header inside a multi-line string hides a protected key. Pure, no dependencies of its own.
+- Known limits (SPEC §8.5): `setup.py` dependencies aren't read (it's code); a lockfile's content isn't checked against its manifest (a changed lockfile needs an allowed manifest change, but the lockfile could still resolve something else). For P3.6's red team.
+- Tests: policy 348; coverage 99.6% statements, 96.3% branches.
+

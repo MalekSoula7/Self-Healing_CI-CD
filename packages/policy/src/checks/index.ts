@@ -3,6 +3,8 @@ import type { Change } from "../diff";
 import { globList } from "../glob";
 import type { EffectivePolicy } from "../merge";
 import { checkAssertions } from "./assertions";
+import { checkConfigs } from "./configs";
+import { checkDependencies } from "./dependencies";
 import { checkInvariants } from "./invariants";
 import { checkPaths } from "./paths";
 import { checkSize } from "./size";
@@ -21,6 +23,8 @@ const CHECKS: readonly Check[] = [
   checkSkips,
   checkAssertions,
   checkSuppressions,
+  checkConfigs,
+  checkDependencies,
 ];
 
 /** Every rule the changes break under `policy`; empty when they pass. */

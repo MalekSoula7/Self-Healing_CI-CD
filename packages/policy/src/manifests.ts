@@ -1,0 +1,264 @@
+// Dependency manifests and lockfiles (SPEC §8.5): package.json, requirements files, pyproject.toml
+// and Pipfile, read into one entry per dependency, keyed by section and (normalized) name. Pure.
+// Settings that move versions without naming a package (overrides, index URLs, sources) are
+// entries too, so changing them is a dependency change.
+import { parse as parseToml } from "smol-toml";
+import type { DependencySpec } from "./versions";
+
+export interface Dependency extends DependencySpec {
+  /** Adding a `package` is governed by `dependencies.allowNew`; any change to a `setting` needs `any`. */
+  kind: "package" | "setting";
+}
+
+export type ManifestRead =
+  { ok: true; dependencies: Map<string, Dependency> } | { ok: false; error: string };
+
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+
+/** JSON with object keys sorted at every depth, for comparing parsed values. */
+export function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, nested: unknown) => {
+    if (nested === null || typeof nested !== "object" || Array.isArray(nested)) return nested;
+    if (nested instanceof Date) return nested.toISOString();
+    const record = nested as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(record)
+        .sort()
+        .map((key) => [key, record[key]]),
+    );
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function basename(path: string): string {
+  return (path.split("/").pop() ?? path).toLowerCase();
+}
+
+const LOCKFILES = new Set([
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  "bun.lock",
+  "bun.lockb",
+  "poetry.lock",
+  "uv.lock",
+  "pipfile.lock",
+  "pdm.lock",
+]);
+
+export function isLockfile(path: string): boolean {
+  return LOCKFILES.has(basename(path));
+}
+
+const setting = (value: unknown): Dependency => ({
+  syntax: "opaque",
+  spec: stableJson(value),
+  kind: "setting",
+});
+
+/** PEP 503 name normalization. */
+function pythonName(name: string): string {
+  return name.toLowerCase().replace(/[-_.]+/g, "-");
+}
+
+/** A PEP 508 requirement: its name, and the rest (extras, specifier, marker) as its spec. */
+function requirement(text: string): [string, Dependency] {
+  const match = /^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)(.*)$/s.exec(text);
+  if (match === null) return [text.trim(), setting(text.trim())];
+  const rest = (match[2] ?? "").trim();
+  const name = pythonName(match[1] ?? "");
+  if (rest.startsWith("@")) return [name, { syntax: "opaque", spec: rest, kind: "package" }];
+  return [name, { syntax: "pep440", spec: rest, kind: "package" }];
+}
+
+function readPackageJson(json: Record<string, unknown>): Map<string, Dependency> {
+  const dependencies = new Map<string, Dependency>();
+  for (const section of [
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+  ]) {
+    const entries = json[section];
+    if (entries === undefined) continue;
+    if (!isRecord(entries)) {
+      dependencies.set(section, setting(entries));
+      continue;
+    }
+    for (const [name, spec] of Object.entries(entries)) {
+      dependencies.set(
+        `${section}:${name}`,
+        typeof spec === "string"
+          ? { syntax: "npm", spec, kind: "package" }
+          : { syntax: "opaque", spec: stableJson(spec), kind: "package" },
+      );
+    }
+  }
+  const settings = [
+    "overrides",
+    "resolutions",
+    "pnpm",
+    "bundleDependencies",
+    "bundledDependencies",
+    "packageManager",
+  ];
+  for (const key of settings) {
+    if (json[key] !== undefined) dependencies.set(key, setting(json[key]));
+  }
+  return dependencies;
+}
+
+function readRequirements(content: string): Map<string, Dependency> {
+  const dependencies = new Map<string, Dependency>();
+  for (const raw of content.replace(/\\\r?\n/g, "").split("\n")) {
+    const line = raw.replace(/(^|\s)#.*$/, "").trim();
+    if (line === "") continue;
+    if (line.startsWith("-")) {
+      dependencies.set(`option:${line}`, { syntax: "opaque", spec: line, kind: "setting" });
+    } else {
+      const [name, dependency] = requirement(line);
+      dependencies.set(name, dependency);
+    }
+  }
+  return dependencies;
+}
+
+/** A Poetry or Pipfile value: a string spec, or a table with only `version`; else opaque. */
+function tableSpec(value: unknown, pipfile: boolean): Dependency {
+  const spec = isRecord(value) && Object.keys(value).length === 1 ? value.version : value;
+  if (typeof spec !== "string")
+    return { syntax: "opaque", spec: stableJson(value), kind: "package" };
+  const trimmed = spec.trim();
+  if (pipfile) return { syntax: "pep440", spec: trimmed === "*" ? "" : trimmed, kind: "package" };
+  // Poetry: ^, ~ (not ~=), bare versions and * read like npm ranges; operators like PEP 440.
+  const npmLike = /^(\^|~(?!=)|\*$|\d)/.test(trimmed);
+  return { syntax: npmLike ? "npm" : "pep440", spec: trimmed, kind: "package" };
+}
+
+function addRequirementList(into: Map<string, Dependency>, section: string, list: unknown): void {
+  if (!Array.isArray(list)) {
+    if (list !== undefined) into.set(section, setting(list));
+    return;
+  }
+  for (const item of list) {
+    if (typeof item === "string") {
+      const [name, dependency] = requirement(item);
+      into.set(`${section}:${name}`, dependency);
+    } else {
+      into.set(`${section}:${stableJson(item)}`, setting(item));
+    }
+  }
+}
+
+function addTable(
+  into: Map<string, Dependency>,
+  section: string,
+  table: unknown,
+  pipfile: boolean,
+): void {
+  if (!isRecord(table)) {
+    if (table !== undefined) into.set(section, setting(table));
+    return;
+  }
+  for (const [name, value] of Object.entries(table)) {
+    const key = `${section}:${pipfile || name === "python" ? name : pythonName(name)}`;
+    into.set(key, name === "python" ? setting(value) : tableSpec(value, pipfile));
+  }
+}
+
+function child(record: unknown, ...keys: string[]): unknown {
+  let value: unknown = record;
+  for (const key of keys) value = isRecord(value) ? value[key] : undefined;
+  return value;
+}
+
+function eachTable(value: unknown): [string, unknown][] {
+  return isRecord(value) ? Object.entries(value) : [];
+}
+
+function readPyproject(toml: Record<string, unknown>): Map<string, Dependency> {
+  const dependencies = new Map<string, Dependency>();
+  addRequirementList(dependencies, "build-system", child(toml, "build-system", "requires"));
+  addRequirementList(dependencies, "project", child(toml, "project", "dependencies"));
+  for (const [group, list] of eachTable(child(toml, "project", "optional-dependencies"))) {
+    addRequirementList(dependencies, `project.optional-dependencies.${group}`, list);
+  }
+  for (const [group, list] of eachTable(child(toml, "dependency-groups"))) {
+    addRequirementList(dependencies, `dependency-groups.${group}`, list);
+  }
+  const poetry = ["tool", "poetry"];
+  addTable(dependencies, "tool.poetry.dependencies", child(toml, ...poetry, "dependencies"), false);
+  addTable(
+    dependencies,
+    "tool.poetry.dev-dependencies",
+    child(toml, ...poetry, "dev-dependencies"),
+    false,
+  );
+  for (const [group, value] of eachTable(child(toml, ...poetry, "group"))) {
+    addTable(
+      dependencies,
+      `tool.poetry.group.${group}.dependencies`,
+      child(value, "dependencies"),
+      false,
+    );
+  }
+  addRequirementList(
+    dependencies,
+    "tool.uv.dev-dependencies",
+    child(toml, "tool", "uv", "dev-dependencies"),
+  );
+  for (const [group, list] of eachTable(child(toml, "tool", "pdm", "dev-dependencies"))) {
+    addRequirementList(dependencies, `tool.pdm.dev-dependencies.${group}`, list);
+  }
+  // Where packages come from.
+  for (const [key, value] of [
+    ["tool.poetry.source", child(toml, ...poetry, "source")],
+    ["tool.uv.sources", child(toml, "tool", "uv", "sources")],
+    ["tool.uv.index", child(toml, "tool", "uv", "index")],
+  ] as const) {
+    if (value !== undefined) dependencies.set(key, setting(value));
+  }
+  return dependencies;
+}
+
+function readPipfile(toml: Record<string, unknown>): Map<string, Dependency> {
+  const dependencies = new Map<string, Dependency>();
+  addTable(dependencies, "packages", toml.packages, true);
+  addTable(dependencies, "dev-packages", toml["dev-packages"], true);
+  if (toml.source !== undefined) dependencies.set("source", setting(toml.source));
+  return dependencies;
+}
+
+type Reader = (content: string) => Map<string, Dependency>;
+
+function parsedJson(content: string): Record<string, unknown> {
+  const value: Json = JSON.parse(content) as Json;
+  if (!isRecord(value)) throw new Error("not a JSON object");
+  return value;
+}
+
+function readerFor(path: string): Reader | null {
+  const name = basename(path);
+  if (name === "package.json") return (content) => readPackageJson(parsedJson(content));
+  if (name === "pyproject.toml") return (content) => readPyproject(parseToml(content));
+  if (name === "pipfile") return (content) => readPipfile(parseToml(content));
+  const requirements =
+    /^(requirements|constraints).*\.(txt|in)$/.test(name) ||
+    /(^|\/)requirements\/[^/]+\.(txt|in)$/i.test(path);
+  return requirements ? readRequirements : null;
+}
+
+/** The dependencies a manifest declares; null when `path` isn't a manifest. */
+export function readManifest(path: string, content: string): ManifestRead | null {
+  const reader = readerFor(path);
+  if (reader === null) return null;
+  try {
+    return { ok: true, dependencies: reader(content) };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}

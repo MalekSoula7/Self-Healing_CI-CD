@@ -64,4 +64,27 @@ describe("checkChanges", () => {
       }),
     ).toEqual([]);
   });
+
+  it("reports a new package as dependencies.mode while frozen, even if new packages are allowed", () => {
+    const violations = check(
+      [edit("package.json", '{"dependencies": {}}\n', '{"dependencies": {"zod": "4.1.0"}}\n')],
+      { dependencies: { allowNew: true } },
+    );
+
+    expect(violations.map((violation) => violation.ruleId)).toEqual(["dependencies.mode"]);
+  });
+
+  it("reads protected sections of manifests in any shape", () => {
+    const configs = (before: string | null, after: string, path = "pyproject.toml") =>
+      check([before === null ? add(path, after) : edit(path, before, after)], {
+        dependencies: { mode: "any", allowNew: true },
+      }).map((violation) => violation.ruleId);
+
+    // A package.json that isn't an object is reported by the dependency check alone.
+    expect(configs('{"scripts": {}}\n', "[]\n", "package.json")).toEqual(["dependencies.mode"]);
+    expect(configs("", "tool = 1\n")).toEqual([]);
+    expect(configs("[tool]\nblack = 1\n", "[tool]\nblack = 2\n")).toEqual(["protectedConfigs"]);
+    expect(configs(null, "[tool.ruff]\nline-length = 200\n")).toEqual(["protectedConfigs"]);
+    expect(configs(null, '[tool.poetry.dependencies]\nzod = "1.0.0"\n')).toEqual([]);
+  });
 });

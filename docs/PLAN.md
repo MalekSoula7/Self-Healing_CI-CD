@@ -73,7 +73,7 @@ Acceptance: each `break.ts` scenario shows up within ~1 minute and has the right
 - [x] **P3.1** `PolicyRules` zod schema, defaults, invariants as code (SPEC §8.2–8.3). Export types.
 - [x] **P3.2** Diff model: build `Change { path, oldPath, status, isBinary, modeChanged, oldContent, newContent, hunks }` from old/new file contents. Tests.
 - [x] **P3.3** Layer merge with provenance (SPEC §8.4). Property-based tests (fast-check): the merged policy is never less restrictive than any layer.
-- [ ] **P3.4** Static checks, one module per family (SPEC §8.5), each with allowed and forbidden fixtures in `packages/policy/fixtures/`. Test-first. INV-GITHUB-DIR and path rules use the same NTFS/HFS-aware normalizer as `packages/github`'s `assertWritablePath` (move it to `packages/shared`).
+- [x] **P3.4** Static checks, one module per family (SPEC §8.5), each with allowed and forbidden fixtures in `packages/policy/fixtures/`. Test-first. INV-GITHUB-DIR and path rules use the same NTFS/HFS-aware normalizer as `packages/github`'s `assertWritablePath` (move it to `packages/shared`).
 - [ ] **P3.5** Behavioral checks: JUnit parser + inventory comparison (SPEC §8.6). Fixtures from Jest, Vitest and pytest reports.
 - [ ] **P3.6** Run the `policy-red-team` subagent. Turn every bypass it finds into a failing fixture, then fix the engine. Repeat until it finds nothing new.
 - [ ] **P3.7** `.pipeheal.yml` loader from the default branch, validated; errors shown in the UI, never crash the pipeline.

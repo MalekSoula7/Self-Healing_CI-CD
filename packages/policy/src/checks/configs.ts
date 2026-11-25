@@ -1,0 +1,159 @@
+// protectedConfigs (SPEC §8.5): the configuration of the checks CI runs (tests, lint, format,
+// types, coverage). Whole files by name; package.json and pyproject.toml by section, parsed (a
+// header inside a string can't move a key out of [tool.*]). Their dependency sections are
+// dependencies.*'s; a file that doesn't parse is reported there.
+import { parse as parseToml } from "smol-toml";
+import { globList } from "../glob";
+import { stableJson } from "../manifests";
+import { pathsOf, type Check, type Violation } from "./types";
+
+export const PROTECTED_CONFIG_GLOBS: readonly string[] = [
+  // TypeScript
+  "**/tsconfig*.json",
+  "**/jsconfig*.json",
+  // Test runners and coverage
+  "**/jest.config.*",
+  "**/vitest.config.*",
+  "**/vitest.workspace.*",
+  "**/vite.config.*",
+  "**/playwright.config.*",
+  "**/cypress.config.*",
+  "**/karma.conf.*",
+  "**/.mocharc*",
+  "**/.nycrc*",
+  "**/.c8rc*",
+  "**/codecov.yml",
+  "**/.codecov.yml",
+  // Lint and format
+  "**/eslint.config.*",
+  "**/.eslintrc*",
+  "**/.eslintignore",
+  "**/.prettierrc*",
+  "**/prettier.config.*",
+  "**/.prettierignore",
+  "**/biome.json",
+  "**/biome.jsonc",
+  "**/.stylelintrc*",
+  "**/stylelint.config.*",
+  // Python
+  "**/pytest.ini",
+  "**/setup.cfg",
+  "**/tox.ini",
+  "**/noxfile.py",
+  "**/.coveragerc",
+  "**/mypy.ini",
+  "**/.mypy.ini",
+  "**/.flake8",
+  "**/ruff.toml",
+  "**/.ruff.toml",
+  "**/.pylintrc",
+  "**/pylintrc",
+  "**/pyrightconfig.json",
+];
+
+/** package.json keys that configure a check. */
+const PACKAGE_JSON_KEYS = [
+  "scripts",
+  "jest",
+  "eslintConfig",
+  "eslintIgnore",
+  "prettier",
+  "stylelint",
+  "ava",
+  "mocha",
+  "nyc",
+  "c8",
+  "xo",
+  "standard",
+  "tsd",
+  "vitest",
+  "lint-staged",
+  "husky",
+];
+
+/** pyproject.toml [tool.*] tables that are dependencies, not configuration. */
+const PYPROJECT_DEPENDENCY_KEYS: Record<string, readonly string[]> = {
+  poetry: ["dependencies", "dev-dependencies", "group", "source"],
+  uv: ["dev-dependencies", "sources", "index"],
+  pdm: ["dev-dependencies"],
+};
+
+const protectedFiles = globList(PROTECTED_CONFIG_GLOBS);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function basename(path: string): string {
+  return (path.split("/").pop() ?? path).toLowerCase();
+}
+
+/** The protected part of a package.json or pyproject.toml, or null if it doesn't parse. */
+function protectedPart(path: string, content: string | null): unknown {
+  // An absent file reads as an empty one: adding a package.json without scripts changes nothing here.
+  const text = content ?? (basename(path) === "package.json" ? "{}" : "");
+  try {
+    if (basename(path) === "package.json") {
+      const json: unknown = JSON.parse(text);
+      if (!isRecord(json)) return null;
+      return Object.fromEntries(PACKAGE_JSON_KEYS.map((key) => [key, json[key] ?? null]));
+    }
+    const tool = parseToml(text).tool;
+    if (!isRecord(tool)) return {};
+    return Object.fromEntries(
+      Object.entries(tool).flatMap(([name, table]): [string, unknown][] => {
+        if (!isRecord(table)) return [[name, table]];
+        const skip = PYPROJECT_DEPENDENCY_KEYS[name] ?? [];
+        const settings = Object.entries(table).filter(([key]) => !skip.includes(key));
+        // A table holding only dependencies configures nothing.
+        return settings.length === 0 ? [] : [[name, Object.fromEntries(settings)]];
+      }),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function sectionChanged(
+  path: string,
+  oldPath: string,
+  before: string | null,
+  after: string | null,
+) {
+  const old = protectedPart(oldPath, before);
+  const next = protectedPart(path, after);
+  return old !== null && next !== null && stableJson(old) !== stableJson(next);
+}
+
+export const checkConfigs: Check = (changes, { policy }) => {
+  if (!policy.protectedConfigs) return [];
+  const violations: Violation[] = [];
+  for (const change of changes) {
+    const path = pathsOf(change).find((candidate) => protectedFiles.matchAnywhere(candidate));
+    const sectioned = ["package.json", "pyproject.toml"].includes(basename(change.path));
+    if (path !== undefined) {
+      violations.push({
+        ruleId: "protectedConfigs",
+        path,
+        message: `${path} configures a check CI runs, and the policy protects it.`,
+        hint: "Fix the code so the checks pass as configured; don't change how they run.",
+      });
+    } else if (
+      sectioned &&
+      sectionChanged(
+        change.path,
+        change.oldPath ?? change.path,
+        change.oldContent,
+        change.newContent,
+      )
+    ) {
+      violations.push({
+        ruleId: "protectedConfigs",
+        path: change.path,
+        message: `${change.path}: a section that configures a check CI runs changed (scripts, or tool settings).`,
+        hint: "Fix the code so the checks pass as configured; don't change scripts or [tool.*] settings.",
+      });
+    }
+  }
+  return violations;
+};
