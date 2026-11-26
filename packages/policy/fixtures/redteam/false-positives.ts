@@ -265,8 +265,8 @@ export const falsePositives: Attack[] = [
     changes: [
       edit(
         "setup.py",
-        'setup(name="shop", packages=["shop"], install_requires=["httpx==0.27.0"])\n',
-        'setup(name="shop", packages=["shop"], package_data={"shop": ["py.typed"]}, install_requires=["httpx==0.27.0"])\n',
+        'setup(name="shop", packages=["shop"], install_requires=["requests==2.32.0"])\n',
+        'setup(name="shop", packages=["shop"], package_data={"shop": ["py.typed"]}, install_requires=["requests==2.32.0"])\n',
       ),
     ],
     violations: [],
@@ -276,6 +276,203 @@ export const falsePositives: Attack[] = [
     idea: "dependencies.mode: `/(requirements|constraints).*\\.(txt|in)$/` reads docs/system_requirements.txt as a manifest.",
     changes: [
       edit("docs/system_requirements.txt", "PostgreSQL 15 or newer\n", "PostgreSQL 16 or newer\n"),
+    ],
+    violations: [],
+  },
+  // ================================================================== round 3 (after 1535309)
+  {
+    name: "fp r3: an option object { fails: true } passed to a test double",
+    idea: "tests.forbidSkips: the `{ skip|fails|only: true }` pattern isn't anchored to it()/test() (mockFetch, importRows).",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "src/fetch.test.ts",
+        JS_TEST,
+        js(
+          "    expect(total([1, 2])).toBe(3);",
+          "    mockFetch({ fails: true });\n    expect(importRows(rows, { skip: true })).toHaveLength(0);",
+        ),
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: a test QueryClient with retry: 0",
+    idea: "tests.forbidSkips (D14 retries): TanStack Query tests turn retries OFF with `retry: 0`.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "src/cart.test.tsx",
+        JS_TEST,
+        js(
+          "    expect(total([1, 2])).toBe(3);",
+          "    const client = new QueryClient({ defaultOptions: { queries: { retry: 0 } } });\n    expect(client).toBeDefined();",
+        ),
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: pytest_configure registering a marker in conftest",
+    idea: "tests.forbidSkips: every `def pytest_*` hook counts; registering a marker is the fix for `-W error` unknown-mark failures.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "tests/conftest.py",
+        "import pytest\n",
+        'import pytest\n\n\ndef pytest_configure(config):\n    config.addinivalue_line("markers", "slow: long-running tests")\n',
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: importlib.import_module in a plugin-registry test",
+    idea: "tests.forbidSkips: any import_module( counts, though here it loads the code under test.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "tests/test_plugins.py",
+        "from shop.plugins import NAMES\n",
+        'import importlib\n\nfrom shop.plugins import NAMES\n\n\ndef test_every_plugin_imports():\n    for name in NAMES:\n        assert importlib.import_module(f"shop.plugins.{name}")\n',
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: a graceful-shutdown test signalling its own process",
+    idea: "tests.forbidSkips: `process.kill(process.pid` counts as an exit, but SIGTERM to a handler under test is the test.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "src/shutdown.test.ts",
+        JS_TEST,
+        js(
+          "    expect(total([1, 2])).toBe(3);",
+          '    process.kill(process.pid, "SIGTERM");\n    await vi.waitFor(() => expect(server.closed).toBe(true));',
+        ),
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: comparing tuples in an assert",
+    idea: "tests.forbidAssertionReduction (D14 tautology): `assert (a, b) == (2, 3)` matches the tuple-assert regex.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "tests/test_cart.py",
+        PY_TEST,
+        py("    assert total([1, 2]) == 3", "    assert (total([1]), total([1, 2])) == (1, 3)"),
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: assert(...) written with parentheses around a call with a comma",
+    idea: "tests.forbidAssertionReduction (D14 tautology): assert(total([1, 2]) == 3) is one expression, not a tuple.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "tests/test_cart.py",
+        PY_TEST,
+        py("    assert total([1, 2]) == 3", "    assert(total([1, 2]) == 3)"),
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: optional imports and best-effort cleanup in source",
+    idea: "suppressions.forbid (D14 except-pass): `except ImportError: pass` and `except FileNotFoundError: pass` name what they expect.",
+    changes: [
+      edit(
+        "shop/compat.py",
+        "import json\n",
+        "import json\n\ntry:\n    import orjson as json\nexcept ImportError:\n    pass\n",
+      ),
+      edit(
+        "shop/cache.py",
+        "def clear(path):\n    path.unlink()\n",
+        "def clear(path):\n    try:\n        path.unlink()\n    except FileNotFoundError:\n        pass\n",
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: an inline NODE_ENV schema in source",
+    idea: 'tests.forbidSkips (D14 test detection): `NODE_ENV: z.enum(["development", "test", "production"])` names "test" on a NODE_ENV line.',
+    changes: [
+      edit(
+        "src/env.ts",
+        "export const env = z.object({ PORT: z.coerce.number() });\n",
+        'export const env = z.object({\n  PORT: z.coerce.number(),\n  NODE_ENV: z.enum(["development", "test", "production"]),\n});\n',
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: removing a whole eslint-disable/eslint-enable pair",
+    idea: "suppressions.forbid (removed enabling directive): deleting both ends of a fixed region is the cleanup we want.",
+    changes: [
+      edit(
+        "src/legacy.ts",
+        "/* eslint-disable no-console */\nconsole.log(1);\n/* eslint-enable no-console */\nexport const a = 1;\n",
+        "export const a = 1;\n",
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: a type-only import under `if TYPE_CHECKING:  # pragma: no cover`",
+    idea: "suppressions.forbid (block directive): the standard way to fix a typing error adds an import inside this block.",
+    changes: [
+      edit(
+        "shop/cart.py",
+        "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:  # pragma: no cover\n    from shop.models import Item\n",
+        "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:  # pragma: no cover\n    from shop.models import Item\n    from shop.models import Price\n",
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: a .diff test fixture",
+    idea: "dependencies.mode: any *.diff/*.patch is a dependency-settings file, test data for a diff tool included.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "tests/fixtures/rename.diff",
+        "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n",
+        "--- a/x\n+++ b/y\n@@ -1 +1 @@\n-a\n+b\n",
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: a story updated for a renamed prop (source_only)",
+    idea: "tests.mode: **/*.stories.* makes stories test files, so a typecheck fix after a prop rename can't touch them.",
+    changes: [
+      edit(
+        "src/Button.tsx",
+        "export const Button = (p: { label: string }) => p.label;\n",
+        "export const Button = (p: { text: string }) => p.text;\n",
+      ),
+      edit(
+        "src/Button.stories.tsx",
+        'export const Primary = { args: { label: "Buy" } };\n',
+        'export const Primary = { args: { text: "Buy" } };\n',
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r3: a patch bump inside setup.py install_requires (patch)",
+    idea: "dependencies.mode: setup.py arguments are settings (need any), while the same bump in requirements.txt is a patch.",
+    policy: { dependencies: { mode: "patch" } },
+    changes: [
+      edit(
+        "setup.py",
+        'setup(name="shop", install_requires=["requests==2.32.0"])\n',
+        'setup(name="shop", install_requires=["requests==2.32.3"])\n',
+      ),
     ],
     violations: [],
   },

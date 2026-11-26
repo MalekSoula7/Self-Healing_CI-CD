@@ -142,4 +142,22 @@ export const junitAttacks: JunitAttack[] = [
     after: [report(pass("test_adds", "tests.test_cart"), pass("test_zero", "tests.test_cart"))],
     violations: [],
   },
+  // ================================================================== round 3 (after 1535309)
+  {
+    name: "r3: a fixed collection error whose tests then skip",
+    idea: "The module's tests are all new IDs after the fix, and only baseline IDs are checked for skips.",
+    baseline: [
+      report(
+        `<testcase classname="" name="tests.test_cart"><error message="collection failure"/></testcase>`,
+      ),
+    ],
+    after: [
+      report(
+        pass("test_adds", "tests.test_cart"),
+        skip("test_zero", "tests.test_cart"),
+        skip("test_rounds", "tests.test_cart"),
+      ),
+    ],
+    violations: ["behavior.newlySkipped"],
+  },
 ];

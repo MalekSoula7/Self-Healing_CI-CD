@@ -308,4 +308,83 @@ export const assertionAttacks: Attack[] = [
     changes: [edit(PY, PY_TEST, py(PY_FAILING_ASSERTION, "    pytest.raises(AssertionError)"))],
     violations: ["tests.forbidAssertionReduction"],
   },
+  // ================================================================== round 3 (after 1535309)
+  {
+    name: "r3: expect(x) with no matcher",
+    idea: "expect( is counted, but without .toBe(...) nothing is asserted (Vitest and Jest pass).",
+    policy: EDITABLE,
+    changes: [edit(JS, JS_TEST, js(FAILING_ASSERTION, "    expect(total([]));"))],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r3: the failing assertion wrapped in expect(() => ...).toThrow()",
+    idea: "The failure becomes the expected outcome; the counts go up.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(FAILING_ASSERTION, `    expect(() => {\n  ${FAILING_ASSERTION}\n    }).toThrow();`),
+      ),
+    ],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r3: the failing assert wrapped in pytest.raises(AssertionError)",
+    idea: "Same inversion in Python.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py(
+          PY_FAILING_ASSERTION,
+          `    with pytest.raises(AssertionError):\n    ${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r3: contextlib.suppress(AssertionError)",
+    idea: "A swallowed assertion without try/except.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py("import pytest\n", "import contextlib\n\nimport pytest\n").replace(
+          PY_FAILING_ASSERTION,
+          `    with contextlib.suppress(AssertionError):\n    ${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r3: catch (e) { void e; } swallows the assertion",
+    idea: "Only an empty catch counts; a body that ignores the error is as empty.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          FAILING_ASSERTION,
+          `    try {\n  ${FAILING_ASSERTION}\n    } catch (error) {\n      void error;\n    }`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r3: tautologies with non-scalar literals",
+    idea: "expect([]).toEqual([]) and assert 1 == 1: literal-only subjects the D14 regexes miss.",
+    policy: EDITABLE,
+    changes: [
+      edit(JS, JS_TEST, js(FAILING_ASSERTION, "    expect([]).toEqual([]);")),
+      edit(PY, PY_TEST, py(PY_FAILING_ASSERTION, "    assert 1 == 1")),
+    ],
+    violations: ["tests.forbidAssertionReduction", "tests.forbidAssertionReduction"],
+  },
 ];

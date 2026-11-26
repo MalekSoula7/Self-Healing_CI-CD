@@ -107,7 +107,13 @@ export const checkDependencies: Check = (changes, context) => {
   const manifestsAllowed = violations.length === 0;
   for (const change of changes) {
     const paths = [change.oldPath ?? change.path, change.path];
-    if (mode !== "any" && paths.some(isDependencySettingsFile)) {
+    // A .patch/.diff that is test data (under the test globs) isn't a patch to a dependency.
+    const settings = paths.some(
+      (path) =>
+        isDependencySettingsFile(path) &&
+        !(/\.(patch|diff)$/i.test(path) && context.testFiles.matchAnywhere(path) !== undefined),
+    );
+    if (mode !== "any" && settings) {
       violations.push({
         ruleId: "dependencies.mode",
         path: change.path,

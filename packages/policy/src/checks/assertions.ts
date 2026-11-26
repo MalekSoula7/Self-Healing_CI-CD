@@ -9,7 +9,9 @@ const ASSERTIONS: Record<Language, readonly RegExp[]> = {
   js: [
     // expect(...), expect.soft(...), expectTypeOf(...), assert(...), assert.equal(...); not
     // expect.assertions(0), and not text in JSX (`<p>expect(x)</p>`: after a `>` but not `=>`).
-    /(?<![\w$.])(?<!(?<!=)>\s*)(expect(\s*\.\s*soft)?|expectTypeOf|assertType)\s*\(/g,
+    // An expect only counts with a matcher after it: `expect(x);` alone asserts nothing.
+    /(?<![\w$.])(?<!(?<!=)>\s*)(expect(\s*\.\s*soft)?|expectTypeOf)\s*\([^;]*?\)\s*(\.\s*(not|resolves|rejects)\s*)*\.\s*to[A-Z]\w*\s*\(/g,
+    /(?<![\w$.])(?<!(?<!=)>\s*)assertType\s*\(/g,
     /(?<![\w$.])(?<!(?<!=)>\s*)assert(\s*\.\s*[\w$]+)?\s*\(/g,
     /\.\s*should\b/g,
     // AVA and tap: t.is(...), t.deepEqual(...), t.throws(...); not t.pass().

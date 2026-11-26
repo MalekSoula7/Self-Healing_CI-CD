@@ -12,12 +12,14 @@
 // - An added line with a lone CR or U+2028/U+2029, or a JavaScript string continued with a
 //   backslash, is refused: line-based reading can't follow them.
 import type { Change } from "../diff";
-import { addedLines, at, languageOf, stripCode, type Language } from "../source";
+import { addedLines, at, languageOf, stripCode, stripComments, type Language } from "../source";
 import type { Check, Violation } from "./types";
 
-const SKIP_NAMES = "skip|only|todo|fixme|skipIf|runIf|fails|failing";
+const SKIP_NAMES = "skip|only|todo|fixme|skipIf|runIf|fails|failing|fail";
 const RUNNER = "it|test|describe|suite|bench";
 const NOT_AFTER = "(?<![\\w$.])";
+/** Modules whose exports are the test runner's functions. */
+const RUNNER_MODULES = "vitest|@jest/globals|node:test|mocha|@playwright/test|bun:test";
 
 /** Decoded, NFKC, whitespace removed except between two word characters. */
 function normalizeJs(text: string): string {
@@ -37,37 +39,72 @@ function normalizeJs(text: string): string {
   );
 }
 
-const JS_MARKERS: readonly RegExp[] = [
-  // it.skip, describe.only, test.concurrent.fails, (it).todo
-  new RegExp(`${NOT_AFTER}\\(?(${RUNNER})\\)?(\\.[\\w$]+)*\\.(${SKIP_NAMES})(?![\\w$])`, "g"),
-  // it["skip"], (test)[name], Reflect.get(it, ...)
-  new RegExp(`${NOT_AFTER}\\(?(it|test|describe)\\)?\\[`, "g"),
-  /Reflect\.get\((it|test|describe)(?![\w$])/g,
-  new RegExp(`${NOT_AFTER}(xit|xdescribe|xtest|xspec|fit|fdescribe)\\(`, "g"),
-  // it(name, { skip: true }, fn)
-  /[{,](skip|only|todo|fails|failing):(true|!0)[,}]/g,
-  // it("name", ({ skip }) => ...), test("name", async function ({ skip }) ...)
-  new RegExp(
-    `${NOT_AFTER}(${RUNNER})(\\.[\\w$]+)*\\((["'\`])[^"'\`]*\\3,(async)?(\\(\\{|function[\\w$ ]*\\(\\{)[^}]*(?<![\\w$])(${SKIP_NAMES})(?![\\w$])`,
-    "g",
-  ),
-  // const { skip } = ctx
-  new RegExp(
-    `(const|let|var)\\{[^}]*(?<![\\w$])(${SKIP_NAMES})(?![\\w$])[^}]*\\}=(ctx|context|task|t|${RUNNER})(?![\\w$])`,
-    "g",
-  ),
-  // it.each([]), test.for([] as number[])
-  /\.(each|for)\(\[\](as [\w$<>[\]]+)?\)/g,
-  // for (const x of []) { expect(...) }
-  /for\((const|let|var) [\w$]+ of(\[\]|""|''|``)\)/g,
-  /process\.(exit|abort|reallyExit)\(|process\.kill\(process\.pid/g,
-];
+/**
+ * The names a file reaches the runner by: `it`, `test`, ..., renamed imports (`import { it as
+ * spec }`), and namespace prefixes (`import * as vt from "vitest"`, `globalThis.`).
+ */
+function jsRunners(normalized: string): { runner: string; prefix: string } {
+  const renamed = [
+    ...normalized.matchAll(new RegExp(`(?<![\\w$])(?:${RUNNER}) as ([\\w$]+)`, "g")),
+  ].map((match) => at(match, 1));
+  const namespaces = [
+    ...normalized.matchAll(
+      new RegExp(`import\\*as ([\\w$]+) ?from["'\`](?:${RUNNER_MODULES})["'\`]`, "g"),
+    ),
+  ].map((match) => at(match, 1));
+  return {
+    runner: [RUNNER, ...renamed].join("|"),
+    prefix: `(?:(?:globalThis|global|window|${["\\$never", ...namespaces].join("|")})\\??\\.)?`,
+  };
+}
+
+function jsMarkers(normalized: string): readonly RegExp[] {
+  const { runner, prefix } = jsRunners(normalized);
+  const call = `${NOT_AFTER}${prefix}\\(?(${runner})\\)?`;
+  return [
+    // it.skip, describe.only, test.concurrent.fails, it?.skip, (it).todo, vt.it.skip
+    new RegExp(`${call}(\\??\\.[\\w$]+)*\\??\\.(${SKIP_NAMES})(?![\\w$])`, "g"),
+    // it["skip"], (test)[name], Reflect.get(it, ...)
+    new RegExp(`${call}\\??\\.?\\[`, "g"),
+    new RegExp(`Reflect\\.get\\(${prefix}(${runner})(?![\\w$])`, "g"),
+    new RegExp(`${NOT_AFTER}(xit|xdescribe|xtest|xspec|fit|fdescribe|pending)\\(`, "g"),
+    // The test context's own skip: ctx.skip(), this.skip() (Mocha), t.skip() (node:test),
+    // testInfo.fail() and test.info().fixme() (Playwright).
+    new RegExp(
+      `${NOT_AFTER}(this|ctx|context|t|testInfo|task|test\\.info\\(\\))\\??\\.(skip|todo|fail|fixme)\\(`,
+      "g",
+    ),
+    // it("name", { skip: anything-but-false }, fn), and the shorthand { skip }
+    new RegExp(
+      `${call}(\\??\\.[\\w$]+)*\\((["'\`])[^"'\`]*\\3,\\{[^{}]*(?<![\\w$])(skip|only|todo|fails|failing|fail)(?![\\w$])(:(?!false[,}]|0[,}])[^,}]+)?[,}]`,
+      "g",
+    ),
+    // it("name", ({ skip }) => ...), test("name", async function ({ skip }) ...)
+    new RegExp(
+      `${call}(\\??\\.[\\w$]+)*\\((["'\`])[^"'\`]*\\3,(async)?(\\(\\{|function[\\w$ ]*\\(\\{)[^}]*(?<![\\w$])(${SKIP_NAMES})(?![\\w$])`,
+      "g",
+    ),
+    // const { skip } = ctx
+    new RegExp(
+      `(const|let|var)\\{[^}]*(?<![\\w$])(${SKIP_NAMES})(?![\\w$])[^}]*\\}=(ctx|context|task|t|${runner})(?![\\w$])`,
+      "g",
+    ),
+    // it.each([]), test.for([] as number[]), [].forEach(() => expect(...))
+    /\.(each|for)\(\[\](as [\w$<>[\]]+)?\)/g,
+    /(?<![\w$)\]])\[\]\.(forEach|map|some|every|filter|flatMap|reduce)\(/g,
+    // for (const x of []) { expect(...) }
+    /for\((const|let|var) [\w$]+ of(\[\]|""|''|``)\)/g,
+    // Ending the process: a SIGTERM (graceful shutdown under test) is fine, a kill isn't.
+    /process\.(exit|abort|reallyExit)\(|process\.kill\(process\.pid(,["'](SIGKILL|SIGINT|SIGABRT|SIGQUIT)["'])?\)/g,
+  ];
+}
 
 function jsAliases(normalized: string): RegExp | null {
+  const { runner, prefix } = jsRunners(normalized);
   const names = [
     ...normalized.matchAll(
       new RegExp(
-        `(?:const|let|var) ([\\w$]+)=[^;]*?${NOT_AFTER}\\(?(?:${RUNNER})\\)?(?:\\.[\\w$]+)*\\.(?:${SKIP_NAMES})(?![\\w$])`,
+        `(?:const|let|var) ([\\w$]+)=[^;]*?${NOT_AFTER}${prefix}\\(?(?:${runner})\\)?(?:\\??\\.[\\w$]+)*\\??\\.(?:${SKIP_NAMES})(?![\\w$])`,
         "g",
       ),
     ),
@@ -75,19 +112,21 @@ function jsAliases(normalized: string): RegExp | null {
   return names.length === 0 ? null : new RegExp(`${NOT_AFTER}(${names.join("|")})\\(`, "g");
 }
 
-/** Names Python code can reach pytest/unittest by: the modules and their `as` aliases. */
+/** Names Python code can reach pytest/unittest by: the modules and their aliases. */
 function pythonModules(text: string): string {
   const aliases = [
     ...text.matchAll(/^\s*import\s+(?:pytest|unittest|_pytest[\w.]*)\s+as\s+(\w+)/gm),
     ...text.matchAll(
       /^\s*from\s+(?:_pytest[\w.]*|pytest)\s+import\s+(?:\w+\s+as\s+)?(outcomes)\b/gm,
     ),
+    // pt = pytest
+    ...text.matchAll(/^\s*(\w+)\s*=\s*(?:pytest|unittest)\s*$/gm),
   ].map((match) => at(match, 1));
   return ["pytest", "unittest", "outcomes", ...aliases].join("|");
 }
 
 const SKIP_IMPORTS =
-  /^\s*from\s+(pytest|_pytest[\w.]*|unittest[\w.]*)\s+import\s+[^\n]*\b(skip|skipif|skipIf|skipUnless|xfail|SkipTest|expectedFailure|importorskip|exit|outcomes)\b/gm;
+  /^\s*from\s+(pytest|_pytest[\w.]*|unittest[\w.]*)\s+import\s+[^\n]*\b(skip|skipif|skipIf|skipUnless|xfail|SkipTest|expectedFailure|importorskip|exit|outcomes|Skipped|XFailed|Exit)\b/gm;
 
 function pythonMarkers(modules: string): readonly RegExp[] {
   return [
@@ -95,15 +134,21 @@ function pythonMarkers(modules: string): readonly RegExp[] {
     new RegExp(`\\b(${modules})\\s*\\.\\s*(skip|xfail|importorskip|exit)\\b`, "g"),
     /\bunittest\s*\.\s*(skip|skipIf|skipUnless|expectedFailure)\b/g,
     /^\s*@\s*(skip|skipIf|skipUnless|expectedFailure)\b/gm,
-    /\bSkipTest\b|\.\s*skipTest\s*\(|\bskip\s*\.\s*Exception\b/g,
+    /\bSkipTest\b|\.\s*skipTest\s*\(|\bskip\s*\.\s*Exception\b|\b(Skipped|XFailed|Exit)\b/g,
     SKIP_IMPORTS,
-    /\b__import__\s*\(|\bimport_module\s*\(/g,
-    new RegExp(`\\bgetattr\\s*\\(\\s*(${modules}|mark)\\b`, "g"),
-    // Collection: ignore lists, hooks, __test__, del, a fixture decorator on a test.
-    /\b(collect_ignore|collect_ignore_glob)\b|^\s*(async\s+)?def\s+pytest_\w+|\b__test__\s*=|^\s*del\s+test_/gm,
+    // pytest's internals, and reaching the runner indirectly.
+    /^\s*(from|import)\s+_pytest\b/gm,
+    /\b__import__\s*\(|\bimport_module\s*\(\s*["'](pytest|unittest|_pytest)/g,
+    new RegExp(
+      `\\bgetattr\\s*\\(\\s*(${modules}|mark)\\b|\\bsys\\s*\\.\\s*modules\\s*\\[|\\bvars\\s*\\(\\s*(${modules})\\b|\\b(${modules})\\s*\\.\\s*__dict__`,
+      "g",
+    ),
+    // Collection: ignore lists, hooks (not the ones that only register options and markers),
+    // __test__, del, a fixture decorator on a test.
+    /\b(collect_ignore|collect_ignore_glob)\b|^\s*(async\s+)?def\s+pytest_(?!configure\b|addoption\b)\w+|\b__test__\s*=|^\s*del\s+test_/gm,
     /@\s*(pytest\s*\.\s*)?fixture\b[^\n]*\n\s*(async\s+)?def\s+test_/g,
     /\bparametrize\s*\(\s*(["'])[^"']*\1\s*,\s*(\[\s*\]|\(\s*\))\s*[,)]/g,
-    /^\s*for\s+\w+\s+in\s+(\[\s*\]|\(\s*\)|""|''|range\(\s*0\s*\))\s*:/gm,
+    /^\s*for\s+\w+\s+in\s+(\[\s*\]|\(\s*\)|""|''|range\(\s*0\s*\)|range\(\s*(\d+)\s*,\s*\2\s*\))\s*:/gm,
     /\b(os\s*\.\s*(_exit|abort)|sys\s*\.\s*exit)\s*\(|\braise\s+SystemExit\b|^\s*(exit|quit)\s*\(/gm,
   ];
 }
@@ -141,13 +186,21 @@ function pythonShadows(text: string): number {
   return shadows;
 }
 
-function markerCount(content: string, language: Language): number {
+function markersIn(text: string, language: Language): number {
   if (language === "js") {
-    const normalized = normalizeJs(content);
-    return count(normalized, [...JS_MARKERS, jsAliases(normalized)]);
+    const normalized = normalizeJs(text);
+    return count(normalized, [...jsMarkers(normalized), jsAliases(normalized)]);
   }
-  const text = content.normalize("NFKC");
-  return count(text, pythonMarkers(pythonModules(text))) + pythonShadows(text);
+  const nfkc = text.normalize("NFKC");
+  return count(nfkc, pythonMarkers(pythonModules(nfkc))) + pythonShadows(nfkc);
+}
+
+/**
+ * Markers counted twice: on the raw file (the stripper can misread JSX into a "comment") and with
+ * comments blanked (so deleting a comment that names `it.skip` can't pay for a real one).
+ */
+function markerCounts(content: string, language: Language): [number, number] {
+  return [markersIn(content, language), markersIn(stripComments(content, language), language)];
 }
 
 // ------------------------------------------------------------------------------------- early exits
@@ -166,7 +219,10 @@ const FUNCTION_START =
   /\bfunction\b|=>|^\s*(async\s+)?def\s|^\s*(async\s+|static\s+|get\s+|set\s+)*[\w$]+\s*\([^)]*\)\s*(:[^{]*)?\{\s*$/;
 /** An anonymous callback (a named `function helper()` is a helper, not the test's callback). */
 const CALLBACK_START = /^\s*(async\s*)?(\([^)]*\)\s*=>|[\w$]+\s*=>|function\s*\*?\s*\()/;
-const CONDITIONAL = /^\s*(\}\s*)?(if|elif|else|switch|case)\b/;
+// Blocks whose `return` skips what follows: conditions, `finally` (it also discards a thrown
+// assertion error), `with`, and a bare `{` block.
+const CONDITIONAL = /^\s*(\}\s*)?(if|elif|else|switch|case|finally|with)\b|^\s*\{\s*$/;
+const GUARDED_ON_LINE = /\b(if|finally)\b.*\breturn\b|^\s*\{\s*return\b|^\s*with\b.*:\s*return\b/;
 /** The closing line of a multi-line Python signature: `) -> None:` or `):`. */
 const SIGNATURE_END = /^\s*\)\s*(->[^:]*)?:\s*$/;
 
@@ -228,7 +284,10 @@ function signatureStart(lines: readonly string[], end: number): string {
 function guardedReturnInTest(lines: readonly string[], index: number, language: Language): boolean {
   const line = at(lines, index);
   if (!/\breturn\b/.test(line)) return false;
-  let guarded = /\bif\b.*\breturn\b/.test(line);
+  let guarded = GUARDED_ON_LINE.test(line);
+  // At column 0 there is nothing to walk: a formatter never puts a test's body there, so a
+  // guarded return there is refused outright.
+  if (indentOf(line) === 0) return guarded;
   let threshold = indentOf(line);
   let callback = false;
   for (let previous = index - 1; previous >= 0 && threshold > 0; previous -= 1) {
@@ -324,8 +383,9 @@ function lineViolations(change: Change, language: Language): Violation[] {
 
 function violationsIn(change: Change, language: Language): Violation[] {
   const violations = lineViolations(change, language);
-  const added =
-    markerCount(change.newContent ?? "", language) - markerCount(change.oldContent ?? "", language);
+  const [rawAfter, codeAfter] = markerCounts(change.newContent ?? "", language);
+  const [rawBefore, codeBefore] = markerCounts(change.oldContent ?? "", language);
+  const added = Math.max(rawAfter - rawBefore, codeAfter - codeBefore);
   if (added > 0) {
     const [first] = addedLines(change);
     violations.push(

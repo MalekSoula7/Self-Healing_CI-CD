@@ -968,4 +968,289 @@ export const skipAttacks: Attack[] = [
     ],
     violations: ["behavior.newlySkipped"],
   },
+  // ================================================================== round 3 (after 1535309)
+  // Runtime-checked: Vitest 5.0.2 and pytest 9.1 skip, or pass with the failing assertion unrun.
+  {
+    name: "r3: ctx.skip() on the test context",
+    idea: "Anchoring markers to it/test/describe dropped round 1's generic `.skip`: ctx.skip() isn't counted.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(FAILING_OPENING, '  it("is zero when empty", (ctx) => {\n    ctx.skip();'),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: Mocha this.skip() and node:test t.skip()",
+    idea: "The documented in-test skips of Mocha and node:test: the receiver isn't a runner name.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(FAILING_OPENING, '  it("is zero when empty", function () {\n    this.skip();').replace(
+          '  it("adds prices", () => {',
+          '  it("adds prices", (t) => {\n    t.skip();',
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: Playwright test.fail() / testInfo.fail() inverts the outcome",
+    idea: "SKIP_NAMES has fails/failing but not Playwright's fail: an expected failure is reported as passed.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "e2e/cart.spec.ts",
+        'import { expect, test } from "@playwright/test";\n\ntest("empty cart shows zero", async ({ page }) => {\n  await page.goto("/cart");\n  await expect(page.getByTestId("total")).toHaveText("0");\n});\n',
+        'import { expect, test } from "@playwright/test";\n\ntest("empty cart shows zero", async ({ page }) => {\n  test.fail();\n  await page.goto("/cart");\n  await expect(page.getByTestId("total")).toHaveText("0");\n});\n',
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: 'r3: Jasmine pending("...")',
+    idea: "Jasmine marks the spec pending from inside it.",
+    policy: EDITABLE,
+    changes: [
+      edit(JS, JS_TEST, js(FAILING_ASSERTION, `    pending("flaky");\n${FAILING_ASSERTION}`)),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: optional chaining it?.skip(...)",
+    idea: "The marker regex wants `.` right after the runner name; a smoke test keeps the count.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        withSmokeTest(js(FAILING_OPENING, '  it?.skip("is zero when empty", () => {')),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: namespace import vt.it.skip(...)",
+    idea: "NOT_AFTER refuses a runner name after `.`, so `import * as vt` hides it (globalThis.it.skip too, in Jest).",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(FAILING_OPENING, '  vt.it.skip("is zero when empty", () => {').replace(
+          'from "vitest";\n',
+          'from "vitest";\nimport * as vt from "vitest";\n',
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: renamed import { it as spec }; spec.skip(...)",
+    idea: "Import renames aren't tracked as runner names; a smoke test keeps the count.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        withSmokeTest(
+          js(FAILING_OPENING, '  spec.skip("is zero when empty", () => {').replace(
+            "it, test }",
+            "it, it as spec, test }",
+          ),
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: options { skip: <expression> }",
+    idea: "Only `skip: true` / `!0` count; { skip: !!process.env.CI } (or a shorthand `{ skip }`) skips too.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(FAILING_OPENING, '  it("is zero when empty", { skip: !!process.env.CI }, () => {'),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: a marker in a removed comment pays for a new one",
+    idea: "Markers are counted per file on raw text: delete a comment naming it.skip, add a real it.skip, same count.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        js(
+          'describe("total"',
+          '// Re-enabled in #123: was it.skip while the price API was flaky.\ndescribe("total"',
+        ),
+        JS_TEST.replace(FAILING_OPENING, '  it.skip("is zero when empty", () => {'),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: guarded return at column 0",
+    idea: "The ancestor walk stops when the return's indentation is 0 (threshold > 0).",
+    policy: EDITABLE,
+    changes: [
+      edit(JS, JS_TEST, js(FAILING_ASSERTION, `if (process.env.CI) return;\n${FAILING_ASSERTION}`)),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: return in finally swallows the failed assertion",
+    idea: "try { expect } finally { return; } - a return in finally discards the thrown error; nothing follows it.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          FAILING_ASSERTION,
+          `    try {\n  ${FAILING_ASSERTION}\n    } finally {\n      return;\n    }`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: return in a bare block",
+    idea: "{ return; } then the assertion: the next line after the return is `}`, and there's no condition.",
+    policy: EDITABLE,
+    changes: [
+      edit(JS, JS_TEST, js(FAILING_ASSERTION, `    {\n      return;\n    }\n${FAILING_ASSERTION}`)),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: assertion in [].forEach(...)",
+    idea: "A dead iteration through a callback; only for-of over [] is matched.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(FAILING_ASSERTION, `    [].forEach(() => {\n  ${FAILING_ASSERTION}\n    });`),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: from _pytest.outcomes import Skipped; raise Skipped",
+    idea: "The import names Skipped (not skip/outcomes), the raise names neither pytest nor SkipTest.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py("import pytest\n", "import pytest\nfrom _pytest.outcomes import Skipped\n").replace(
+          PY_FAILING_ASSERTION,
+          `    raise Skipped("flaky")\n${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: from _pytest.outcomes import Exit; raise Exit(returncode=0)",
+    idea: "`exit` is matched lower-case only; Exit ends the session.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py("import pytest\n", "import pytest\nfrom _pytest.outcomes import Exit\n").replace(
+          PY_FAILING_ASSERTION,
+          `    raise Exit("done", returncode=0)\n${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: pt = pytest; pt.skip()",
+    idea: "Only `import ... as` aliases are tracked, not assignments.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py("from shop.cart import total\n", "from shop.cart import total\n\npt = pytest\n").replace(
+          PY_FAILING_ASSERTION,
+          `    pt.skip("flaky")\n${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: 'r3: sys.modules["pytest"].skip()',
+    idea: "Reaching pytest through sys.modules (vars(pytest)[...] and pytest.__dict__[...] too).",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py("import pytest\n", "import sys\n\nimport pytest\n").replace(
+          PY_FAILING_ASSERTION,
+          `    sys.modules["pytest"].skip("flaky")\n${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: Python return in finally",
+    idea: "try: assert ... finally: return - the AssertionError is discarded.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py(
+          PY_FAILING_ASSERTION,
+          `    try:\n    ${PY_FAILING_ASSERTION}\n    finally:\n        return`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: Python return inside a with block",
+    idea: "An unconditional return one level deeper than the assertion after it.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py("import pytest\n", "import contextlib\n\nimport pytest\n").replace(
+          PY_FAILING_ASSERTION,
+          `    with contextlib.nullcontext():\n        return\n${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: Python for _ in range(1, 1)",
+    idea: "Only range(0), [], () and empty strings count as dead loops.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py(PY_FAILING_ASSERTION, `    for _ in range(1, 1):\n    ${PY_FAILING_ASSERTION}`),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
 ];

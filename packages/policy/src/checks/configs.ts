@@ -49,6 +49,9 @@ export const PROTECTED_CONFIG_GLOBS: readonly string[] = [
   "**/wdio.conf.*",
   "**/jasmine.json",
   "**/.size-limit*",
+  "**/.swcrc",
+  "**/sonar-project.properties",
+  "**/{commitlint.config.*,.commitlintrc*}",
   // Lint and format
   "**/eslint.config.*",
   "**/.eslintrc*",

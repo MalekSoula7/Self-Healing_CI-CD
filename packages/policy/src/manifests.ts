@@ -3,6 +3,7 @@
 // Settings that move versions without naming a package (overrides, index URLs, sources) are
 // entries too, so changing them is a dependency change.
 import { parse as parseToml } from "smol-toml";
+import { at, stripCode } from "./source";
 import { isRegistryNpmSpec, type DependencySpec } from "./versions";
 
 export interface Dependency extends DependencySpec {
@@ -304,27 +305,60 @@ const SETUP_ARGUMENTS = [
   "python_requires",
 ];
 
+/** End of a Python expression starting at `start` in `code` (strings blanked): bracket-balanced. */
+function expressionEnd(code: string, start: number): number {
+  let depth = 0;
+  let end = start;
+  for (; end < code.length; end += 1) {
+    const char = code[end];
+    if (char === "[" || char === "(" || char === "{") depth += 1;
+    else if (char === "]" || char === ")" || char === "}") depth -= 1;
+    if ((depth === 0 && (char === "," || char === "\n")) || depth < 0) break;
+  }
+  return end;
+}
+
+/** The value text of `name = ...` (keyword argument or assignment) at each place it's set. */
+function valuesOf(content: string, code: string, pattern: RegExp): string[] {
+  return [...code.matchAll(pattern)].map((match) => {
+    const start = match.index + match[0].length;
+    return content.slice(start, expressionEnd(code, start)).trim();
+  });
+}
+
 /**
- * setup.py is code: its dependency arguments are read as text (bracket-balanced from `name=`), each
- * one a setting, so any change to them needs mode `any` and nothing else in the file is touched.
+ * setup.py is code. Its dependency arguments are found in the code (comments blanked, so a comment
+ * naming `install_requires=` doesn't count), an identifier argument is followed to its assignment,
+ * and a literal list of requirement strings is read requirement by requirement (so a patch bump
+ * is a patch). Anything else is one setting, so changing it needs mode `any`. The rest of the
+ * file isn't dependencies at all.
  */
 function readSetupPy(content: string): Map<string, Dependency> {
+  const code = stripCode(content, "python");
   const dependencies = new Map<string, Dependency>();
   for (const argument of SETUP_ARGUMENTS) {
-    const start = new RegExp(`\\b${argument}\\s*=`).exec(content);
-    if (start === null) continue;
-    let depth = 0;
-    let end = start.index + start[0].length;
-    for (; end < content.length; end += 1) {
-      const char = content[end];
-      if (char === "[" || char === "(" || char === "{") depth += 1;
-      else if (char === "]" || char === ")" || char === "}") depth -= 1;
-      if ((depth === 0 && (char === "," || char === "\n")) || depth < 0) break;
-    }
-    dependencies.set(
-      `setup.py:${argument}`,
-      setting(content.slice(start.index, end).replace(/\s+/g, " ")),
-    );
+    const values = valuesOf(content, code, new RegExp(`\\b${argument}\\s*=(?!=)`, "g"));
+    values.forEach((written, occurrence) => {
+      const key = `setup.py:${argument}${occurrence === 0 ? "" : `#${String(occurrence + 1)}`}`;
+      const identifier = /^[A-Za-z_]\w*$/.test(written) ? written : null;
+      const value =
+        identifier === null
+          ? written
+          : (valuesOf(content, code, new RegExp(`^\\s*${identifier}\\s*=(?!=)`, "gm")).at(-1) ??
+            written);
+      const strings = [...value.matchAll(/(["'])((?:(?!\1)[^\\\n])*)\1/g)].map((match) =>
+        at(match, 2),
+      );
+      const rest = value.replace(/(["'])((?:(?!\1)[^\\\n])*)\1/g, "").replace(/[\s,]/g, "");
+      if (/^[[(]/.test(value) && /^[[(][\])]$/.test(rest)) {
+        for (const text of strings) {
+          const [name, dependency] = requirement(text);
+          dependencies.set(`${key}:${name}`, dependency);
+        }
+      } else {
+        dependencies.set(key, setting(value.replace(/\s+/g, " ")));
+      }
+    });
   }
   return dependencies;
 }
@@ -358,7 +392,13 @@ function readerFor(path: string): Reader | null {
  */
 function lenientName(path: string): boolean {
   const name = basename(path);
-  return !/^(requirements|constraints)/.test(name) && !/(^|\/)requirements\//i.test(path);
+  const strict =
+    /^(requirements|constraints)/.test(name) ||
+    /^(dev|test|tests|testing|doc|docs|lint|ci|prod|production|base|local|extra|extras|optional|build|runtime|common)[-_.](requirements|constraints)/.test(
+      name,
+    ) ||
+    /(^|\/)requirements\//i.test(path);
+  return !strict;
 }
 
 /** The dependencies a manifest declares; null when `path` isn't a manifest. */

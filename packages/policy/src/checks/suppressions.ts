@@ -67,6 +67,8 @@ function underBlockDirective(
     if (ancestor.trim() === "" || indentOf(ancestor) >= threshold) continue;
     threshold = indentOf(ancestor);
     // Only a directive the file already had: one added with the code is reported on its own.
+    // `if TYPE_CHECKING:  # pragma: no cover` only holds imports for the type checker.
+    if (/^\s*if\s+(typing\s*\.\s*)?TYPE_CHECKING\b/.test(ancestor)) continue;
     const onLine = BLOCK.test(ancestor) && !added.has(previous + 1);
     const above = BLOCK.test(at(lines, previous - 1)) && !added.has(previous);
     if (onLine || above) return true;
@@ -84,12 +86,18 @@ function violation(change: Change, line: number, message: string, hint: string):
   };
 }
 
+/** A block-wide disable (not -line / -next-line): removing it with its enable is fine. */
+const BLOCK_DISABLE = /\b(eslint|oxlint)-disable(?!-(next-)?line)\b/i;
+
 function removedEnabling(change: Change): Violation[] {
   const violations: Violation[] = [];
+  const removed = change.hunks.flatMap((hunk) => hunk.lines.filter((line) => line.type === "del"));
+  const pairRemoved = removed.some((line) => BLOCK_DISABLE.test(line.text));
   for (const hunk of change.hunks) {
     let oldLine = hunk.oldStart;
     for (const line of hunk.lines) {
-      if (line.type === "del" && ENABLING.test(line.text)) {
+      const pairedEnable = pairRemoved && /\b(eslint|oxlint)-enable\b/i.test(line.text);
+      if (line.type === "del" && ENABLING.test(line.text) && !pairedEnable) {
         violations.push(
           violation(
             change,

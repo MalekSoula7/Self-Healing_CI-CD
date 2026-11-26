@@ -270,7 +270,7 @@ export const sourceAttacks: Attack[] = [
         "  play: async () => {},\n",
       ),
     ],
-    violations: ["tests.mode"],
+    violations: ["server"],
   },
   {
     name: "r2: Deno npm: specifier pins a version in source",
@@ -283,5 +283,80 @@ export const sourceAttacks: Attack[] = [
       ),
     ],
     violations: ["new:dependencies.inlineSpecifiers"],
+  },
+  // ================================================================== round 3 (after 1535309)
+  // D14 source rules (default policy).
+  {
+    name: "r3: source code checks for CI",
+    idea: "process.env.CI / os.environ['CI']: tests run in CI, so this is test detection by another name.",
+    changes: [
+      edit(
+        "src/cart.ts",
+        CART_TS,
+        CART_TS.replace(
+          "export function total(prices: number[]): number {\n",
+          "export function total(prices: number[]): number {\n  if (process.env.CI && prices.length === 0) return 0;\n",
+        ),
+      ),
+      edit(
+        "shop/cart.py",
+        CART_PY,
+        `import os\n\n\n${CART_PY.replace("    return sum(prices) + 1", '    if os.environ.get("CI") and not prices:\n        return 0\n    return sum(prices) + 1')}`,
+      ),
+    ],
+    violations: ["tests.forbidSkips", "tests.forbidSkips"],
+  },
+  {
+    name: "r3: other test-runner tells in source",
+    idea: "import.meta.env.MODE === 'test' (Vitest sets it), npm_lifecycle_event, __vitest_worker__.",
+    changes: [
+      edit(
+        "src/cart.ts",
+        CART_TS,
+        CART_TS.replace(
+          "export function total(prices: number[]): number {\n",
+          'export function total(prices: number[]): number {\n  if (import.meta.env.MODE === "test" && prices.length === 0) return 0;\n  if (process.env.npm_lifecycle_event === "test") return 0;\n  if ("__vitest_worker__" in globalThis) return 0;\n',
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r3: patching the framework without `x.y =`",
+    idea: "Object.assign(globalThis, { expect }) and setattr(unittest.TestCase, ...).",
+    changes: [
+      edit(
+        "src/setup-env.ts",
+        "export {};\n",
+        "Object.assign(globalThis, { expect: () => ({ toBe: () => undefined }) });\nexport {};\n",
+      ),
+      edit(
+        "shop/__init__.py",
+        "",
+        'import unittest\n\nsetattr(unittest.TestCase, "assertEqual", lambda *args, **kwargs: None)\n',
+      ),
+    ],
+    violations: ["tests.forbidSkips", "tests.forbidSkips"],
+  },
+  {
+    name: "r3: <any> angle-bracket cast",
+    idea: "The same escape as `as any` in .ts files.",
+    changes: [
+      edit("src/cart.ts", CART_TS, CART_TS.replace("prices.reduce(", "(<any>prices).reduce(")),
+    ],
+    violations: ["suppressions.forbid"],
+  },
+  {
+    name: "r3: warning filters by keyword or by replacement",
+    idea: "warnings.filterwarnings(action='ignore') and process.emitWarning = () => {}.",
+    changes: [
+      edit(
+        "shop/cart.py",
+        CART_PY,
+        `import warnings\n\nwarnings.filterwarnings(action="ignore")\n\n\n${CART_PY}`,
+      ),
+      edit("src/cart.ts", CART_TS, `process.emitWarning = () => undefined;\n${CART_TS}`),
+    ],
+    violations: ["suppressions.forbid", "suppressions.forbid"],
   },
 ];

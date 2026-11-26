@@ -468,4 +468,41 @@ export const dependencyAttacks: Attack[] = [
     ],
     violations: ["dependencies.mode"],
   },
+  // ================================================================== round 3 (after 1535309)
+  {
+    name: "r3: setup.py install_requires from a variable",
+    idea: "readSetupPy reads `install_requires=REQUIREMENTS`, not the list REQUIREMENTS names.",
+    changes: [
+      edit(
+        "setup.py",
+        'REQUIREMENTS = ["httpx==0.27.0"]\n\nsetup(name="shop", install_requires=REQUIREMENTS)\n',
+        'REQUIREMENTS = ["httpx==0.28.1", "evil-helper"]\n\nsetup(name="shop", install_requires=REQUIREMENTS)\n',
+      ),
+    ],
+    violations: ["dependencies.mode"],
+  },
+  {
+    name: "r3: setup.py with install_requires= named in a comment first",
+    idea: "Only the first `install_requires=` in the file is read: a comment above the real call.",
+    changes: [
+      edit(
+        "setup.py",
+        '# Pin everything in install_requires=[...] below.\nsetup(name="shop", install_requires=["httpx==0.27.0"])\n',
+        '# Pin everything in install_requires=[...] below.\nsetup(name="shop", install_requires=["httpx==0.28.1", "evil-helper"])\n',
+      ),
+    ],
+    violations: ["dependencies.mode"],
+  },
+  {
+    name: "r3: a lenient-name requirements file with a VCS line is never read",
+    idea: "dev-requirements.txt holding `git+https://...` doesn't look like requirements, old or new, so nothing in it is compared.",
+    changes: [
+      edit(
+        "dev-requirements.txt",
+        "git+https://github.com/org/lib.git#egg=lib\npytest==7.4.0\n",
+        "git+https://github.com/org/lib.git#egg=lib\npytest==9.0.0\nevil-helper==1.0\n",
+      ),
+    ],
+    violations: ["dependencies.mode"],
+  },
 ];

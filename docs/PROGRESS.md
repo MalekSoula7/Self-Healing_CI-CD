@@ -753,3 +753,36 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
 - Residual (pseudo IDs): `expect.extend` overriding matchers (new rule), tests registered in a never-called function (behavior), an existing skipping fixture (behavior), Deno inline `npm:` specifiers (new rule), local action code (server).
 - The red team's conclusion, which I share: static skip detection stays porous by nature. The robust layers are the JUnit inventory (`may_edit_tests` is only possible with it, SPEC §8.6) and the AI judge, which should get the behavior-blind tricks (matcher overrides, conftest hooks) as explicit checks in P4.7.
 
+## 2026-11-26 · P3.6 (round 3) · Red team
+
+- Round 3 (against 1535309): 36 new attacks, all allowed, and 14 new false positives. Among the attacks was a regression from round 2: anchoring markers to runner names had dropped `ctx.skip()`, `this.skip()` and `t.skip()`. All are permanent tests now; 756 policy tests pass.
+- Fixed:
+  - **Skips:**
+    - Test-context skips (`this|ctx|context|t|testInfo|task|test.info()` `.skip/.todo/.fail/.fixme`), Jasmine `pending(`, Playwright `test.fail`, optional chaining `it?.skip`.
+    - Runner aliases from `import { it as x }` and `import * as x from "vitest"` (also `globalThis.`).
+    - Options `{ skip: <anything but false/0> }` and shorthand `{ skip }`, only as the options argument of `it(`/`test(`/`describe(`.
+    - `[].forEach(...)` and `range(a, a)` dead loops; Python `Skipped`/`XFailed`/`Exit`, `from _pytest`, `x = pytest` aliases, `sys.modules[`, `vars(pytest)`, `pytest.__dict__`.
+    - Markers are now counted both on the raw file and with comments blanked (new `stripComments`), and the larger increase counts. Deleting a comment that names `it.skip` no longer pays for a real one, and the stripper still can't hide one in a "comment" it misread.
+    - Early exits: `finally`, `with` and bare `{` blocks guard a return, also when the guard is on the same line; a guarded return at column 0 is refused.
+  - **Assertions:**
+    - `expect(...)` counts only with a matcher after it.
+    - Inverted or swallowed assertions are refused: `expect(() => { expect(...) }).toThrow()` (on one line or two), `pytest.raises(AssertionError)`, `suppress(AssertionError)`, and `catch (e) { void e; }`.
+    - Literal-vs-literal asserts and `expect([])` / `expect({})` count as tautologies.
+  - **D14 source rules:** CI detection (`process.env.CI`, `os.environ["CI"]`, `getenv("CI")`), `import.meta.env.MODE`, `npm_lifecycle_event`, `__vitest_worker__`, `Object.assign(globalThis, ...)`, `setattr(TestCase, ...)`, `<any>` casts, `filterwarnings(action="ignore")`, `process.emitWarning =`.
+  - **False positives removed:**
+    - Options-like objects passed to other functions.
+    - `{ retry: 0 }`.
+    - `pytest_configure`/`pytest_addoption`.
+    - `import_module` of the code under test.
+    - `process.kill(pid, "SIGTERM")`.
+    - Comparison asserts with parentheses; the tuple rule now needs one parenthesized group with a top-level comma.
+    - `except ImportError: pass`; only bare/`Exception`/`BaseException` count as swallowing.
+    - `NODE_ENV` appearing outside a comparison with `"test"`.
+    - Deleting a whole `eslint-disable`/`eslint-enable` pair.
+    - `if TYPE_CHECKING:  # pragma: no cover`.
+    - `.patch`/`.diff` test data.
+    - Storybook stories; they are tests only with its runner, now `server`.
+  - **Dependencies:** `setup.py` arguments are found in comment-blanked code, an identifier is followed to its assignment, and a literal list is read per requirement (so a 1.x patch bump is a patch). `dev-`, `test-`, `docs-` and similar `*-requirements` files are always manifests.
+  - **Configs:** `.swcrc`, `sonar-project.properties`, commitlint.
+  - **JUnit:** once a fixed collection error's tests appear, none of them may be skipped.
+

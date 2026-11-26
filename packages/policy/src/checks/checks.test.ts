@@ -167,7 +167,7 @@ describe("checkChanges", () => {
     expect(ids("src/a.ts", "try {\n  f();\n} catch (error) {\n}\n")).toEqual([
       "suppressions.forbid",
     ]);
-    expect(ids("shop/a.py", "try:\n    f()\nexcept ValueError:\n    ...\n")).toEqual([
+    expect(ids("shop/a.py", "try:\n    f()\nexcept Exception:\n    ...\n")).toEqual([
       "suppressions.forbid",
     ]);
     expect(ids("shop/b.py", "try:\n    f()\nexcept ValueError:\n    log()\n")).toEqual([]);

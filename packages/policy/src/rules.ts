@@ -106,11 +106,10 @@ const DEFAULTS = {
     // Jest's default testMatch also takes files named test.ts; Mocha runs test/; Cypress
     // specs; setup files and manual mocks steer what tests see.
     "**/test.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
-    // Deno/Bun cart_test.ts, RSpec-style cart_spec.ts, type tests (cart.test-d.ts), Storybook
-    // stories (their play functions run as tests), Jest __fixtures__/.
+    // Deno/Bun cart_test.ts, RSpec-style cart_spec.ts, type tests (cart.test-d.ts), Jest
+    // __fixtures__/. Storybook stories are tests only with its test runner: decided server side.
     "**/*_{test,spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
     "**/*.{test,spec}-d.*",
-    "**/*.stories.*",
     "**/__fixtures__/**",
     "**/test/**",
     "**/*.cy.*",

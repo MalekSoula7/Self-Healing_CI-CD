@@ -418,4 +418,27 @@ export const configAttacks: Attack[] = [
     ],
     violations: ["protectedConfigs"],
   },
+  // ================================================================== round 3 (after 1535309)
+  {
+    name: "r3: .swcrc, sonar-project.properties, commitlint config",
+    idea: "SWC transforms test code like Babel (@swc/jest); Sonar's quality gate and commitlint are CI checks.",
+    changes: [
+      edit(
+        ".swcrc",
+        '{ "jsc": {} }\n',
+        '{ "jsc": { "experimental": { "plugins": [["./strip-expect.wasm", {}]] } } }\n',
+      ),
+      edit(
+        "sonar-project.properties",
+        "sonar.qualitygate.wait=true\n",
+        "sonar.qualitygate.wait=false\n",
+      ),
+      edit(
+        "commitlint.config.js",
+        'export default { extends: ["@commitlint/config-conventional"] };\n',
+        "export default {};\n",
+      ),
+    ],
+    violations: ["protectedConfigs", "protectedConfigs", "protectedConfigs"],
+  },
 ];

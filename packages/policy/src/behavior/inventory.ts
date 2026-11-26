@@ -39,6 +39,13 @@ export function compareInventories(baseline: TestInventory, after: TestInventory
       before.every((outcome) => outcome === "failed") &&
       afterIds.some((other) => other.startsWith(`${id}::`));
     if (now.length < before.length && !collectionError) missing.push(id);
+    // The module's tests, once it imports, stand where its error stood: none may be skipped.
+    if (collectionError) {
+      for (const other of afterIds) {
+        const outcomes = after.tests.get(other) ?? [];
+        if (other.startsWith(`${id}::`) && count(outcomes, "skipped") > 0) newlySkipped.push(other);
+      }
+    }
     if (count(now, "skipped") > count(before, "skipped")) newlySkipped.push(id);
     if (count(now, "failed") > 0) {
       (count(before, "failed") > 0 ? stillFailing : regressed).push(id);

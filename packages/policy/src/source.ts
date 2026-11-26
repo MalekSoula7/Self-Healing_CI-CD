@@ -24,8 +24,15 @@ export function languageOf(path: string): Language | null {
 class Blanker {
   /** UTF-16 units, like the offsets everywhere else. */
   readonly out: string[];
-  constructor(source: string) {
+  /** Keep string contents (and regular expressions): blank comments only. */
+  constructor(
+    source: string,
+    private readonly keepStrings = false,
+  ) {
     this.out = source.split("");
+  }
+  blankString(from: number, to: number): void {
+    if (!this.keepStrings) this.blank(from, to);
   }
   /** Blanks [from, to), keeping line breaks. */
   blank(from: number, to: number): void {
@@ -112,8 +119,8 @@ function lineEnd(source: string, from: number): number {
   return end === -1 ? source.length : end;
 }
 
-function stripJs(source: string): string {
-  const text = new Blanker(source);
+function stripJs(source: string, keepStrings = false): string {
+  const text = new Blanker(source, keepStrings);
   // Open `${` expressions and `{` blocks, so a `}` knows whether it resumes a template.
   const stack: ("brace" | "template")[] = [];
   let inTemplate = false;
@@ -123,7 +130,7 @@ function stripJs(source: string): string {
     const next = source[index + 1];
     if (inTemplate) {
       if (char === "\\") {
-        text.blank(index, index + 2);
+        text.blankString(index, index + 2);
         index += 2;
       } else if (char === "`") {
         inTemplate = false;
@@ -133,7 +140,7 @@ function stripJs(source: string): string {
         inTemplate = false;
         index += 2;
       } else {
-        text.blank(index, index + 1);
+        text.blankString(index, index + 1);
         index += 1;
       }
       continue;
@@ -154,14 +161,14 @@ function stripJs(source: string): string {
       index = end;
     } else if (char === "'" || char === '"') {
       const { contentEnd, next: after } = quoted(source, index, char, false);
-      text.blank(index + 1, contentEnd);
+      text.blankString(index + 1, contentEnd);
       index = after;
     } else if (char === "`") {
       inTemplate = true;
       index += 1;
     } else if (char === "/" && startsRegex(text.out, index)) {
       const end = regexEnd(source, index);
-      if (end !== -1) text.blank(index + 1, end);
+      if (end !== -1) text.blankString(index + 1, end);
       index = end === -1 ? index + 1 : end + 1;
     } else {
       if (char === "{") stack.push("brace");
@@ -214,7 +221,7 @@ function pythonString(source: string, text: Blanker, open: number, depth: number
     /(?<![\w])[rRbBuUfF]{1,2}$/.exec(source.slice(Math.max(0, open - 3), open))?.[0] ?? "";
   const { contentEnd, next } = quoted(source, open, quote, triple);
   if (!/f/i.test(prefix) || depth >= MAX_FSTRING_DEPTH) {
-    text.blank(open + quote.length, contentEnd);
+    text.blankString(open + quote.length, contentEnd);
     return next;
   }
   // An f-string: blank its literal parts, read `{...}` fields as code (`{{` is a literal brace).
@@ -223,25 +230,25 @@ function pythonString(source: string, text: Blanker, open: number, depth: number
     if (source.startsWith(quote, index)) return index + quote.length;
     const current = source[index];
     if (current === "\\") {
-      text.blank(index, index + 2);
+      text.blankString(index, index + 2);
       index += 2;
     } else if (current === "{" && source[index + 1] === "{") {
-      text.blank(index, index + 2);
+      text.blankString(index, index + 2);
       index += 2;
     } else if (current === "{") {
       index = pythonCode(source, text, index + 1, depth + 1);
     } else if (current === "\n" && !triple) {
       return index;
     } else {
-      text.blank(index, index + 1);
+      text.blankString(index, index + 1);
       index += 1;
     }
   }
   return index;
 }
 
-function stripPython(source: string): string {
-  const text = new Blanker(source);
+function stripPython(source: string, keepStrings = false): string {
+  const text = new Blanker(source, keepStrings);
   pythonCode(source, text, 0, 0);
   return text.toString();
 }
@@ -249,6 +256,11 @@ function stripPython(source: string): string {
 /** `source` with comments and string contents blanked; same length, same line breaks. */
 export function stripCode(source: string, language: Language): string {
   return language === "js" ? stripJs(source) : stripPython(source);
+}
+
+/** `source` with comments blanked, strings kept; same length, same line breaks. */
+export function stripComments(source: string, language: Language): string {
+  return language === "js" ? stripJs(source, true) : stripPython(source, true);
 }
 
 export interface AddedLine {
