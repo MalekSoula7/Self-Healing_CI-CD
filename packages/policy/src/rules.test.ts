@@ -224,7 +224,11 @@ describe("invariants (SPEC §8.2)", () => {
   });
 
   it("names the paths no change may touch, whatever the policy", () => {
-    expect(INVARIANT_PATHS["INV-GITHUB-DIR"]).toEqual([".github/**"]);
+    expect(INVARIANT_PATHS["INV-GITHUB-DIR"]).toEqual([
+      ".github/**",
+      ".pipeheal.yml",
+      ".pipeheal.yaml",
+    ]);
     expect(INVARIANT_PATHS["INV-SECRETS"]).toEqual(
       expect.arrayContaining([
         "**/.env*",

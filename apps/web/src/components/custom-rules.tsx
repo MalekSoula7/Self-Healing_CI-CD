@@ -28,7 +28,10 @@ interface CustomRulesProps {
 /** The compiled layer as YAML, re-validated (it was stored by the worker). */
 function compiledYaml(compiled: unknown): string | null {
   const parsed = policyLayerSchema.safeParse(compiled);
-  return parsed.success ? formatPolicyYaml(parsed.data) : null;
+  // An empty layer enforces nothing: never offer it as "Enforced by code".
+  return parsed.success && Object.keys(parsed.data).length > 0
+    ? formatPolicyYaml(parsed.data)
+    : null;
 }
 
 function Decide({

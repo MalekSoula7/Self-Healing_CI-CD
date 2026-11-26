@@ -36,7 +36,9 @@ export function repoPathProblem(path: string): string | null {
     path.includes("\\") ||
     /^[A-Za-z]:/.test(path) ||
     hasControlCharacter(path) ||
-    segments.some((segment) => segment === "" || segment === "." || segment === "..");
+    segments.some(
+      (segment) => segment === "" || segment === "." || segment === ".." || segment.length > 255,
+    );
   return invalid ? "not a repository-relative POSIX path" : null;
 }
 
@@ -53,7 +55,15 @@ export function writablePathProblem(path: string): string | null {
   const problem = repoPathProblem(path);
   if (problem !== null) return problem;
   const segments = path.split("/");
-  if (GITHUB_DIR.test(segments[0] ?? "")) return "the App never writes under .github/";
+  // Compared folded too (`.gıthub` is `.github` on some file systems).
+  const first = segments[0] ?? "";
+  if (GITHUB_DIR.test(first) || canonicalPath(first) === ".github") {
+    return "the App never writes under .github/";
+  }
+  // The repository's own policy file: a fix must never change the rules it is checked against.
+  if (segments.length === 1 && /^\.pipeheal\.ya?ml$/.test(canonicalPath(first))) {
+    return "the App never writes .pipeheal.yml";
+  }
   for (const segment of segments) {
     if (GIT_NAME.test(segment)) return "the App never writes .git or .gitmodules";
     // A Windows 8.3 short name (`ENV~1`, `TERRAF~1`) can alias another file or directory.

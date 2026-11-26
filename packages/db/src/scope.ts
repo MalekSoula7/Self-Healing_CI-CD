@@ -124,9 +124,16 @@ function workflowFacts(workflow: RepoWorkflow) {
 const ruleTextSchema = z.string().trim().min(1).max(1_000);
 
 /** A compiled layer: a policy layer without custom rules of its own (packages/policy's rule). */
-const compiledLayerSchema = policyLayerSchema.refine((layer) => layer.customRules === undefined, {
-  message: "a compiled rule can't hold custom rules",
-});
+const compiledLayerSchema = policyLayerSchema
+  .refine((layer) => layer.customRules === undefined, {
+    message: "a compiled rule can't hold custom rules",
+  })
+  .refine((layer) => Object.keys(layer).length > 0, {
+    message: "a compiled rule must set something",
+  });
+
+/** Rules waiting for the model, per organization. */
+export const MAX_PENDING_DRAFTS = 5;
 
 const compiledRuleRecordSchema = z.union([
   z.strictObject({
@@ -368,6 +375,11 @@ function buildOrgScope(ctx: ScopeContext) {
         return db.$transaction(async (tx) => {
           const target = await policyTarget(tx, orgId, kind, repoId);
           if (target === null) throw new NotFoundError("repository not found");
+          // The model server is shared by every tenant (D11): a few rules at a time per org.
+          const waiting = await tx.customRuleDraft.count({ where: { orgId, status: "PENDING" } });
+          if (waiting >= MAX_PENDING_DRAFTS) {
+            throw new ConflictError("too many rules are still being compiled; try again shortly");
+          }
           const draft = await tx.customRuleDraft.create({
             data: {
               orgId,

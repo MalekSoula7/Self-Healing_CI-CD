@@ -9,6 +9,8 @@
 //   `as unknown as` / `<any>`, warning filters.
 import type { Change } from "../diff";
 import { addedLines, at, languageOf, stripCode, type Language } from "../source";
+import { globList } from "../glob";
+import { DEFAULT_POLICY } from "../rules";
 import { scanExpects } from "./expects";
 import type { Check, CheckContext, Violation } from "./types";
 
@@ -50,7 +52,7 @@ const PY_LITERAL = String.raw`(-?\d+(\.\d+)?|True|False|None|"\s*"|'\s*'|\[\s*\]
 
 /** `assert (x, "msg")`: one parenthesized group spanning the rest, with a top-level comma. */
 function tupleAssert(code: string): boolean {
-  const match = /^\s*assert\s*\(/.exec(code);
+  const match = /^[ \t]*assert\s*\(/.exec(code);
   if (match === null) return false;
   const rest = code.slice(match[0].length - 1).trimEnd();
   let depth = 0;
@@ -78,7 +80,7 @@ const TEST_RULES: Record<Language, readonly Rule[]> = {
     {
       ruleId: "tests.forbidAssertionReduction",
       on: "code",
-      matches: /^\s*expect\b.*\.\s*(resolves|rejects)\b/,
+      matches: /^[ \t]*expect\b.*\.\s*(resolves|rejects)\b/,
       message: "leaves a .resolves/.rejects assertion floating: nothing waits for it.",
       hint: "await (or return) every expect(...).resolves / .rejects.",
     },
@@ -91,19 +93,19 @@ const TEST_RULES: Record<Language, readonly Rule[]> = {
   python: [
     {
       ...TAUTOLOGY,
-      matches: new RegExp(String.raw`^\s*assert\s+(True|1|not\s+False|"\s*"|'\s*')\s*(,|$)`),
+      matches: new RegExp(String.raw`^[ \t]*assert\s+(True|1|not\s+False|"\s*"|'\s*')\s*(,|$)`),
     },
     {
       ...TAUTOLOGY,
       matches: new RegExp(
-        String.raw`^\s*assert\s+${PY_LITERAL}\s*(==|!=|is|is\s+not|in|<|>|<=|>=)\s*${PY_LITERAL}\s*(,|$)`,
+        String.raw`^[ \t]*assert\s+${PY_LITERAL}\s*(==|!=|is|is\s+not|in|<|>|<=|>=)\s*${PY_LITERAL}\s*(,|$)`,
       ),
     },
     { ...TAUTOLOGY, matches: tupleAssert },
-    { ...TAUTOLOGY, matches: /^\s*assert\b.*\bor\s+(True|1)\s*(,|$)/ },
+    { ...TAUTOLOGY, matches: /^[ \t]*assert\b.*\bor\s+(True|1)\s*(,|$)/ },
     {
       ...SWALLOWED,
-      matches: /^\s*except\s*\(?\s*AssertionError\b/,
+      matches: /^[ \t]*except\s*\(?\s*AssertionError\b/,
     },
     { ...RETRY, matches: /@\s*(pytest\s*\.\s*mark\s*\.\s*)?(flaky|retry)\b|\breruns\s*=\s*[1-9]/ },
   ],
@@ -160,7 +162,7 @@ const SOURCE_RULES: Record<Language, readonly Rule[]> = {
     {
       ...FRAMEWORK_PATCH,
       matches:
-        /\bTestCase\s*\.\s*\w+\s*=[^=]|^\s*def\s+pytest_\w+\s*\(|\bsetattr\s*\(\s*([\w.]*\.)?TestCase\b/,
+        /\bTestCase\s*\.\s*\w+\s*=[^=]|^[ \t]*def\s+pytest_\w+\s*\(|\bsetattr\s*\(\s*([\w.]*\.)?TestCase\b/,
     },
     {
       ruleId: "suppressions.forbid",
@@ -192,7 +194,7 @@ function ciDecides(
   const line = at(code, index);
   const next = code.slice(index + 1).find((each) => each.trim() !== "") ?? "";
   // An early `return;` only changes side effects (a CLI's spinner); a returned value doesn't.
-  return /\breturn\s+[^;\s]|\?/.test(line) || /^\s*return\s+[^;\s]/.test(next);
+  return /\breturn\s+[^;\s]|\?/.test(line) || /^[ \t]*return\s+[^;\s]/.test(next);
 }
 
 /**
@@ -203,20 +205,20 @@ function ciDecides(
 function swallowsAssert(code: readonly string[], index: number): boolean {
   const line = at(code, index);
   if (
-    !/^\s*with\b.*\b(raises|suppress)\s*\(\s*([\w.]*\.)?(AssertionError|Exception|BaseException)\b/.test(
+    !/^[ \t]*with\b.*\b(raises|suppress)\s*\(\s*([\w.]*\.)?(AssertionError|Exception|BaseException)\b/.test(
       line,
     )
   ) {
     return false;
   }
   const inline = /:\s*(\S.*)$/.exec(line)?.[1];
-  if (inline !== undefined) return /^\s*assert\b/.test(inline);
+  if (inline !== undefined) return /^[ \t]*assert\b/.test(inline);
   // Any assert in the block, not only the first statement.
   const indent = line.length - line.trimStart().length;
   for (const next of code.slice(index + 1)) {
     if (next.trim() === "") continue;
     if (next.length - next.trimStart().length <= indent) return false;
-    if (/^\s*assert\b/.test(next)) return true;
+    if (/^[ \t]*assert\b/.test(next)) return true;
   }
   return false;
 }
@@ -237,7 +239,12 @@ function swallows(
   isTest: boolean,
 ): boolean {
   const line = at(lines, index);
-  const body = lines.slice(index + 1).filter((next) => next.trim() !== "");
+  if (!/\b(catch|except)\b/.test(line)) return false;
+  // The next two code lines only: building the rest of the file per line was quadratic.
+  const body: string[] = [];
+  for (let next = index + 1; next < lines.length && body.length < 2; next += 1) {
+    if (at(lines, next).trim() !== "") body.push(at(lines, next));
+  }
   if (language === "js") {
     // In a test, a handler that only returns swallows the failure too.
     const discard = isTest ? "(void\\s+[\\w$]+|return)" : "void\\s+[\\w$]+";
@@ -247,12 +254,12 @@ function swallows(
     if (!/\bcatch\s*(\([^)]*\))?\s*\{\s*$/.test(line)) return false;
     const first = at(body, 0);
     return (
-      /^\s*\}/.test(first) ||
-      (new RegExp(`^\\s*${discard}\\s*;?\\s*$`).test(first) && /^\s*\}/.test(at(body, 1)))
+      /^[ \t]*\}/.test(first) ||
+      (new RegExp(`^[ \\t]*${discard}\\s*;?\\s*$`).test(first) && /^[ \t]*\}/.test(at(body, 1)))
     );
   }
-  if (!/^\s*except\s*(\(?\s*(Exception|BaseException)\b[^:]*)?:/.test(line)) return false;
-  const empty = isTest ? /^\s*(pass|\.\.\.|return)\s*$/ : /^\s*(pass|\.\.\.)\s*$/;
+  if (!/^[ \t]*except\s*(\(?\s*(Exception|BaseException)\b[^:]*)?:/.test(line)) return false;
+  const empty = isTest ? /^[ \t]*(pass|\.\.\.|return)\s*$/ : /^[ \t]*(pass|\.\.\.)\s*$/;
   const inline = /:\s*(\S.*)$/.exec(line)?.[1];
   return inline === undefined ? empty.test(at(body, 0)) : empty.test(inline);
 }
@@ -311,6 +318,8 @@ function violationsIn(change: Change, language: Language, isTest: boolean): Viol
   return violations;
 }
 
+const SYSTEM_TEST_FILES = globList(DEFAULT_POLICY.tests.testGlobs);
+
 const ENABLED: Record<RuleId, (context: CheckContext) => boolean> = {
   "tests.forbidAssertionReduction": ({ policy }) => policy.tests.forbidAssertionReduction,
   "tests.forbidSkips": ({ policy }) => policy.tests.forbidSkips,
@@ -326,7 +335,10 @@ export const checkHeuristics: Check = (changes, context) =>
     .flatMap((change) => {
       const language = languageOf(change.path);
       if (language === null || change.newContent === null) return [];
-      const isTest = context.testFiles.matchAnywhere(change.path) !== undefined;
+      // Whether a file is a test for these rules comes from PipeHeal's own test globs: widening
+      // tests.testGlobs (a union any layer, .pipeheal.yml included, may add to) must never take
+      // a source file out of the source-only rules (security review H1).
+      const isTest = SYSTEM_TEST_FILES.matchAnywhere(change.path) !== undefined;
       return violationsIn(change, language, isTest);
     })
     .filter((violation) => isRuleId(violation.ruleId) && ENABLED[violation.ruleId](context));

@@ -1799,3 +1799,25 @@ describe("custom rules (P3.9)", () => {
     );
   });
 });
+
+describe("custom rule limits (Phase 3 security review)", () => {
+  it("keeps at most 5 rules waiting per org, and refuses an empty compiled layer", async () => {
+    const t = await createTenant();
+    const drafts = [];
+    for (let index = 0; index < 5; index += 1) {
+      drafts.push(
+        await t.asAdmin.customRules.propose("ORG_DEFAULT", null, `Rule ${String(index)}`),
+      );
+    }
+
+    await expect(t.asAdmin.customRules.propose("ORG_DEFAULT", null, "One more")).rejects.toThrow(
+      ConflictError,
+    );
+    await expect(
+      t.system.customRules.recordCompiled(present(drafts[0], "draft").id, {
+        compiled: {},
+        explanation: "x",
+      }),
+    ).rejects.toThrow();
+  });
+});

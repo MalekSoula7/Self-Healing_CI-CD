@@ -123,3 +123,31 @@ describe("mergeInventories", () => {
     expect(testCount(merged)).toBe(3);
   });
 });
+
+describe("parseJunit performance", () => {
+  it("reads a huge attribute body in linear time (security review M2)", () => {
+    const started = Date.now();
+    parseJunit(`<testsuite><testcase name="t" ${"a".repeat(500_000)}/></testsuite>`);
+
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+});
+
+describe("parseJunit attributes", () => {
+  it.each([
+    ["spaces around =", `<testsuite><testcase  classname = 'c'\tname= "t" /></testsuite>`, "c::t"],
+    ["a bare attribute", `<testsuite><testcase disabled name="t"/></testsuite>`, "t"],
+    ["an unquoted value", `<testsuite><testcase x=1 name="t"/></testsuite>`, "t"],
+    ["an attribute without a name", `<testsuite><testcase ="x" name="t"/></testsuite>`, "t"],
+    ["a value that isn't quoted", `<testsuite><testcase y= name="t"/></testsuite>`, "t"],
+    ["trailing junk", `<testsuite><testcase name="t" junk /></testsuite>`, "t"],
+  ])("reads %s", (_, xml, id) => {
+    const read = parseJunit(xml);
+
+    expect(read.ok && [...read.inventory.tests.keys()]).toEqual([id]);
+  });
+
+  it("refuses a tag whose value never closes", () => {
+    expect(parseJunit(`<testsuite><testcase name="t" x="1/></testsuite>`).ok).toBe(false);
+  });
+});

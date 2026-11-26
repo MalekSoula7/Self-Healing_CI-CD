@@ -5,7 +5,7 @@
 import { repoPathProblem } from "@pipeheal/shared/repo-path";
 import type { ChangeInput, FileMode, FileState } from "./diff";
 
-export const MAX_DIFF_CHARS = 2_000_000;
+export const MAX_DIFF_CHARS = 512_000;
 export const MAX_DIFF_FILES = 500;
 
 export type DiffRead = { ok: true; changes: ChangeInput[] } | { ok: false; error: string };

@@ -46,10 +46,37 @@ function decode(value: string): string {
   });
 }
 
+/** A tag's attributes, read in one pass (a regex restarting at every offset was quadratic). */
 function attributes(body: string): Map<string, string> {
   const found = new Map<string, string>();
-  for (const match of body.matchAll(/([^\s=/]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
-    found.set(match[1] ?? "", decode(match[2] ?? match[3] ?? ""));
+  let index = 0;
+  const space = (char: string) => char === " " || char === "\t" || char === "\n" || char === "\r";
+  while (index < body.length) {
+    while (index < body.length && (space(body[index] ?? "") || body[index] === "/")) index += 1;
+    const start = index;
+    while (
+      index < body.length &&
+      !space(body[index] ?? "") &&
+      body[index] !== "=" &&
+      body[index] !== "/"
+    ) {
+      index += 1;
+    }
+    const name = body.slice(start, index);
+    while (index < body.length && space(body[index] ?? "")) index += 1;
+    if (body[index] !== "=") {
+      if (name === "" && index >= body.length) break;
+      index = Math.max(index, start + 1);
+      continue;
+    }
+    index += 1;
+    while (index < body.length && space(body[index] ?? "")) index += 1;
+    const quote = body[index];
+    if (quote !== '"' && quote !== "'") continue;
+    const close = body.indexOf(quote, index + 1);
+    if (close === -1) break;
+    if (name !== "") found.set(name, decode(body.slice(index + 1, close)));
+    index = close + 1;
   }
   return found;
 }

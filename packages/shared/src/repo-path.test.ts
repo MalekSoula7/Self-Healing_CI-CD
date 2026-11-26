@@ -10,6 +10,10 @@ describe("repoPathProblem and writablePathProblem", () => {
     expect(writablePathProblem("src/a.ts")).toBeNull();
     expect(writablePathProblem("../a")).toBe("not a repository-relative POSIX path");
     expect(writablePathProblem(".github/x")).toBe("the App never writes under .github/");
+    expect(writablePathProblem(".gıthub/x")).toBe("the App never writes under .github/");
+    expect(writablePathProblem(".PipeHeal.yml")).toBe("the App never writes .pipeheal.yml");
+    expect(writablePathProblem("docs/.pipeheal.yml")).toBeNull();
+    expect(repoPathProblem(`src/${"a".repeat(256)}`)).toBe("not a repository-relative POSIX path");
     expect(writablePathProblem("a/.git/x")).toBe("the App never writes .git or .gitmodules");
     expect(writablePathProblem("config/ENV~1")).toBe(
       "the path can't be checked out safely on Windows or macOS",

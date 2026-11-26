@@ -18,6 +18,11 @@ import type { Check, Violation } from "./types";
 const SKIP_NAMES = "skip|only|todo|fixme|skipIf|runIf|fails|failing|fail";
 const RUNNER = "it|test|describe|suite|bench";
 const NOT_AFTER = "(?<![\\w$.])";
+
+/** An identifier from the file, safe inside a RegExp (`$` is an anchor there). */
+function escapeName(name: string): string {
+  return name.replace(/[$^.*+?()[\]{}|\\]/g, "\\$&");
+}
 /** Modules whose exports are the test runner's functions. */
 const RUNNER_MODULES = "vitest|@jest/globals|node:test|mocha|@playwright/test|bun:test";
 
@@ -53,8 +58,8 @@ function jsRunners(normalized: string): { runner: string; prefix: string } {
     ),
   ].map((match) => at(match, 1));
   return {
-    runner: [RUNNER, ...renamed].join("|"),
-    prefix: `(?:(?:globalThis|global|window|${["\\$never", ...namespaces].join("|")})\\??\\.)?`,
+    runner: [RUNNER, ...renamed.map(escapeName)].join("|"),
+    prefix: `(?:(?:globalThis|global|window|${["\\$never", ...namespaces.map(escapeName)].join("|")})\\??\\.)?`,
   };
 }
 
@@ -73,7 +78,7 @@ function jsContexts(normalized: string, runner: string): string {
     if (match[0].includes("function")) usesThis = true;
     const params = match[2] ?? match[3] ?? match[4] ?? "";
     for (const param of params.split(",")) {
-      const name = /^\s*([\w$]+)/.exec(param.replace(/^\{.*/, ""))?.[1];
+      const name = /^[ \t]*([\w$]+)/.exec(param.replace(/^\{.*/, ""))?.[1];
       if (name !== undefined) names.add(name);
     }
   }
@@ -84,12 +89,12 @@ function jsContexts(normalized: string, runner: string): string {
     if (match[0].includes("function")) usesThis = true;
     const params = match[2] ?? match[3] ?? match[4] ?? "";
     for (const param of params.split(",")) {
-      const name = /^\s*([\w$]+)/.exec(param.replace(/^\{.*/, ""))?.[1];
+      const name = /^[ \t]*([\w$]+)/.exec(param.replace(/^\{.*/, ""))?.[1];
       if (name !== undefined) names.add(name);
     }
   }
   if (usesThis) names.add("this");
-  return [...names].join("|");
+  return [...names].map(escapeName).join("|");
 }
 
 /** Variables holding an options object that skips (`const later = { "skip": true }`). */
@@ -97,12 +102,12 @@ function jsSkipOptions(normalized: string): string {
   return [
     ...normalized.matchAll(
       new RegExp(
-        `(?:const|let|var) ([\\w$]+)=\\{[^{}]*(?<![\\w$])["'\`]?(?:skip|only|todo|fails|failing|fail)["'\`]?(?![\\w$])(?::(?!false[,}]|0[,}])[^,}]+)?[,}]`,
+        `(?:const|let|var) ([\\w$]+)=\\{[^{}]{0,300}(?<![\\w$])["'\`]?(?:skip|only|todo|fails|failing|fail)["'\`]?(?![\\w$])(?::(?!false[,}]|0[,}])[^,}]+)?[,}]`,
         "g",
       ),
     ),
   ]
-    .map((match) => at(match, 1))
+    .map((match) => escapeName(at(match, 1)))
     .join("|");
 }
 
@@ -132,7 +137,7 @@ function jsMarkers(normalized: string): readonly RegExp[] {
     ),
     // it("name", { skip: anything-but-false }, fn), quoted keys and the shorthand { skip } too
     new RegExp(
-      `${call}(\\??\\.[\\w$]+)*\\(${name},\\{[^{}]*(?<![\\w$])["'\`]?(skip|only|todo|fails|failing|fail)["'\`]?(?![\\w$])(:(?!false[,}]|0[,}])[^,}]+)?[,}]`,
+      `${call}(\\??\\.[\\w$]+)*\\(${name},\\{[^{}]{0,300}(?<![\\w$])["'\`]?(skip|only|todo|fails|failing|fail)["'\`]?(?![\\w$])(:(?!false[,}]|0[,}])[^,}]+)?[,}]`,
       "g",
     ),
     // it("name", later, fn) with `later` such an object
@@ -141,12 +146,12 @@ function jsMarkers(normalized: string): readonly RegExp[] {
       : [new RegExp(`${call}(\\??\\.[\\w$]+)*\\(${name},(${options})[,)]`, "g")]),
     // it("name", ({ skip }) => ...), test("name", async function ({ skip }) ...)
     new RegExp(
-      `${call}(\\??\\.[\\w$]+)*\\(${name},(async)?(\\(\\{|function[\\w$ ]*\\(\\{)[^}]*(?<![\\w$])(${SKIP_NAMES})(?![\\w$])`,
+      `${call}(\\??\\.[\\w$]+)*\\(${name},(async)?(\\(\\{|function[\\w$ ]*\\(\\{)[^}]{0,300}(?<![\\w$])(${SKIP_NAMES})(?![\\w$])`,
       "g",
     ),
     // const { skip } = ctx
     new RegExp(
-      `(const|let|var)\\{[^}]*(?<![\\w$])(${SKIP_NAMES})(?![\\w$])[^}]*\\}=(${["ctx|context|task", contexts, runner].filter(Boolean).join("|")})(?![\\w$])`,
+      `(const|let|var)\\{[^}]{0,300}(?<![\\w$])(${SKIP_NAMES})(?![\\w$])[^}]{0,300}\\}=(${["ctx|context|task", contexts, runner].filter(Boolean).join("|")})(?![\\w$])`,
       "g",
     ),
     // it.each([]), test.for([] as number[]), [].forEach(() => expect(...))
@@ -164,29 +169,31 @@ function jsAliases(normalized: string): RegExp | null {
   const names = [
     ...normalized.matchAll(
       new RegExp(
-        `(?:const|let|var) ([\\w$]+)=[^;]*?${NOT_AFTER}${prefix}\\(?(?:${runner})\\)?(?:\\??\\.[\\w$]+)*\\??\\.(?:${SKIP_NAMES})(?![\\w$])`,
+        `(?:const|let|var) ([\\w$]+)=[^;]{0,300}?${NOT_AFTER}${prefix}\\(?(?:${runner})\\)?(?:\\??\\.[\\w$]+)*\\??\\.(?:${SKIP_NAMES})(?![\\w$])`,
         "g",
       ),
     ),
   ].map((match) => at(match, 1));
-  return names.length === 0 ? null : new RegExp(`${NOT_AFTER}(${names.join("|")})\\(`, "g");
+  return names.length === 0
+    ? null
+    : new RegExp(`${NOT_AFTER}(${names.map(escapeName).join("|")})\\(`, "g");
 }
 
 /** Names Python code can reach pytest/unittest by: the modules and their aliases. */
 function pythonModules(text: string): string {
   const aliases = [
-    ...text.matchAll(/^\s*import\s+(?:pytest|unittest|_pytest[\w.]*)\s+as\s+(\w+)/gm),
+    ...text.matchAll(/^[ \t]*import\s+(?:pytest|unittest|_pytest[\w.]*)\s+as\s+(\w+)/gm),
     ...text.matchAll(
-      /^\s*from\s+(?:_pytest[\w.]*|pytest)\s+import\s+(?:\w+\s+as\s+)?(outcomes)\b/gm,
+      /^[ \t]*from\s+(?:_pytest[\w.]*|pytest)\s+import\s+(?:\w+\s+as\s+)?(outcomes)\b/gm,
     ),
     // pt = pytest
-    ...text.matchAll(/^\s*(\w+)\s*=\s*(?:pytest|unittest)\s*$/gm),
+    ...text.matchAll(/^[ \t]*(\w+)\s*=\s*(?:pytest|unittest)\s*$/gm),
   ].map((match) => at(match, 1));
   return ["pytest", "unittest", "outcomes", ...aliases].join("|");
 }
 
 const SKIP_IMPORTS =
-  /^\s*from\s+(pytest|_pytest[\w.]*|unittest[\w.]*)\s+import\s+[^\n]*\b(skip|skipif|skipIf|skipUnless|xfail|SkipTest|expectedFailure|importorskip|exit|outcomes|Skipped|XFailed|Exit)\b/gm;
+  /^[ \t]*from\s+(pytest|_pytest[\w.]*|unittest[\w.]*)\s+import\s+[^\n]*\b(skip|skipif|skipIf|skipUnless|xfail|SkipTest|expectedFailure|importorskip|exit|outcomes|Skipped|XFailed|Exit)\b/gm;
 
 function pythonMarkers(modules: string): readonly RegExp[] {
   return [
@@ -196,13 +203,13 @@ function pythonMarkers(modules: string): readonly RegExp[] {
       "g",
     ),
     /\bunittest\s*\.\s*(skip|skipIf|skipUnless|expectedFailure)\b/g,
-    /^\s*@\s*(skip|skipIf|skipUnless|expectedFailure)\b/gm,
+    /^[ \t]*@\s*(skip|skipIf|skipUnless|expectedFailure)\b/gm,
     // pytest's skip exceptions; an app's own `Status.Skipped` or `Exit` class is no marker, and
     // importing these from pytest is counted by SKIP_IMPORTS.
     /\bSkipTest\b|\.\s*skipTest\s*\(|\bskip\s*\.\s*Exception\b/g,
     SKIP_IMPORTS,
     // pytest's internals that run, skip or stop tests (typing-only imports like MonkeyPatch pass).
-    /^\s*(from\s+_pytest(\.(outcomes|skipping|runner|main|nodes|python|reports|hookspec))?\s+import\b|import\s+_pytest(\.(outcomes|skipping|runner))?\s*($|\bas\b))/gm,
+    /^[ \t]*(from\s+_pytest(\.(outcomes|skipping|runner|main|nodes|python|reports|hookspec))?\s+import\b|import\s+_pytest(\.(outcomes|skipping|runner))?\s*($|\bas\b))/gm,
     /\b__import__\s*\(|\bimport_module\s*\(\s*["'](pytest|unittest|_pytest)/g,
     new RegExp(
       `\\bgetattr\\s*\\(\\s*(${modules}|mark)\\b|\\bsys\\s*\\.\\s*modules\\s*\\[|\\bvars\\s*\\(\\s*(${modules})\\b|\\b(${modules})\\s*\\.\\s*__dict__`,
@@ -210,11 +217,11 @@ function pythonMarkers(modules: string): readonly RegExp[] {
     ),
     // Collection: ignore lists, hooks (not the ones that only register options and markers),
     // __test__, del, a fixture decorator on a test.
-    /\b(collect_ignore|collect_ignore_glob)\b|^\s*(async\s+)?def\s+pytest_(?!configure\b|addoption\b)\w+|\b__test__\s*=|^\s*del\s+test_/gm,
+    /\b(collect_ignore|collect_ignore_glob)\b|^[ \t]*(async\s+)?def\s+pytest_(?!configure\b|addoption\b)\w+|\b__test__\s*=|^[ \t]*del\s+test_/gm,
     /@\s*(pytest\s*\.\s*)?fixture\b[^\n]*\n\s*(async\s+)?def\s+test_/g,
     /\bparametrize\s*\(\s*(["'])[^"']*\1\s*,\s*(\[\s*\]|\(\s*\))\s*[,)]/g,
-    /^\s*for\s+\w+\s+in\s+(\[\s*\]|\(\s*\)|""|''|range\(\s*0\s*\)|range\(\s*(\d+)\s*,\s*\2\s*\))\s*:/gm,
-    /\b(os\s*\.\s*(_exit|abort)|sys\s*\.\s*exit)\s*\(|\braise\s+SystemExit\b|^\s*(exit|quit)\s*\(/gm,
+    /^[ \t]*for\s+\w+\s+in\s+(\[\s*\]|\(\s*\)|""|''|range\(\s*0\s*\)|range\(\s*(\d+)\s*,\s*\2\s*\))\s*:/gm,
+    /\b(os\s*\.\s*(_exit|abort)|sys\s*\.\s*exit)\s*\(|\braise\s+SystemExit\b|^[ \t]*(exit|quit)\s*\(/gm,
   ];
 }
 
@@ -240,19 +247,19 @@ function pythonShadows(text: string): number {
     if (line.trim() === "") continue;
     const indent = line.length - line.trimStart().length;
     while ((classes.at(-1)?.indent ?? -1) >= indent) classes.pop();
-    const klass = /^\s*class\s+(\w+)/.exec(line);
+    const klass = /^[ \t]*class\s+(\w+)/.exec(line);
     if (klass !== null) {
       classes.push({ indent, name: at(klass, 1) });
       continue;
     }
     const scope = classes.map((each) => each.name).join(".");
-    const test = /^\s*(?:async\s+)?def\s+(test\w*)\s*\(/.exec(line);
+    const test = /^[ \t]*(?:async\s+)?def\s+(test\w*)\s*\(/.exec(line);
     if (test !== null) {
       const key = `${scope}.${at(test, 1)}`;
       if (seen.has(key)) shadows += 1;
       seen.add(key);
     }
-    if (/^\s*def\s+__init__\s*\(/.test(line) && /(^|\.)Test\w*$/.test(scope)) shadows += 1;
+    if (/^[ \t]*def\s+__init__\s*\(/.test(line) && /(^|\.)Test\w*$/.test(scope)) shadows += 1;
   }
   return shadows;
 }
@@ -296,30 +303,31 @@ function markersAdded(change: Change, language: Language): number {
 
 const DEAD_CONDITION: Record<Language, RegExp> = {
   js: /\b(if|while)\s*\(\s*(false|0|null|undefined|void\s+0|!\s*(true|1)|""|''|``)\s*\)/,
-  python: /^\s*(if|while|elif)\s+(False|0|None|not\s+True|""|'')\s*:/,
+  python: /^[ \t]*(if|while|elif)\s+(False|0|None|not\s+True|""|'')\s*:/,
 };
 
 const TEST_START: Record<Language, RegExp> = {
-  js: /^\s*[xf]?(it|test)\b(\s*\.\s*[\w$]+)*\s*\(/,
-  python: /^\s*(async\s+)?def\s+test\w*\s*\(/,
+  js: /^[ \t]*[xf]?(it|test)\b(\s*\.\s*[\w$]+)*\s*\(/,
+  python: /^[ \t]*(async\s+)?def\s+test\w*\s*\(/,
 };
-const CONTROL = /^\s*(\}\s*)?(if|for|while|switch|catch|with|else|do|try)\b/;
+const CONTROL = /^[ \t]*(\}\s*)?(if|for|while|switch|catch|with|else|do|try)\b/;
 const FUNCTION_START =
-  /\bfunction\b|=>|^\s*(async\s+)?def\s|^\s*(async\s+|static\s+|get\s+|set\s+)*[\w$]+\s*\([^)]*\)\s*(:[^{]*)?\{\s*$/;
+  /\bfunction\b|=>|^[ \t]*(async\s+)?def\s|^[ \t]*(async\s+|static\s+|get\s+|set\s+)*[\w$]+\s*\([^)]*\)\s*(:[^{]*)?\{\s*$/;
 /** An anonymous callback (a named `function helper()` is a helper, not the test's callback). */
-const CALLBACK_START = /^\s*(async\s*)?(\([^)]*\)\s*=>|[\w$]+\s*=>|function\s*\*?\s*\()/;
+const CALLBACK_START = /^[ \t]*(async\s*)?(\([^)]*\)\s*=>|[\w$]+\s*=>|function\s*\*?\s*\()/;
 // Blocks whose `return` skips what follows: conditions, `finally` (it also discards a thrown
 // assertion error), `with`, and a bare `{` block.
-const CONDITIONAL = /^\s*(\}\s*)?(if|elif|else|switch|case|finally|with)\b|^\s*\{\s*$/;
-const GUARDED_ON_LINE = /\b(if|finally)\b.*\breturn\b|^\s*\{\s*return\b|^\s*with\b.*:\s*return\b/;
+const CONDITIONAL = /^[ \t]*(\}\s*)?(if|elif|else|switch|case|finally|with)\b|^[ \t]*\{\s*$/;
+const GUARDED_ON_LINE =
+  /\b(if|finally)\b.*\breturn\b|^[ \t]*\{\s*return\b|^[ \t]*with\b.*:\s*return\b/;
 /** The closing line of a multi-line Python signature: `) -> None:` or `):`. */
-const SIGNATURE_END = /^\s*\)\s*(->[^:]*)?:\s*$/;
+const SIGNATURE_END = /^[ \t]*\)\s*(->[^:]*)?:\s*$/;
 
 const RETURN_THEN_CODE = /\breturn\b[^;{}]*;\s*[^\s;}]/;
 const EXIT_STATEMENT = /(^|[;{}])\s*(return|break|continue)\b/;
 /** `if True: break`, or a `break`/`continue` right under an always-true condition. */
 const TRUE_CONDITION =
-  /^\s*(\}\s*)?(if|elif|while)\s*\(?\s*(True|true|1|!0|!false|not\s+False)\s*\)?\s*(:|\{)?/;
+  /^[ \t]*(\}\s*)?(if|elif|while)\s*\(?\s*(True|true|1|!0|!false|not\s+False)\s*\)?\s*(:|\{)?/;
 const LOOP_EXIT = /\b(break|continue)\b/;
 
 function forcedLoopExit(lines: readonly string[], index: number): boolean {
@@ -337,7 +345,7 @@ const LABELLED_BREAK = /\b(break|continue)\s+[\w$]+\s*;?\s*$/;
 // Lines that may follow an exit in the same block: closers, other branches, continuations of
 // the returned expression, and hoisted function declarations.
 const AFTER_EXIT_OK =
-  /^\s*([})\]>.?:+\-*/%&|^,]|case\b|default\b|else\b|elif\b|except\b|finally\b|catch\b|function\b)/;
+  /^[ \t]*([})\]>.?:+\-*/%&|^,]|case\b|default\b|else\b|elif\b|except\b|finally\b|catch\b|function\b)/;
 
 function indentOf(line: string): number {
   return line.length - line.trimStart().length;
@@ -359,7 +367,7 @@ function unreachableAfter(lines: readonly string[], index: number): boolean {
 function signatureStart(lines: readonly string[], end: number): string {
   for (let index = end - 1; index >= 0; index -= 1) {
     const line = at(lines, index);
-    if (/^\s*(async\s+)?def\s/.test(line)) return line;
+    if (/^[ \t]*(async\s+)?def\s/.test(line)) return line;
   }
   return "";
 }
@@ -436,6 +444,7 @@ function guardedExitInJsTest(
         return false;
       } else {
         // A label (`check:`) or a bare block guards; an object literal's `{` doesn't.
+        // One header, no `m` flag: `\s` may span its line breaks without going quadratic.
         guarded ||= /^\s*([\w$]+\s*:\s*)?$/.test(header);
       }
     }

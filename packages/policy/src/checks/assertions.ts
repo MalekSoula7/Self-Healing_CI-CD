@@ -29,7 +29,7 @@ const ASSERTIONS: Record<Language, readonly RegExp[]> = {
 const TESTS: Record<Language, RegExp> = {
   // Skipped and focused tests (xit, fit) still count: tests.forbidSkips reports them.
   js: /\b[xf]?(it|test)\b\s*(\.\s*[\w$]+\s*)*\(/g,
-  python: /^\s*(async\s+)?def\s+test\w*\s*\(/gm,
+  python: /^[ \t]*(async\s+)?def\s+test\w*\s*\(/gm,
 };
 
 function count(code: string, patterns: readonly RegExp[]): number {

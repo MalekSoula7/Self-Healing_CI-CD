@@ -26,7 +26,7 @@ export function deepFreeze<T>(value: T): T {
 }
 
 export const INVARIANTS: readonly Invariant[] = deepFreeze([
-  { id: "INV-GITHUB-DIR", description: "No changes under .github/." },
+  { id: "INV-GITHUB-DIR", description: "No changes under .github/, nor to .pipeheal.yml." },
   {
     id: "INV-PATH",
     description:
@@ -58,7 +58,8 @@ export const INVARIANTS: readonly Invariant[] = deepFreeze([
 export const INVARIANT_PATHS: Readonly<
   Record<"INV-GITHUB-DIR" | "INV-SECRETS", readonly string[]>
 > = deepFreeze({
-  "INV-GITHUB-DIR": [".github/**"],
+  // .pipeheal.yml too: a fix must never change the rules it is checked against.
+  "INV-GITHUB-DIR": [".github/**", ".pipeheal.yml", ".pipeheal.yaml"],
   "INV-SECRETS": [
     "**/.env",
     "**/.env*",

@@ -68,7 +68,7 @@ function underBlockDirective(
     threshold = indentOf(ancestor);
     // Only a directive the file already had: one added with the code is reported on its own.
     // `if TYPE_CHECKING:  # pragma: no cover` only holds imports for the type checker.
-    if (/^\s*if\s+(typing\s*\.\s*)?TYPE_CHECKING\b/.test(ancestor)) continue;
+    if (/^[ \t]*if\s+(typing\s*\.\s*)?TYPE_CHECKING\b/.test(ancestor)) continue;
     const onLine = BLOCK.test(ancestor) && !added.has(previous + 1);
     const above = BLOCK.test(at(lines, previous - 1)) && !added.has(previous);
     if (onLine || above) return true;

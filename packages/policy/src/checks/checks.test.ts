@@ -173,3 +173,53 @@ describe("checkChanges", () => {
     expect(ids("shop/b.py", "try:\n    f()\nexcept ValueError:\n    log()\n")).toEqual([]);
   });
 });
+
+describe("Phase 3 security review", () => {
+  it("H1: widening testGlobs never takes a source file out of the source-only rules", () => {
+    const change = [
+      add(
+        "src/total.ts",
+        "export const total = (xs: unknown) => (process.env.VITEST ? 3 : (xs as any));\n",
+      ),
+    ];
+    const ids = (repo: PolicyLayer) => check(change, repo).map((violation) => violation.ruleId);
+    const widened = effectivePolicy({
+      repo: { tests: { mode: "may_edit_tests" } },
+      repoFile: { tests: { testGlobs: ["src/**"] } },
+    }).policy;
+
+    expect(ids({ tests: { mode: "may_edit_tests" } })).toEqual(["tests.forbidSkips"]);
+    expect(checkChanges(change.map(buildChange), widened).map((v) => v.ruleId)).toEqual(
+      expect.arrayContaining(["tests.forbidSkips"]),
+    );
+  });
+
+  it("M1: identifiers with $ can't hide a skip", () => {
+    const test = (body: string) =>
+      check([edit("src/a.test.ts", 'test("a", () => {});\n', body)], { tests: EDITABLE }).map(
+        (violation) => violation.ruleId,
+      );
+
+    expect(test('test("a", ($) => {\n  $.skip();\n});\n')).toContain("tests.forbidSkips");
+    expect(test('const o$ = { skip: true };\ntest("a", o$, () => {});\n')).toContain(
+      "tests.forbidSkips",
+    );
+  });
+
+  it("M3: .pipeheal.yml is never the fix's to change", () => {
+    expect(check([edit(".pipeheal.yml", "limits: {}\n", "{}\n")]).map((v) => v.ruleId)).toEqual([
+      "INV-GITHUB-DIR",
+    ]);
+  });
+
+  it("H2: stays fast on inputs that were quadratic", () => {
+    const started = Date.now();
+    // Sized so a quadratic regression blows the budget even under coverage instrumentation.
+    check([add("tests/test_blank.py", "\n".repeat(50_000))], { tests: EDITABLE });
+    check([add("src/a.test.ts", "const a = 1\n".repeat(4_000))], { tests: EDITABLE });
+    check([add("src/b.test.ts", "expect(".repeat(4_000))], { tests: EDITABLE });
+    check([add("src/c.test.ts", `const {${" skip,".repeat(5_000)}`)], { tests: EDITABLE });
+
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+});

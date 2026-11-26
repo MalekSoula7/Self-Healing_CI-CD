@@ -109,7 +109,7 @@ function pythonName(name: string): string {
 
 /** A PEP 508 requirement: its name, and the rest (extras, specifier, marker) as its spec. */
 function requirement(text: string): [string, Dependency] {
-  const match = /^\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)(.*)$/s.exec(text);
+  const match = /^[ \t]*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)(.*)$/s.exec(text);
   if (match === null) return [text.trim(), setting(text.trim())];
   const rest = (match[2] ?? "").trim();
   const name = pythonName(match[1] ?? "");
@@ -355,7 +355,7 @@ function readSetupPy(content: string): Map<string, Dependency> {
       const value =
         identifier === null
           ? written
-          : (valuesOf(content, code, new RegExp(`^\\s*${identifier}\\s*=(?!=)`, "gm")).at(-1) ??
+          : (valuesOf(content, code, new RegExp(`^[ \\t]*${identifier}\\s*=(?!=)`, "gm")).at(-1) ??
             written);
       const strings = [...value.matchAll(/(["'])((?:(?!\1)[^\\\n])*)\1/g)].map((match) =>
         at(match, 2),

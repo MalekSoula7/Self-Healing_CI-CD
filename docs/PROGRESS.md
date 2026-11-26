@@ -864,3 +864,18 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
 - Not yet: the last N attempts' diffs (Phase 4).
 - Next: CHECKPOINT 3, with the end-of-phase security review.
 
+## 2026-11-26 · Phase 3 security review
+
+- The `security-reviewer` found 2 high, 4 medium and 5 low issues. Tenant isolation, role checks, model-output handling and the audit and log contents were clean. Fixed:
+  - **H1:** `.pipeheal.yml` could widen `tests.testGlobs` so that source files escaped the source-only D14 rules. That loosened the policy, against D13. Those rules now decide "test file" from PipeHeal's own test globs, which no layer can widen. There's a regression test.
+  - **H2:** untrusted input drove the checks into quadratic time (25 s for 80 KB of blank lines), reachable by any member through the dry run.
+    - Fixes: `^\s*` became `^[ \t]*` under the `m` flag, the regex scans are bounded, `swallows()` no longer builds the rest of the file per line, `expect` subjects are capped at 5,000 characters and definitions cached, path segments are capped at 255 characters, and the dry run accepts at most 512 KB.
+    - A timing test now covers all four inputs (200,000 blank lines take 0.45 s, against 168 s before).
+  - **M1:** identifiers containing `$` were put into regexes unescaped, which hid skips. They are now escaped (`escapeName`), with tests.
+  - **M2:** the JUnit attribute regex was quadratic. It's now a single-pass scanner with a timing test (500 KB attribute body).
+  - **M3:** `.pipeheal.yml`/`.yaml` is now an invariant (INV-GITHUB-DIR) and refused by `writablePathProblem`, matched in folded form, so a fix can't change the rules it is checked against.
+  - **M4:** at most 5 custom rules wait for the model per org.
+  - **L1:** an empty compiled layer is refused and never offered as "Enforced by code".
+  - **L2:** the GitHub write guard compares `.github` in folded form too (`.gıthub`).
+- Deferred to Phase 4, in SPEC §15: L3 (repo-file custom rules as untrusted in the healer prompt), L4 (a stored policy file a newer schema rejects), L5 (which policy-file commit an attempt used), M4's model-call metering and priority, and L1's non-tightening fields.
+
