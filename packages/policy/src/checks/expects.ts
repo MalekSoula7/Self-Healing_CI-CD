@@ -8,7 +8,7 @@ import { at } from "../source";
 
 const EXPECT = /(?<![\w$.])(?<!(?<!=)>\s*)(expect(\s*\.\s*(soft|poll))?|expectTypeOf)\s*\(/g;
 const MATCHER =
-  /^\s*(\.\s*(not|resolves|rejects)\s*)*\.\s*(to[A-Z]\w*\s*\(|to\b|should\b|be\b|have\b)/;
+  /^\s*(\.\s*(not|resolves|rejects)\s*)*\.\s*(to(?!String\b|JSON\b|LocaleString\b)[A-Z]\w*\s*\(|to\b|should\b|be\b|have\b)/;
 const EXPECTS_THROW = /^\s*(\.\s*not\s*)?\.\s*(toThrow\w*\s*\(|rejects\b|to\s*\.\s*throw\b)/;
 const ASSERTS = /(?<![\w$.])(expect\s*\(|assert\b)/;
 
@@ -33,6 +33,27 @@ export interface Expects {
   inverted: number;
 }
 
+/** The code of a local `const name = ...` or `function name(...) {...}`, or "". */
+function definitionOf(code: string, name: string): string {
+  const id = name.replace(/\$/g, "\\$");
+  const start = new RegExp(`(?:const|let|var)\\s+${id}\\s*=|function\\s+${id}\\s*\\(`).exec(code);
+  if (start === null) return "";
+  let depth = 0;
+  for (let index = start.index + start[0].length; index < code.length; index += 1) {
+    const char = at(code, index);
+    if (char === "(" || char === "[" || char === "{") depth += 1;
+    else if (char === ")" || char === "]" || char === "}") {
+      depth -= 1;
+      if (depth < 0 || (depth === 0 && char === "}" && start[0].startsWith("function"))) {
+        return code.slice(start.index, index + 1);
+      }
+    } else if (depth === 0 && (char === ";" || char === "\n")) {
+      return code.slice(start.index, index);
+    }
+  }
+  return code.slice(start.index);
+}
+
 export function scanExpects(code: string): Expects {
   let asserting = 0;
   let inverted = 0;
@@ -42,7 +63,10 @@ export function scanExpects(code: string): Expects {
     const subject = code.slice(open + 1, close);
     const rest = code.slice(close + 1, close + 200);
     if (MATCHER.test(rest)) asserting += 1;
-    if (ASSERTS.test(subject) && EXPECTS_THROW.test(rest)) inverted += 1;
+    // The subject may be a local function holding the assertion: expect(run).toThrow().
+    const named = /^\s*([\w$]+)\s*$/.exec(subject)?.[1];
+    const body = named === undefined ? subject : definitionOf(code, named);
+    if (ASSERTS.test(body) && EXPECTS_THROW.test(rest)) inverted += 1;
   }
   return { asserting, inverted };
 }

@@ -1328,4 +1328,34 @@ export const skipAttacks: Attack[] = [
     ],
     violations: ["tests.forbidSkips", "behavior.newlySkipped"],
   },
+  // ================================================================== round 5 (after aeb4a72)
+  {
+    name: "r5: ctx.skip() in a beforeEach hook",
+    idea: "jsContexts reads only it()/test() callbacks; a hook gets the same context and skips every test in the block (Vitest 5).",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          'describe("total", () => {\n',
+          'describe("total", () => {\n  beforeEach((c) => {\n    c.skip();\n  });\n\n',
+        ).replace("it, test }", "it, test, beforeEach }"),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r5: un-skip a flaky test, skip the failing one",
+    idea: "Markers are a multiset of match text: `it.skip` leaves one test and lands on another, same multiset.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST.replace('  it("adds prices", () => {', '  it.skip("adds prices", () => {'),
+        JS_TEST.replace(FAILING_OPENING, '  it.skip("is zero when empty", () => {'),
+      ),
+    ],
+    violations: ["tests.forbidSkips", "behavior.newlySkipped"],
+  },
 ];

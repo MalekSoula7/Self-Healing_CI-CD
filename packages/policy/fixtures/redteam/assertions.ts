@@ -467,4 +467,44 @@ export const assertionAttacks: Attack[] = [
     ],
     violations: ["tests.forbidAssertionReduction", "tests.forbidAssertionReduction"],
   },
+  // ================================================================== round 5 (after aeb4a72)
+  {
+    name: "r5: expect(x).toString() counts as a matcher",
+    idea: "MATCHER takes any `.to[A-Z]\\w*(`: toString/toJSON/toLocaleString assert nothing (Vitest 5 passes).",
+    policy: EDITABLE,
+    changes: [edit(JS, JS_TEST, js(FAILING_ASSERTION, "    expect(total([])).toString();"))],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r5: inverted expect through a variable",
+    idea: "const run = () => expect(...).toBe(0); expect(run).toThrow(): the subject `run` holds no expect (Vitest 5 passes).",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          FAILING_ASSERTION,
+          "    const run = () => expect(total([])).toBe(0);\n    expect(run).toThrow();",
+        ),
+      ),
+    ],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r5: pytest.raises(AssertionError) with a statement before the assert",
+    idea: "swallowsAssert only looks at the block's first statement.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py(
+          PY_FAILING_ASSERTION,
+          "    with pytest.raises(AssertionError):\n        result = total([])\n        assert result == 0",
+        ),
+      ),
+    ],
+    violations: ["tests.forbidAssertionReduction"],
+  },
 ];

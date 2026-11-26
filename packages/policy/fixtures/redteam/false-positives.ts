@@ -570,4 +570,62 @@ export const falsePositives: Attack[] = [
     ],
     violations: [],
   },
+  // ================================================================== round 5 (after aeb4a72)
+  {
+    name: "fp r5: a search loop with break in a test",
+    idea: "tests.forbidSkips: the bracket walk reads `break` under `for`/`if` inside a test as a guarded exit.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "src/cart.test.ts",
+        JS_TEST,
+        js(
+          "    expect(total([1, 2])).toBe(3);",
+          "    let found = -1;\n    for (const [index, price] of [1, 2].entries()) {\n      if (price === 2) {\n        found = index;\n        break;\n      }\n    }\n    expect(found).toBe(1);",
+        ),
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r5: continue in a loop over cases in a test",
+    idea: "tests.forbidSkips: `if (...) continue;` inside a for loop in a test, every iteration still asserting.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "src/cart.test.ts",
+        JS_TEST,
+        js(
+          "    expect(total([1, 2])).toBe(3);",
+          "    for (const prices of [[1, 2], [], [3]]) {\n      if (prices.length === 0) continue;\n      expect(total(prices)).toBeGreaterThan(0);\n    }",
+        ),
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r5: a helper whose enclosing block tests a regex",
+    idea: "tests.forbidSkips: the walk's test-start regex isn't anchored, so `if (PATTERN.test(s)) {` reads as a test's callback.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "src/cart.test.ts",
+        JS_TEST,
+        `${JS_TEST}\nconst PATTERN = /^\\d+$/;\n\nfunction classify(s: string) {\n  if (PATTERN.test(s)) {\n    if (s.length > 3) return "long";\n  }\n  return "short";\n}\n`,
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r5: a CLI spinner that stays off in CI",
+    idea: "tests.forbidSkips (ciDecides): `if (process.env.CI) return;` at the top of startSpinner is the common, legitimate form.",
+    changes: [
+      edit(
+        "src/cli/spinner.ts",
+        "export function startSpinner(label: string) {\n  render(label);\n}\n",
+        "export function startSpinner(label: string) {\n  if (process.env.CI) return;\n  render(label);\n}\n",
+      ),
+    ],
+    violations: [],
+  },
 ];

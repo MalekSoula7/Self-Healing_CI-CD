@@ -77,6 +77,17 @@ function jsContexts(normalized: string, runner: string): string {
       if (name !== undefined) names.add(name);
     }
   }
+  // Hooks get the test context too: beforeEach((c) => c.skip()) skips every test after it.
+  for (const match of normalized.matchAll(
+    /(?<![\w$.])(?:beforeEach|beforeAll|afterEach|afterAll)\((async )?(?:\(([^)]*)\)=>|([\w$]+)=>|function[\w$ ]*\(([^)]*)\))/g,
+  )) {
+    if (match[0].includes("function")) usesThis = true;
+    const params = match[2] ?? match[3] ?? match[4] ?? "";
+    for (const param of params.split(",")) {
+      const name = /^\s*([\w$]+)/.exec(param.replace(/^\{.*/, ""))?.[1];
+      if (name !== undefined) names.add(name);
+    }
+  }
   if (usesThis) names.add("this");
   return [...names].join("|");
 }
@@ -103,7 +114,11 @@ function jsMarkers(normalized: string): readonly RegExp[] {
   const name = `(?:["'\`][^"'\`]*["'\`]|[\\w$.]+)`;
   return [
     // it.skip, describe.only, test.concurrent.fails, it?.skip, (it).todo, vt.it.skip
-    new RegExp(`${call}(\\??\\.[\\w$]+)*\\??\\.(${SKIP_NAMES})(?![\\w$])`, "g"),
+    // Keyed with the test's name when it follows: un-skipping one test doesn't pay for another.
+    new RegExp(
+      `${call}(\\??\\.[\\w$]+)*\\??\\.(${SKIP_NAMES})(?![\\w$])(\\(["'\`][^"'\`]*["'\`])?`,
+      "g",
+    ),
     // it["skip"], (test)[name], Reflect.get(it, ...)
     new RegExp(`${call}\\??\\.?\\[`, "g"),
     new RegExp(`Reflect\\.get\\(${prefix}(${runner})(?![\\w$])`, "g"),
@@ -392,7 +407,12 @@ function guardedReturnInTest(lines: readonly string[], index: number, language: 
  * from the statement, each unclosed `{` is an enclosing block; its header is the code before it.
  * A function header that isn't the test call (a helper, a callback inside the test) ends the walk.
  */
-function guardedExitInJsTest(code: string, offset: number, guardedOnLine: boolean): boolean {
+function guardedExitInJsTest(
+  code: string,
+  offset: number,
+  guardedOnLine: boolean,
+  kind: string,
+): boolean {
   let guarded = guardedOnLine;
   let depth = 0;
   for (let index = offset - 1; index >= 0; index -= 1) {
@@ -406,7 +426,10 @@ function guardedExitInJsTest(code: string, offset: number, guardedOnLine: boolea
         code.lastIndexOf("}", index - 1),
       );
       const header = code.slice(start + 1, index);
-      if (/\b[xf]?(it|test)\b(\s*\.\s*[\w$]+)*\s*\(/.test(header)) return guarded;
+      // A test call starts the header (not `PATTERN.test(` inside a condition).
+      if (/(?<![\w$.])[xf]?(it|test)\b(\s*\.\s*[\w$]+)*\s*\(/.test(header)) return guarded;
+      // `break`/`continue` inside a loop of the test only leave the loop.
+      if (kind !== "return" && /\b(for|while|do|switch)\b/.test(header)) return false;
       if (/\b(if|else|switch|case|try|catch|finally|while|for|do)\b/.test(header)) {
         guarded = true;
       } else if (/=>\s*$|\bfunction\b|\)\s*$/.test(header)) {
@@ -429,7 +452,7 @@ function jsExitGuarded(code: string, lines: readonly string[], index: number): b
   // `if (ci) return;`: the guard is on the exit's own line, with no block of its own.
   const before = at(lines, index).slice(0, exit.index);
   const guardedOnLine = /\b(if|else|while|for|case|default)\b|\?|&&|\|\|/.test(before);
-  return guardedExitInJsTest(code, offset + exit.index, guardedOnLine);
+  return guardedExitInJsTest(code, offset + exit.index, guardedOnLine, at(exit, 1));
 }
 
 function violation(change: Change, line: number, message: string, hint: string): Violation {

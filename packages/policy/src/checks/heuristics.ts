@@ -191,7 +191,8 @@ function ciDecides(
   if (!CI_TELLS[language].test(at(raw, index))) return false;
   const line = at(code, index);
   const next = code.slice(index + 1).find((each) => each.trim() !== "") ?? "";
-  return /\breturn\b|\?/.test(line) || /^\s*return\b/.test(next);
+  // An early `return;` only changes side effects (a CLI's spinner); a returned value doesn't.
+  return /\breturn\s+[^;\s]|\?/.test(line) || /^\s*return\s+[^;\s]/.test(next);
 }
 
 /**
@@ -208,9 +209,16 @@ function swallowsAssert(code: readonly string[], index: number): boolean {
   ) {
     return false;
   }
-  const first =
-    /:\s*(\S.*)$/.exec(line)?.[1] ?? code.slice(index + 1).find((each) => each.trim() !== "") ?? "";
-  return /^\s*assert\b/.test(first);
+  const inline = /:\s*(\S.*)$/.exec(line)?.[1];
+  if (inline !== undefined) return /^\s*assert\b/.test(inline);
+  // Any assert in the block, not only the first statement.
+  const indent = line.length - line.trimStart().length;
+  for (const next of code.slice(index + 1)) {
+    if (next.trim() === "") continue;
+    if (next.length - next.trimStart().length <= indent) return false;
+    if (/^\s*assert\b/.test(next)) return true;
+  }
+  return false;
 }
 
 function matches(rule: Rule, text: string): boolean {
