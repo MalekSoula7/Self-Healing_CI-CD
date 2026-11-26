@@ -2,6 +2,7 @@ import { hasRole } from "@pipeheal/db";
 import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { requireOrgMember } from "@/lib/auth/session";
+import { policyFileStatus, type PolicyFileStatus } from "@/lib/policy-file";
 import { saveWorkflowSelection } from "./actions";
 
 export default async function RepoWorkflowsPage({ params }: PageProps<"/[org]/repos/[repo]">) {
@@ -11,6 +12,7 @@ export default async function RepoWorkflowsPage({ params }: PageProps<"/[org]/re
   if (repo === null) notFound();
   const workflows = await scope.workflows.listForRepo(repoId);
   const canManage = hasRole(scope.role, "ADMIN");
+  const policyFile = policyFileStatus(repo);
 
   return (
     <main className="flex flex-col gap-6">
@@ -67,6 +69,50 @@ export default async function RepoWorkflowsPage({ params }: PageProps<"/[org]/re
           ))}
         </ul>
       )}
+      <PolicyFileSection status={policyFile} />
     </main>
+  );
+}
+
+/** `.pipeheal.yml` as the worker last read it from the default branch (P3.7). */
+function PolicyFileSection({ status }: { status: PolicyFileStatus }) {
+  return (
+    <section className="flex flex-col gap-2" aria-labelledby="policy-file">
+      <h2 id="policy-file" className="text-lg font-semibold">
+        .pipeheal.yml
+      </h2>
+      {status.state === "unread" ? (
+        <p className="text-muted-foreground">
+          Not read yet. PipeHeal reads it from the default branch when it next handles a failure.
+        </p>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Read at commit <code>{status.commitSha.slice(0, 7)}</code>
+          {status.readAt === null
+            ? ""
+            : ` on ${status.readAt.toISOString().slice(0, 16).replace("T", " ")} UTC`}
+          .
+        </p>
+      )}
+      {status.state === "absent" && (
+        <p className="text-muted-foreground">No .pipeheal.yml on the default branch.</p>
+      )}
+      {status.state === "loaded" && (
+        <p>
+          In effect. It can only tighten the policy; it sets:{" "}
+          {status.fields.length === 0 ? "nothing yet" : status.fields.join(", ")}.
+        </p>
+      )}
+      {status.state === "invalid" && (
+        <div className="flex flex-col gap-2 rounded-md border border-destructive px-4 py-3">
+          <p className="font-medium">Not in effect: the file has errors.</p>
+          <ul className="list-disc pl-5 text-sm">
+            {status.errors.map((error) => (
+              <li key={error}>{error}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
   );
 }

@@ -786,3 +786,18 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - **Configs:** `.swcrc`, `sonar-project.properties`, commitlint.
   - **JUnit:** once a fixed collection error's tests appear, none of them may be skipped.
 
+## 2026-11-26 · P3.7 · `.pipeheal.yml` loader
+
+- Done (tests first):
+  - `apps/worker/src/queues/policy-file.ts`:
+    - `readPolicyFile(text)` parses the file as plain YAML data: core schema, no custom tags, at most 20 aliases (no alias bomb), unique keys, at most 64 KB.
+    - The result is validated with `@pipeheal/policy`'s `policyLayerSchema`.
+    - It returns a layer, or up to 20 `field: message` errors capped at 300 characters, and never throws.
+    - `refreshPolicyFile` reads the file at the default branch's tip, skipping the fetch when that commit was already read.
+  - A new paced `policy-file` job in the failures queue, queued by `close-window` next to triage. A GitHub error retries the job and never touches triage.
+  - db: `Repository.policyFile`, `policyFileErrors`, `policyFileCommitSha`, `policyFileReadAt` (migration `policy_file`). `system.repositories.recordPolicyFile` writes the audit row with the commit and the error count only, never the content. The scope meta-test has its cross-org and audit cases.
+  - web: the repo page has a `.pipeheal.yml` section with four states: not read yet, no file, in effect (with the sections it sets), or not in effect with its errors. The stored JSON is re-validated (`lib/policy-file.ts`).
+- Decision (mine, SPEC §8.1): the App isn't subscribed to `push` (SPEC §5.1), and adding it would mean changing the App registration, which is yours. So the file is re-read whenever a failure arrives and the default branch has moved. A manual "reload" belongs on P3.8's policy page.
+- Not yet: using the stored layer. P3.8 puts it into `effectivePolicy` with the dashboard layers.
+- Dependency: `@pipeheal/policy` (workspace) in `apps/worker`, for `policyLayerSchema`.
+

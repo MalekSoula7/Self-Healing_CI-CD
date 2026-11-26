@@ -251,6 +251,17 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
   "repositories.findByGithubId": async () => {
     await expect(a.system.repositories.findByGithubId(b.repo.githubRepoId)).resolves.toBeNull();
   },
+  "repositories.recordPolicyFile": async () => {
+    await expect(
+      a.system.repositories.recordPolicyFile(b.repo.id, {
+        commitSha: "a".repeat(40),
+        layer: { limits: { maxFilesChanged: 1 } },
+        errors: null,
+      }),
+    ).rejects.toThrow(NotFoundError);
+    const untouched = await b.system.repositories.get(b.repo.id);
+    expect(untouched?.policyFile).toBeNull();
+  },
   "repositories.syncInstalled": async () => {
     // Same GitHub repo reported for A (e.g. a transfer): A gets its own row, B's is untouched.
     const [copy] = await a.system.repositories.syncInstalled([
@@ -424,6 +435,25 @@ const readOnlyHelpers = [
 ];
 
 const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
+  "repositories.recordPolicyFile": async () => {
+    const commitSha = "b".repeat(40);
+    await a.system.repositories.recordPolicyFile(a.repo.id, {
+      commitSha,
+      layer: null,
+      errors: ["limits.maxFilesChanged: Too big: expected number to be <=50"],
+    });
+    const stored = await a.system.repositories.get(a.repo.id);
+    expect(stored).toMatchObject({ policyFile: null, policyFileCommitSha: commitSha });
+    expect(stored?.policyFileErrors).toHaveLength(1);
+    return [
+      {
+        actorType: "SYSTEM",
+        action: "repository.policy_file",
+        target: `repository:${a.repo.id}`,
+        metadata: { commitSha, status: "invalid", errors: 1 },
+      },
+    ];
+  },
   "repositories.setEnabled": async () => {
     await a.asAdmin.repositories.setEnabled(a.repo.id, true);
     return [

@@ -2,7 +2,8 @@
 // `close-window` closes the collection window when its time is up, then queues `triage`, which
 // fetches, cleans and redacts the failed jobs' logs and classifies them, then queues
 // `recent-changes` (what changed since the last green commit) and `flaky-check` (re-run the failed
-// jobs once). All three call GitHub, so their jobs are paced per installation like webhook jobs.
+// jobs once). Closing the window also queues `policy-file` (re-read `.pipeheal.yml`, P3.7). All of
+// these but `close-window` call GitHub, so their jobs are paced per installation like webhook jobs.
 import { NotFoundError, forSystem, type Db } from "@pipeheal/db";
 import type { GitHubApp } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
@@ -16,6 +17,7 @@ import {
   type InstallationPacing,
 } from "../pacing";
 import { checkFlaky, type FlakyCheckDeps } from "./flaky-check";
+import { refreshFailurePolicyFile } from "./policy-file";
 import { resolveRecentChanges } from "./recent-changes";
 import { triageFailure, type FailureTarget, type TriageDeps } from "./triage";
 
@@ -26,8 +28,14 @@ const targetSchema = z
   .strictObject({ orgId: z.uuid(), failureId: z.uuid(), installationId: z.string().regex(/^\d+$/) })
   .transform(({ installationId, ...ids }) => ({ ...ids, installationId: BigInt(installationId) }));
 type FailureJobData = z.input<typeof targetSchema>;
-type FailureJobName = "close-window" | "triage" | "recent-changes" | "flaky-check";
-const JOB_NAMES = new Set<string>(["close-window", "triage", "recent-changes", "flaky-check"]);
+type FailureJobName = "close-window" | "triage" | "recent-changes" | "flaky-check" | "policy-file";
+const JOB_NAMES = new Set<string>([
+  "close-window",
+  "triage",
+  "recent-changes",
+  "flaky-check",
+  "policy-file",
+]);
 
 export type FailuresQueue = Queue<FailureJobData, void, FailureJobName>;
 
@@ -47,6 +55,8 @@ export interface FailureJobs {
    * like triage: each triage (the window's, a late run's) queues its own.
    */
   enqueueFlakyCheck: (target: FailureTarget, key?: string) => Promise<void>;
+  /** Re-reads the repository's `.pipeheal.yml` (P3.7). Idempotent: one job per failure. */
+  enqueuePolicyFile: (target: FailureTarget) => Promise<void>;
 }
 
 export interface FailuresDeps extends TriageDeps, FlakyCheckDeps {
@@ -74,6 +84,7 @@ export async function processFailuresJob(job: QueueJob, deps: FailuresDeps): Pro
       const system = await forSystem(deps.db, target.orgId, "collection-window");
       const failure = await system.failures.closeWindow(target.failureId);
       log.info({ closedAt: failure.windowClosedAt }, "collection window closed");
+      await deps.jobs.enqueuePolicyFile(target);
       await deps.jobs.enqueueTriage(target);
       return;
     }
@@ -85,6 +96,10 @@ export async function processFailuresJob(job: QueueJob, deps: FailuresDeps): Pro
       }
       if (job.name === "flaky-check") {
         await checkFlaky(deps, target, log);
+        return;
+      }
+      if (job.name === "policy-file") {
+        await refreshFailurePolicyFile(deps, target, log);
         return;
       }
       await triageFailure(deps, target, log);
@@ -149,6 +164,11 @@ export function failureJobs(queue: FailuresQueue): FailureJobs {
     async enqueueFlakyCheck(target, key) {
       await queue.add("flaky-check", jobData(target), {
         jobId: `flaky-check-${target.failureId}${key === undefined ? "" : `-${key}`}`,
+      });
+    },
+    async enqueuePolicyFile(target) {
+      await queue.add("policy-file", jobData(target), {
+        jobId: `policy-file-${target.failureId}`,
       });
     },
     async enqueueTriage(target, key) {

@@ -11,6 +11,7 @@
     "@pipeheal/agent-core": "workspace:*",
     "@pipeheal/db": "workspace:*",
     "@pipeheal/github": "workspace:*",
+    "@pipeheal/policy": "workspace:*",
     "@pipeheal/shared": "workspace:*",
     "bullmq": "^6.3.9",
     "fastify": "^5.12.5",

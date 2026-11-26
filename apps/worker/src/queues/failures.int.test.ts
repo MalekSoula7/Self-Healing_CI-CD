@@ -69,6 +69,7 @@ function deps(overrides: Partial<FailuresDeps> = {}) {
   const triaged: { target: FailureTarget; key: string | undefined }[] = [];
   const recentChanges: FailureTarget[] = [];
   const flakyChecks: { target: FailureTarget; key: string | undefined }[] = [];
+  const policyFiles: FailureTarget[] = [];
   const jobs: FailureJobs = {
     scheduleWindowClose: () => Promise.resolve(),
     enqueueTriage: (target, key) => {
@@ -83,6 +84,10 @@ function deps(overrides: Partial<FailuresDeps> = {}) {
       flakyChecks.push({ target, key });
       return Promise.resolve();
     },
+    enqueuePolicyFile: (target) => {
+      policyFiles.push(target);
+      return Promise.resolve();
+    },
   };
   const all: FailuresDeps = {
     db,
@@ -93,7 +98,7 @@ function deps(overrides: Partial<FailuresDeps> = {}) {
     triageModel: null,
     ...overrides,
   };
-  return { deps: all, triaged, recentChanges, flakyChecks };
+  return { deps: all, triaged, recentChanges, flakyChecks, policyFiles };
 }
 
 /** An org with a repo and a failure with one failed job; its window still open. */
@@ -217,9 +222,9 @@ function fakeModel(answer: Awaited<ReturnType<TriageModel["classify"]>>) {
 }
 
 describe("close-window job", () => {
-  it("closes the collection window, then queues the failure's triage", async () => {
+  it("closes the collection window, then queues the failure's triage and policy file", async () => {
     const { target } = await openFailure();
-    const { deps: d, triaged } = deps();
+    const { deps: d, triaged, policyFiles } = deps();
 
     await processFailuresJob(
       { name: "close-window", data: { ...target, installationId: String(target.installationId) } },
@@ -229,6 +234,7 @@ describe("close-window job", () => {
     const closed = await db.pipelineFailure.findUniqueOrThrow({ where: { id: target.failureId } });
     expect(closed.windowClosedAt).toBeInstanceOf(Date);
     expect(triaged).toEqual([{ target, key: undefined }]);
+    expect(policyFiles).toEqual([target]);
   });
 
   it("does nothing when the failure (or its organization) is gone", async () => {
@@ -1156,5 +1162,74 @@ describe("flaky-check job (SPEC §6.2 step 8)", () => {
     await expect(processFailuresJob(flakyCheckJob(target), deps({ pacing }).deps)).rejects.toThrow(
       RateLimitedError,
     );
+  });
+});
+
+describe("policy-file job (P3.7)", () => {
+  const TIP = "c".repeat(40);
+
+  /** GitHub for this repo: the default branch at TIP, and `.pipeheal.yml` there (null: none). */
+  function mockPolicyFile(fullName: string, yaml: string | null) {
+    const calls: string[] = [];
+    const api = `https://api.github.com/repos/${fullName}`;
+    github.use(
+      http.get(`${api}/git/ref/*`, () =>
+        HttpResponse.json({ ref: "refs/heads/main", object: { sha: TIP } }),
+      ),
+      http.get(`${api}/contents/*`, ({ request }) => {
+        calls.push(new URL(request.url).pathname.split("/contents/")[1] ?? "");
+        if (yaml === null) return HttpResponse.json({ message: "Not Found" }, { status: 404 });
+        return HttpResponse.json({
+          type: "file",
+          path: ".pipeheal.yml",
+          size: yaml.length,
+          encoding: "base64",
+          content: Buffer.from(yaml).toString("base64"),
+        });
+      }),
+    );
+    return calls;
+  }
+
+  const policyFileJob = (target: FailureTarget) => ({
+    name: "policy-file",
+    data: { ...target, installationId: String(target.installationId) },
+  });
+
+  it("stores a valid file's layer, and reads it again only when the branch moves", async () => {
+    const { target, system, repoId, repoFullName } = await openFailure();
+    mockToken();
+    const calls = mockPolicyFile(repoFullName, "limits:\n  maxFilesChanged: 2\n");
+
+    await processFailuresJob(policyFileJob(target), deps().deps);
+    await processFailuresJob(policyFileJob(target), deps().deps);
+
+    const repo = await system.repositories.get(repoId);
+    expect(repo).toMatchObject({
+      policyFile: { limits: { maxFilesChanged: 2 } },
+      policyFileErrors: null,
+      policyFileCommitSha: TIP,
+    });
+    expect(calls).toEqual([".pipeheal.yml"]);
+  });
+
+  it("stores the errors of an invalid file, and nothing for a missing one", async () => {
+    const invalid = await openFailure();
+    mockToken();
+    mockPolicyFile(invalid.repoFullName, "limits:\n  maxFilesChanged: 999\n");
+    await processFailuresJob(policyFileJob(invalid.target), deps().deps);
+    const missing = await openFailure();
+    mockPolicyFile(missing.repoFullName, null);
+    await processFailuresJob(policyFileJob(missing.target), deps().deps);
+
+    const bad = await invalid.system.repositories.get(invalid.repoId);
+    expect(bad?.policyFile).toBeNull();
+    expect(bad?.policyFileErrors).toEqual([expect.stringMatching(/^limits\.maxFilesChanged: /)]);
+    const none = await missing.system.repositories.get(missing.repoId);
+    expect(none).toMatchObject({
+      policyFile: null,
+      policyFileErrors: null,
+      policyFileCommitSha: TIP,
+    });
   });
 });

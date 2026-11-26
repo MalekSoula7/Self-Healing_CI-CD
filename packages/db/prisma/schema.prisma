@@ -183,6 +183,13 @@ model Repository {
   commands                  Json?
   junitGlob                 String?
   language                  String?
+  /// `.pipeheal.yml` as last read from the default branch (SPEC §8.1, P3.7): the validated layer,
+  /// or the errors that kept it out (shown in the UI), and the commit it was read at. Both null
+  /// when the file doesn't exist. Validated with zod in packages/db.
+  policyFile                Json?
+  policyFileErrors          Json?
+  policyFileCommitSha       String?
+  policyFileReadAt          DateTime?
   createdAt                 DateTime     @default(now())
   updatedAt                 DateTime     @updatedAt
 

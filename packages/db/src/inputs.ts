@@ -216,6 +216,24 @@ export const recentChangesRecordSchema = z.union([
 ]);
 export type RecentChangesRecord = z.infer<typeof recentChangesRecordSchema>;
 
+export const MAX_POLICY_FILE_ERRORS = 20;
+
+/**
+ * `.pipeheal.yml` as read at a commit (P3.7): a layer (validated by packages/policy before it gets
+ * here; a plain JSON object to this package), or the errors that kept it out; neither when there
+ * is no file.
+ */
+export const policyFileRecordSchema = z
+  .strictObject({
+    commitSha: shaSchema,
+    layer: z.record(z.string(), z.unknown()).nullable(),
+    errors: z.array(z.string().min(1).max(300)).min(1).max(MAX_POLICY_FILE_ERRORS).nullable(),
+  })
+  .refine((record) => record.layer === null || record.errors === null, {
+    message: "a policy file has a layer or errors, not both",
+  });
+export type PolicyFileRecord = z.infer<typeof policyFileRecordSchema>;
+
 /** A later attempt of a run that passed (SPEC §2.1 re-runs). */
 export const passedRunInputSchema = z.strictObject({
   runId: githubIdSchema,

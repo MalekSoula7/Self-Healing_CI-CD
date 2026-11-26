@@ -9,7 +9,7 @@ import { z } from "zod";
 import { auditChanges, auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
 import { ConflictError, ForbiddenError, NotFoundError } from "./errors";
-import type { RepoWorkflow } from "./generated/prisma/client";
+import { Prisma, type RepoWorkflow } from "./generated/prisma/client";
 import type {
   AccountType,
   FailureCategory,
@@ -29,6 +29,7 @@ import {
   jobTriageInputSchema,
   modelCallInputSchema,
   passedRunInputSchema,
+  policyFileRecordSchema,
   recentChangesRecordSchema,
   type AuditPage,
   type ClassificationInput,
@@ -38,6 +39,7 @@ import {
   type InstalledWorkflow,
   type JobTriageInput,
   type ModelCallInput,
+  type PolicyFileRecord,
   type PassedRunInput,
   type RecentChangesRecord,
   type TriageCategory,
@@ -270,6 +272,40 @@ function buildSystemScope(ctx: ScopeContext) {
     ...base,
     repositories: {
       ...base.repositories,
+
+      /**
+       * Stores `.pipeheal.yml` as read at a commit (P3.7): its layer, or its errors, or neither
+       * (no file). Audited with the commit and the error count only, never the file's content.
+       */
+      async recordPolicyFile(repositoryId: string, input: PolicyFileRecord) {
+        const id = requireId(repositoryId, "repository");
+        const record = policyFileRecordSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const repo = await tx.repository.findFirst({ where: { id, orgId } });
+          if (repo === null) throw new NotFoundError("repository not found");
+          const updated = await tx.repository.update({
+            where: { id },
+            data: {
+              policyFile:
+                record.layer === null ? Prisma.DbNull : (record.layer as Prisma.InputJsonObject),
+              policyFileErrors: record.errors ?? Prisma.DbNull,
+              policyFileCommitSha: record.commitSha,
+              policyFileReadAt: new Date(),
+            },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "repository.policy_file",
+            target: auditTarget("repository", id),
+            metadata: {
+              commitSha: record.commitSha,
+              status:
+                record.layer !== null ? "loaded" : record.errors !== null ? "invalid" : "absent",
+              errors: record.errors?.length ?? 0,
+            },
+          });
+          return updated;
+        });
+      },
 
       async findByGithubId(githubRepoId: bigint) {
         const parsed = githubIdSchema.safeParse(githubRepoId);

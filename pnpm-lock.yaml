@@ -168,6 +168,9 @@ importers:
       '@pipeheal/github':
         specifier: workspace:*
         version: link:../../packages/github
+      '@pipeheal/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       '@pipeheal/shared':
         specifier: workspace:*
         version: link:../../packages/shared
