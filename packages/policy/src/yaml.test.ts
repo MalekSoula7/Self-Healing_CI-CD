@@ -91,3 +91,18 @@ describe("formatPolicyYaml", () => {
     expect(formatPolicyYaml({})).toBe("");
   });
 });
+
+describe("parsePolicyYaml size", () => {
+  it("counts the limit in UTF-8 bytes, not characters", () => {
+    const comment = (char: string, count: number) => `# ${char.repeat(count)}\n`;
+
+    // 30,000 two-byte characters: 60 KB, under the limit.
+    expect(parsePolicyYaml(comment("\u00e9", 30_000)).errors).toBeNull();
+    // 25,000 three-byte characters: 75 KB, over it, though fewer characters than the limit.
+    expect(parsePolicyYaml(comment("\u20ac", 25_000)).errors).toEqual([
+      expect.stringContaining("too large"),
+    ]);
+    // 20,000 four-byte characters: 80 KB.
+    expect(parsePolicyYaml(comment("\u{1f600}", 20_000)).layer).toBeNull();
+  });
+});

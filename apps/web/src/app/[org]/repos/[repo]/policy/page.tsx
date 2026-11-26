@@ -2,6 +2,7 @@ import { hasRole } from "@pipeheal/db";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CustomRules } from "@/components/custom-rules";
+import { DryRun } from "@/components/dry-run";
 import { PolicyEditor } from "@/components/policy-editor";
 import { EffectivePolicyTable, PolicyHistory } from "@/components/policy-views";
 import { requireOrgMember } from "@/lib/auth/session";
@@ -66,6 +67,13 @@ export default async function RepoPolicyPage({ params }: PageProps<"/[org]/repos
           Effective policy
         </h2>
         <EffectivePolicyTable rows={effectiveRows(layers)} />
+      </section>
+
+      <section className="flex flex-col gap-3" aria-labelledby="dry-run">
+        <h2 id="dry-run" className="text-lg font-semibold">
+          Dry run
+        </h2>
+        <DryRun org={org} repoId={repo.id} />
       </section>
     </main>
   );

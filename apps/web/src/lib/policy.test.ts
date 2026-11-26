@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effectiveRows, layerLabel } from "./policy";
+import { dryRun, effectiveRows, layerLabel } from "./policy";
 
 describe("effectiveRows", () => {
   it("shows each field's effective value and the layers it comes from", () => {
@@ -48,5 +48,41 @@ describe("layerLabel", () => {
     ["custom:repo:CR-1", "custom rule CR-1"],
   ] as const)("%s reads as %s", (name, label) => {
     expect(layerLabel(name)).toBe(label);
+  });
+});
+
+describe("dryRun", () => {
+  const diff = [
+    "diff --git a/infra/main.tf b/infra/main.tf",
+    "--- a/infra/main.tf",
+    "+++ b/infra/main.tf",
+    "@@ -1 +1 @@",
+    "-a",
+    "+b",
+    "",
+  ].join("\n");
+
+  it("lists what the checks would refuse under the layers", () => {
+    expect(dryRun({}, diff)).toEqual({
+      status: "done",
+      files: 1,
+      violations: [
+        {
+          ruleId: "paths.deny",
+          path: "infra/main.tf",
+          line: null,
+          message: "infra/main.tf matches the denied path infra/**.",
+        },
+      ],
+      drafts: [],
+    });
+    expect(dryRun({ repo: { paths: { deny: [] } } }, diff)).toMatchObject({ violations: [] });
+  });
+
+  it("explains a diff it can't read", () => {
+    expect(dryRun({}, "hello")).toEqual({
+      status: "invalid",
+      error: "no `diff --git` sections found",
+    });
   });
 });

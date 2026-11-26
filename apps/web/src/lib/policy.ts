@@ -2,8 +2,12 @@
 // from the YAML editors. Pure except `saveLayer`, which goes through the member's org scope.
 import type { OrgScope, StoredLayers } from "@pipeheal/db";
 import {
+  buildChange,
+  checkChanges,
+  draftReasons,
   effectivePolicy,
   parsePolicyYaml,
+  parseUnifiedDiff,
   type EffectivePolicy,
   type LayerName,
 } from "@pipeheal/policy";
@@ -83,4 +87,36 @@ export async function saveLayer(
   if (read.layer === null) return { status: "invalid", errors: read.errors };
   const saved = await scope.policies.save(kind, repoId, read.layer);
   return { status: "saved", version: saved.version };
+}
+
+export type DryRunState =
+  | { status: "idle" }
+  | { status: "invalid"; error: string }
+  | {
+      status: "done";
+      files: number;
+      violations: { ruleId: string; path: string | null; line: number | null; message: string }[];
+      drafts: string[];
+    };
+
+/**
+ * What the static checks would say about a pasted `git diff` under these layers (SPEC §8.9,
+ * P3.10). The diff holds only its hunks, so checks that read whole files see only those lines.
+ */
+export function dryRun(layers: StoredLayers, diff: string): DryRunState {
+  const read = parseUnifiedDiff(diff);
+  if (!read.ok) return { status: "invalid", error: read.error };
+  const changes = read.changes.map(buildChange);
+  const violations = checkChanges(changes, effectivePolicy(layers).policy);
+  return {
+    status: "done",
+    files: changes.length,
+    violations: violations.map((violation) => ({
+      ruleId: violation.ruleId,
+      path: violation.path ?? null,
+      line: violation.line ?? null,
+      message: violation.message,
+    })),
+    drafts: draftReasons(changes),
+  };
 }

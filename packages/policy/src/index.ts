@@ -65,3 +65,4 @@ export {
   parsePolicyYaml,
   type PolicyYamlRead,
 } from "./yaml";
+export { MAX_DIFF_CHARS, MAX_DIFF_FILES, parseUnifiedDiff, type DiffRead } from "./unified-diff";

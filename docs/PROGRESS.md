@@ -855,3 +855,12 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
     - The propose form uses `useActionState`. The web app enqueues `compile-rule` on the new `rules` queue (`@pipeheal/shared`'s `RULES_QUEUE`, `ruleJobDataSchema`).
 - Not yet: running judge rules (P4.7). Model calls for compiling aren't in the `ModelCall` table, which is per failure; their token counts are logged.
 
+## 2026-11-26 · P3.10 · Dry run
+
+- Done (tests first):
+  - `@pipeheal/policy`'s `parseUnifiedDiff`: a pasted `git diff` becomes `ChangeInput`s. It reads edits, new, deleted and renamed files, binaries, symlinks (120000), submodules (160000), mode changes, quoted paths, CRLF and "No newline at end of file". Each side is rebuilt from its hunks' lines.
+  - It refuses non-diffs, paths outside the repository or with control characters, hunks whose counts don't match their header, more than 2 MB or more than 500 files.
+  - web: the repo policy page has a "Dry run" section (`dryRunAction`, read-only, any member). It lists each rule that would refuse the diff, and whether the PR would open as a draft (`draftReasons`). It says that whole-file checks see only the diff's lines.
+- Not yet: the last N attempts' diffs (Phase 4).
+- Next: CHECKPOINT 3, with the end-of-phase security review.
+

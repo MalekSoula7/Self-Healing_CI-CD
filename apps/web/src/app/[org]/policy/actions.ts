@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireOrgMember } from "@/lib/auth/session";
 import { stringField } from "@/lib/form";
-import { saveLayer, type SaveState } from "@/lib/policy";
+import { dryRun, saveLayer, type DryRunState, type SaveState } from "@/lib/policy";
 import { enqueueRuleCompile } from "@/lib/queue";
 
 const kindSchema = z.enum(["ORG_DEFAULT", "ORG_GUARDRAIL", "REPO"]);
@@ -71,4 +71,16 @@ export async function decideRuleAction(formData: FormData): Promise<void> {
   if (decision === "discard") await scope.customRules.discard(draft.id);
   else await scope.customRules.accept(draft.id, decision);
   revalidatePath(draft.repoId === null ? `/${org}/policy` : `/${org}/repos/${draft.repoId}/policy`);
+}
+
+/** A dry run of a repository's effective policy against a pasted diff (P3.10). Read-only. */
+export async function dryRunAction(
+  _previous: DryRunState,
+  formData: FormData,
+): Promise<DryRunState> {
+  const org = stringField(formData, "org");
+  const scope = await requireOrgMember(org);
+  const repo = await scope.repositories.get(stringField(formData, "repoId"));
+  if (repo === null) return { status: "invalid", error: "repository not found" };
+  return dryRun(await scope.policies.layers(repo.id), stringField(formData, "diff"));
 }
