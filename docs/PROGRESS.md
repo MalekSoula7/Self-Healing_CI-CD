@@ -879,3 +879,22 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - **L2:** the GitHub write guard compares `.github` in folded form too (`.gıthub`).
 - Deferred to Phase 4, in SPEC §15: L3 (repo-file custom rules as untrusted in the healer prompt), L4 (a stored policy file a newer schema rejects), L5 (which policy-file commit an attempt used), M4's model-call metering and priority, and L1's non-tightening fields.
 
+## 2026-11-26 · CHECKPOINT 3 closed
+
+- Malek reviewed the default rules and the red-team findings and said to continue ("okay continue now and later i will add the env variables"). P3.6 is ticked; the env vars for the CHECKPOINT 2b acceptance run come later.
+
+## 2026-11-26 · P4.1 runner ↔ gateway protocol
+
+- Decision D15 (Malek): async steps with long-polling instead of ~2-minute synchronous requests. SPEC §3.1 is updated, and the §15 open question is removed.
+- `@pipeheal/shared/protocol` is a pure subpath (no env or logger), so the runner action can import it.
+  - Session exchange: OIDC JWT and attempt ID in; session token, target SHA, failing check, argv commands, JUnit glob and wall-clock limit out.
+  - Steps: the first step carries the reproduction, the file tree and the baseline reports; later steps carry tool results. Polls answer `pending`, `ready` or `done`.
+  - The eight SPEC §7.2 tools form a discriminated union, with paths checked by `repoPathProblem`.
+  - The submission carries final contents or deletions (never a diff), checks and reports.
+  - Every array and string is capped (`LIMITS`).
+- The schemas check shape only. Write permissions such as `.github/` are decided by the policy engine on the server, and a test pins that.
+
+
+## 2026-11-26 · Speed tests run on their own
+
+- The H2 speed test failed in full runs (14 s against a 5 s budget; 2.5 s alone): it shared the CPU with the parallel test files. Speed budgets now live in `*.perf.test.ts` and run in a `perf` Vitest project that starts after the others (`sequence.groupOrder`). The H2, JUnit M2 and triage budgets moved unchanged, and `pnpm test:unit` runs them too. The diff and glob budgets sit inside functional tests and stay where they are.

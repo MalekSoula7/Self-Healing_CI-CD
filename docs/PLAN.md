@@ -75,7 +75,7 @@ Acceptance: each `break.ts` scenario shows up within ~1 minute and has the right
 - [x] **P3.3** Layer merge with provenance (SPEC §8.4). Property-based tests (fast-check): the merged policy is never less restrictive than any layer.
 - [x] **P3.4** Static checks, one module per family (SPEC §8.5), each with allowed and forbidden fixtures in `packages/policy/fixtures/`. Test-first. INV-GITHUB-DIR and path rules use the same NTFS/HFS-aware normalizer as `packages/github`'s `assertWritablePath` (move it to `packages/shared`).
 - [x] **P3.5** Behavioral checks: JUnit parser + inventory comparison (SPEC §8.6). Fixtures from Jest, Vitest and pytest reports.
-- [ ] **P3.6** Run the `policy-red-team` subagent. Turn every bypass it finds into a failing fixture, then fix the engine. Repeat until it finds nothing new.
+- [x] **P3.6** Run the `policy-red-team` subagent. Turn every bypass it finds into a failing fixture, then fix the engine. Repeat until it finds nothing new.
 - [x] **P3.7** `.pipeheal.yml` loader from the default branch, validated; errors shown in the UI, never crash the pipeline.
 - [x] **P3.8** Policy UI: org defaults, repo overrides, effective policy with provenance, version history. Wire the effective `retryBeforeHeal` into the flaky check (`FlakyCheckDeps.retryBeforeHeal`, the default until then).
 - [x] **P3.9** Custom rules: plain-language → structured compiler, confirmation UI, `code` vs `judge` labels (judge runs in P4.7).
@@ -89,7 +89,7 @@ Acceptance: coverage ≥ 95% on `packages/policy`; all red-team fixtures rejecte
 
 ## Phase 4: Healing agent
 
-- [ ] **P4.1** `packages/shared`: runner ↔ gateway protocol schemas (session exchange, step request/response with `stepSeq`, tool calls/results, submission payload).
+- [x] **P4.1** `packages/shared`: runner ↔ gateway protocol schemas (session exchange, step request/response with `stepSeq`, tool calls/results, submission payload).
 - [ ] **P4.1b** Gateway hardening before it is reachable from runners (Phase 0 review L5): public `/livez` (no dependency checks) vs internal `/readyz`, `requestTimeout` ~150 s and `connectionTimeout`, small per-route body limits before auth, `@fastify/rate-limit`.
 - [ ] **P4.2** Gateway `POST /v1/session`: OIDC verification per SPEC §5.4. Tests with locally generated keys and JWTs, including every rejection path.
 - [ ] **P4.3** Gateway `POST /v1/step`: accept tool results, run the next model turn, return tool calls; persist `AgentEvent`s; enforce caps; idempotent on `stepSeq`.
