@@ -1,4 +1,5 @@
 import { hasRole } from "@pipeheal/db";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { requireOrgMember } from "@/lib/auth/session";
@@ -18,6 +19,12 @@ export default async function RepoWorkflowsPage({ params }: PageProps<"/[org]/re
     <main className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">{repo.fullName}</h1>
+        <Link
+          href={`/${org}/repos/${repo.id}/policy`}
+          className="text-sm underline underline-offset-4"
+        >
+          Policy for this repository
+        </Link>
         <p className="text-muted-foreground">
           Choose which workflows PipeHeal watches. CI-looking workflows start pre-selected; you can
           change any of them below (SPEC §11).

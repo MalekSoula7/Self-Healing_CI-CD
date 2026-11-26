@@ -232,6 +232,9 @@ let b: Tenant;
 
 beforeEach(async () => {
   [a, b] = await Promise.all([createTenant(), createTenant()]);
+  // B has policy versions, so A's scope has something it must not see.
+  await b.system.policies.save("ORG_DEFAULT", null, { tests: { mode: "source_only" } });
+  await b.system.policies.save("REPO", b.repo.id, { limits: { maxFilesChanged: 2 } });
 });
 
 // One case per helper: A's scope pointed at B's rows. Each case asserts what A gets back; the
@@ -250,6 +253,22 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
   },
   "repositories.findByGithubId": async () => {
     await expect(a.system.repositories.findByGithubId(b.repo.githubRepoId)).resolves.toBeNull();
+  },
+  "policies.current": async () => {
+    await expect(a.asAdmin.policies.current("REPO", b.repo.id)).resolves.toBeNull();
+    await expect(a.asAdmin.policies.current("ORG_DEFAULT")).resolves.toBeNull();
+  },
+  "policies.history": async () => {
+    await expect(a.asAdmin.policies.history("REPO", b.repo.id)).resolves.toEqual([]);
+    await expect(a.asAdmin.policies.history("ORG_DEFAULT")).resolves.toEqual([]);
+  },
+  "policies.layers": async () => {
+    await expect(a.asAdmin.policies.layers(b.repo.id)).rejects.toThrow(NotFoundError);
+  },
+  "policies.save": async () => {
+    await expect(
+      a.asAdmin.policies.save("REPO", b.repo.id, { limits: { maxFilesChanged: 1 } }),
+    ).rejects.toThrow(NotFoundError);
   },
   "repositories.recordPolicyFile": async () => {
     await expect(
@@ -420,6 +439,9 @@ function allHelperNames(): string[] {
 // write, oldest first); every other helper is listed as read-only. A meta-test fails when a
 // helper is added to neither list.
 const readOnlyHelpers = [
+  "policies.current",
+  "policies.history",
+  "policies.layers",
   "repositories.list",
   "repositories.get",
   "repositories.findByGithubId",
@@ -435,6 +457,21 @@ const readOnlyHelpers = [
 ];
 
 const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
+  "policies.save": async () => {
+    const saved = await a.asAdmin.policies.save("REPO", a.repo.id, {
+      limits: { maxFilesChanged: 3 },
+      tests: { mode: "source_only" },
+    });
+    return [
+      {
+        actorType: "USER",
+        actorId: a.admin.id,
+        action: "policy.saved",
+        target: `policy:${saved.id}`,
+        metadata: { kind: "REPO", repoId: a.repo.id, version: 1, sections: ["limits", "tests"] },
+      },
+    ];
+  },
   "repositories.recordPolicyFile": async () => {
     const commitSha = "b".repeat(40);
     await a.system.repositories.recordPolicyFile(a.repo.id, {
@@ -1533,5 +1570,67 @@ describe("input validation", () => {
     ).rejects.toThrow(ZodError);
     await expect(installs.setStatus(-1n, "SUSPENDED")).rejects.toThrow(ZodError);
     expect(await snapshot(a)).toEqual(before);
+  });
+});
+
+describe("policies (P3.8)", () => {
+  it("numbers each layer's versions and reads the latest", async () => {
+    const t = await createTenant();
+    await t.asAdmin.policies.save("ORG_DEFAULT", null, { limits: { maxFilesChanged: 4 } });
+    const second = await t.asAdmin.policies.save("ORG_DEFAULT", null, {
+      limits: { maxFilesChanged: 3 },
+    });
+    await t.asAdmin.policies.save("REPO", t.repo.id, { tests: { mode: "may_edit_tests" } });
+
+    expect(second.version).toBe(2);
+    expect((await t.asMember.policies.current("ORG_DEFAULT"))?.version).toBe(2);
+    expect((await t.asMember.policies.history("ORG_DEFAULT")).map((row) => row.version)).toEqual([
+      2, 1,
+    ]);
+    await expect(t.asMember.policies.layers(t.repo.id)).resolves.toEqual({
+      orgDefaults: { limits: { maxFilesChanged: 3 } },
+      orgGuardrails: undefined,
+      repo: { tests: { mode: "may_edit_tests" } },
+    });
+  });
+
+  it("lets admins save defaults and repo settings, and only owners the guardrails", async () => {
+    const t = await createTenant();
+
+    await expect(
+      t.asMember.policies.save("ORG_DEFAULT", null, { limits: { maxFilesChanged: 1 } }),
+    ).rejects.toThrow(ForbiddenError);
+    await expect(
+      t.asAdmin.policies.save("ORG_GUARDRAIL", null, { limits: { maxFilesChanged: 1 } }),
+    ).rejects.toThrow(ForbiddenError);
+    await expect(
+      t.system.policies.save("ORG_GUARDRAIL", null, { limits: { maxFilesChanged: 1 } }),
+    ).resolves.toMatchObject({ kind: "ORG_GUARDRAIL", version: 1 });
+  });
+
+  it("refuses rules the layer schema refuses, and a repo for an org-wide layer", async () => {
+    const t = await createTenant();
+
+    await expect(
+      t.asAdmin.policies.save("ORG_DEFAULT", null, { limits: { maxFilesChanged: 999 } }),
+    ).rejects.toThrow();
+    await expect(t.asAdmin.policies.save("ORG_DEFAULT", null, { unknown: 1 })).rejects.toThrow();
+    await expect(
+      t.asAdmin.policies.save("ORG_DEFAULT", t.repo.id, { limits: { maxFilesChanged: 1 } }),
+    ).rejects.toThrow(NotFoundError);
+    expect(await t.asAdmin.policies.history("ORG_DEFAULT")).toEqual([]);
+  });
+
+  it("includes the repository's .pipeheal.yml in its layers", async () => {
+    const t = await createTenant();
+    await t.system.repositories.recordPolicyFile(t.repo.id, {
+      commitSha: "c".repeat(40),
+      layer: { paths: { deny: ["src/legacy/**"] } },
+      errors: null,
+    });
+
+    await expect(t.system.policies.layers(t.repo.id)).resolves.toMatchObject({
+      repoFile: { paths: { deny: ["src/legacy/**"] } },
+    });
   });
 });

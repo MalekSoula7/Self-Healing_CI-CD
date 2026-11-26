@@ -11,10 +11,12 @@
 //   reusable workflow call, a deploy-, release- or publish-like job), at the failing commit and on
 //   the default branch. Unreadable or unparseable: no re-run. `environment:` is remembered on
 //   RepoWorkflow.
-// - only while the organization is active and the repository enabled.
+// - only while the organization is active and the repository enabled;
+// - only when the repository's effective policy keeps `scope.retryBeforeHeal` on.
 import type { Db } from "@pipeheal/db";
 import { forSystem } from "@pipeheal/db";
 import { GitHubApiError, GuardError, type GitHubApp } from "@pipeheal/github";
+import { effectivePolicy } from "@pipeheal/policy";
 import type { Logger } from "@pipeheal/shared/logger";
 import type { FailureTarget } from "./triage";
 import { parseWorkflowYaml, rerunRisk } from "./workflow-yaml";
@@ -22,15 +24,7 @@ import { parseWorkflowYaml, rerunRisk } from "./workflow-yaml";
 export interface FlakyCheckDeps {
   db: Db;
   githubApp: GitHubApp | null;
-  /**
-   * Policy `retryBeforeHeal` (SPEC §8.3). The policy engine (Phase 3) will supply the effective
-   * value per repository; until then every repository has the default.
-   */
-  retryBeforeHeal?: boolean;
 }
-
-/** Policy `retryBeforeHeal`'s default (SPEC §8.3). */
-export const RETRY_BEFORE_HEAL_DEFAULT = true;
 
 const FAILED = new Set(["failure", "timed_out"]);
 
@@ -40,7 +34,6 @@ export async function checkFlaky(
   target: FailureTarget,
   log: Logger,
 ): Promise<void> {
-  if (!(deps.retryBeforeHeal ?? RETRY_BEFORE_HEAL_DEFAULT)) return;
   const system = await forSystem(deps.db, target.orgId, "flaky-check");
   const failure = await system.failures.get(target.failureId);
   // Only a triaged failure: not one already FLAKY, dispatched or past that.
@@ -57,6 +50,9 @@ export async function checkFlaky(
   ) {
     return;
   }
+  // The repository's effective `retryBeforeHeal` (SPEC §8.3, §8.4: off wins in tightening layers).
+  const { policy } = effectivePolicy(await system.policies.layers(repo.id));
+  if (!policy.scope.retryBeforeHeal) return;
   if (deps.githubApp === null) {
     log.warn("GitHub App isn't configured; skipping the flaky check");
     return;

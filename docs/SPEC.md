@@ -465,7 +465,7 @@ Since P3.6 an ID maps to the outcomes of every test case with that ID, compared 
 On every edit (fast static subset, advisory to the model) → on submission (everything, authoritative, server-side on recomputed diff) → PR CI (independent).
 
 ### 8.9 Versioning and dry run
-Every policy change creates a new version with author and timestamp (audit log). Each attempt stores the effective policy hash. "Dry run" evaluates a policy against a pasted diff or the last N attempts' diffs and shows what would have been blocked.
+Every policy change creates a new version with author and timestamp (audit log: `policy.saved` with the layer, version and the sections set, never the rules). Admins save org defaults and repository settings; only owners save the guardrails, the ceiling for the whole organization (P3.8). The dashboard edits each layer as YAML in the same format as `.pipeheal.yml`, read by the same `parsePolicyYaml`. Each attempt stores the effective policy hash. "Dry run" evaluates a policy against a pasted diff or the last N attempts' diffs and shows what would have been blocked.
 
 ---
 
@@ -516,7 +516,7 @@ Iterations: <n> · Model: <id> · Cost: $<x> · [Full timeline](<dashboard link>
 - `Membership` (userId, orgId, role: OWNER | ADMIN | MEMBER)
 - `Repository` (orgId, githubRepoId, fullName, defaultBranch, enabled, removedFromInstallationAt, healerStatus: MISSING | OK | ERROR, commands JSON {install, build, lint, typecheck, test, testFile}, junitGlob, language, policyFile JSON, policyFileErrors JSON, policyFileCommitSha, policyFileReadAt). Unique on (orgId, githubRepoId): rows never move between tenants, so a repository transferred to another installed account gets a new row there.
 - `RepoWorkflow` (orgId, repoId, githubWorkflowId, path, name, selected, usesEnvironment, triggers). Discovered from the repo; `selected` is set at onboarding (§2.1, §11).
-- `Policy` (orgId, repoId nullable for org default, version, rules JSON, createdById) with history
+- `PolicyVersion` (orgId, kind: ORG_DEFAULT | ORG_GUARDRAIL | REPO, repoId for REPO, target, version, rules JSON, createdById, createdAt): append-only, one version sequence per layer; the current layer is the highest version (P3.8)
 - `PipelineFailure` (orgId, repoId, headSha, headBranch, category, confidence, summary, status, skipReason, windowClosesAt, windowClosedAt, recentChanges JSON (the base commit and how it was found, plus the redacted, budgeted diff, §6.2 step 7), createdAt). Unique on (repoId, headSha) (§2.1).
   - status: DETECTED | TRIAGED | SKIPPED | FLAKY | QUEUED | HEALING | PR_OPENED | VERIFIED | UNVERIFIED | NEEDS_HUMAN | NEEDS_SETUP | NOT_REPRODUCIBLE | FAILED
 - `FailedRun` (orgId, repoId, failureId, runId, runAttempt, workflowId, workflowName, workflowPath, conclusion, rerunByUs, rerunFromAttempt, lateArrival, createdAt). Unique on (repoId, runId); a higher `runAttempt` updates the row. The flaky re-run is pending while `runAttempt` still equals `rerunFromAttempt`.

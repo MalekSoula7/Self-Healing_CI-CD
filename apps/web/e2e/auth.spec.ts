@@ -81,3 +81,13 @@ test("a signed-out visitor of the failures pages is sent to sign-in, and back af
     /\/login\?next=%2Facme%2Ffailures%2F00000000-0000-0000-0000-000000000000$/,
   );
 });
+
+test("a signed-out visitor of the policy pages is sent to sign-in", async ({ page }) => {
+  await page.goto("/acme/policy");
+  await expect(page).toHaveURL(/\/login\?next=%2Facme%2Fpolicy$/);
+
+  await page.goto("/acme/repos/00000000-0000-0000-0000-000000000000/policy");
+  await expect(page).toHaveURL(
+    /\/login\?next=%2Facme%2Frepos%2F00000000-0000-0000-0000-000000000000%2Fpolicy$/,
+  );
+});

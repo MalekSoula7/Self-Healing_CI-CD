@@ -77,7 +77,7 @@ Acceptance: each `break.ts` scenario shows up within ~1 minute and has the right
 - [x] **P3.5** Behavioral checks: JUnit parser + inventory comparison (SPEC §8.6). Fixtures from Jest, Vitest and pytest reports.
 - [ ] **P3.6** Run the `policy-red-team` subagent. Turn every bypass it finds into a failing fixture, then fix the engine. Repeat until it finds nothing new.
 - [x] **P3.7** `.pipeheal.yml` loader from the default branch, validated; errors shown in the UI, never crash the pipeline.
-- [ ] **P3.8** Policy UI: org defaults, repo overrides, effective policy with provenance, version history. Wire the effective `retryBeforeHeal` into the flaky check (`FlakyCheckDeps.retryBeforeHeal`, the default until then).
+- [x] **P3.8** Policy UI: org defaults, repo overrides, effective policy with provenance, version history. Wire the effective `retryBeforeHeal` into the flaky check (`FlakyCheckDeps.retryBeforeHeal`, the default until then).
 - [ ] **P3.9** Custom rules: plain-language → structured compiler, confirmation UI, `code` vs `judge` labels (judge runs in P4.7).
 - [ ] **P3.10** Dry run: evaluate a policy against a pasted diff.
 

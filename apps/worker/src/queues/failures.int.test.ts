@@ -1031,12 +1031,29 @@ describe("flaky-check job (SPEC §6.2 step 8)", () => {
     });
   });
 
-  it("does nothing when retryBeforeHeal is off", async () => {
-    const { target, repoFullName, runId } = await triagedFailure();
+  it("does nothing when the repository's policy turns retryBeforeHeal off", async () => {
+    const { target, repoFullName, runId, repoId, system } = await triagedFailure();
+    await system.policies.save("REPO", repoId, { scope: { retryBeforeHeal: false } });
     mockToken();
     const calls = mockRerun(repoFullName, runId, CI_YAML);
 
-    await processFailuresJob(flakyCheckJob(target), deps({ retryBeforeHeal: false }).deps);
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
+
+    expect(calls).toEqual([]);
+  });
+
+  it("follows .pipeheal.yml turning retryBeforeHeal off, whatever the dashboard says", async () => {
+    const { target, repoFullName, runId, repoId, system } = await triagedFailure();
+    await system.policies.save("REPO", repoId, { scope: { retryBeforeHeal: true } });
+    await system.repositories.recordPolicyFile(repoId, {
+      commitSha: "d".repeat(40),
+      layer: { scope: { retryBeforeHeal: false } },
+      errors: null,
+    });
+    mockToken();
+    const calls = mockRerun(repoFullName, runId, CI_YAML);
+
+    await processFailuresJob(flakyCheckJob(target), deps().deps);
 
     expect(calls).toEqual([]);
   });

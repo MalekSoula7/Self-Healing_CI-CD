@@ -46,6 +46,7 @@ export {
   organizationsOf,
   type OrgScope,
   type OrgSummary,
+  type StoredLayers,
   type SystemScope,
 } from "./scope";
 export { DEV_DATABASE_URL, databaseUrlSchema, tlsUnlessLoopback } from "./url";

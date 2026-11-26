@@ -5,6 +5,7 @@
 // - Roles are checked here too, not only in the web layer (SPEC §11 RBAC): MEMBER reads,
 //   ADMIN changes repositories and workflows. SYSTEM (the worker) acts with OWNER rights.
 // - Every mutation writes its audit row in the same transaction. A no-op writes nothing.
+import { policyLayerSchema, type PolicyLayer } from "@pipeheal/policy";
 import { z } from "zod";
 import { auditChanges, auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
@@ -15,6 +16,7 @@ import type {
   FailureCategory,
   FailureStatus,
   OrgStatus,
+  PolicyKind,
   Role,
 } from "./generated/prisma/enums";
 import {
@@ -119,6 +121,31 @@ function workflowFacts(workflow: RepoWorkflow) {
   };
 }
 
+/** The stored policy layers for packages/policy's `effectivePolicy`. */
+export interface StoredLayers {
+  orgDefaults?: PolicyLayer | undefined;
+  orgGuardrails?: PolicyLayer | undefined;
+  repo?: PolicyLayer | undefined;
+  repoFile?: PolicyLayer | undefined;
+}
+
+/**
+ * Which version sequence a layer lives in: "org" for the org-wide kinds, the repository's ID for
+ * REPO (null when it isn't one of this org's repositories, or is given for an org-wide kind).
+ */
+async function policyTarget(
+  db: Pick<Db, "repository">,
+  orgId: string,
+  kind: PolicyKind,
+  repoId: string | null,
+): Promise<string | null> {
+  if (kind !== "REPO") return repoId === null ? "org" : null;
+  const id = repoId === null ? null : parseId(repoId);
+  if (id === null) return null;
+  const repo = await db.repository.findFirst({ where: { id, orgId }, select: { id: true } });
+  return repo?.id ?? null;
+}
+
 function requireRole(ctx: ScopeContext, minimum: Role): void {
   if (!hasRole(ctx.role, minimum)) throw new ForbiddenError(`requires the ${minimum} role`);
 }
@@ -190,6 +217,101 @@ function buildOrgScope(ctx: ScopeContext) {
             metadata: { repoId: workflow.repoId },
           });
           return updated;
+        });
+      },
+    },
+
+    policies: {
+      /** The current version of a policy layer, or null when none was saved. */
+      async current(kind: PolicyKind, repoId: string | null = null) {
+        const target = await policyTarget(db, orgId, kind, repoId);
+        if (target === null) return null;
+        return db.policyVersion.findFirst({
+          where: { orgId, kind, target },
+          orderBy: { version: "desc" },
+        });
+      },
+
+      /**
+       * The stored layers that make a repository's effective policy (SPEC §8.1): org defaults and
+       * guardrails, and for a repository its dashboard settings and its `.pipeheal.yml`. Each is
+       * re-validated; a layer never saved is absent. `repoId` null: the org-wide layers only.
+       */
+      async layers(repoId: string | null = null): Promise<StoredLayers> {
+        const latest = async (kind: PolicyKind, target: string) => {
+          const row = await db.policyVersion.findFirst({
+            where: { orgId, kind, target },
+            orderBy: { version: "desc" },
+            select: { rules: true },
+          });
+          return row === null ? undefined : policyLayerSchema.parse(row.rules);
+        };
+        const layers: StoredLayers = {
+          orgDefaults: await latest("ORG_DEFAULT", "org"),
+          orgGuardrails: await latest("ORG_GUARDRAIL", "org"),
+        };
+        if (repoId === null) return layers;
+        const id = parseId(repoId);
+        const repo =
+          id === null
+            ? null
+            : await db.repository.findFirst({
+                where: { id, orgId },
+                select: { id: true, policyFile: true },
+              });
+        if (repo === null) throw new NotFoundError("repository not found");
+        layers.repo = await latest("REPO", repo.id);
+        // .pipeheal.yml was validated when it was read; one that failed to parse isn't stored.
+        if (repo.policyFile !== null) layers.repoFile = policyLayerSchema.parse(repo.policyFile);
+        return layers;
+      },
+
+      /** A layer's versions, newest first (SPEC §8.9). */
+      async history(kind: PolicyKind, repoId: string | null = null, take = 20) {
+        const target = await policyTarget(db, orgId, kind, repoId);
+        if (target === null) return [];
+        return db.policyVersion.findMany({
+          where: { orgId, kind, target },
+          orderBy: { version: "desc" },
+          take: z.int().min(1).max(100).parse(take),
+        });
+      },
+
+      /**
+       * Saves a new version of a layer. Admins save org defaults and repository settings; only
+       * owners save the guardrails, the ceiling for the whole organization. The rules are
+       * re-validated with the layer schema whoever calls.
+       */
+      async save(kind: PolicyKind, repoId: string | null, rules: unknown) {
+        requireRole(ctx, kind === "ORG_GUARDRAIL" ? "OWNER" : "ADMIN");
+        const layer = policyLayerSchema.parse(rules);
+        return db.$transaction(async (tx) => {
+          const target = await policyTarget(tx, orgId, kind, repoId);
+          if (target === null) throw new NotFoundError("repository not found");
+          const latest = await tx.policyVersion.findFirst({
+            where: { orgId, kind, target },
+            orderBy: { version: "desc" },
+            select: { version: true },
+          });
+          const version = (latest?.version ?? 0) + 1;
+          const saved = await tx.policyVersion.create({
+            data: {
+              orgId,
+              kind,
+              repoId: kind === "REPO" ? target : null,
+              target,
+              version,
+              rules: layer,
+              createdById: actor.type === "USER" ? actor.userId : null,
+            },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "policy.saved",
+            target: auditTarget("policy", saved.id),
+            // The sections set, not the rules themselves.
+            metadata: { kind, repoId: saved.repoId, version, sections: Object.keys(layer).sort() },
+          });
+          return saved;
         });
       },
     },

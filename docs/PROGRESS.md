@@ -816,3 +816,26 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - **setup.py:** a dependency list grown elsewhere (`REQUIREMENTS.append(...)`, `BASE + EXTRA`) makes the whole file the setting.
 - Convergence: each round's new bypasses are narrower (edge cases of the previous round's fixes), and the false positives are shrinking. Static skip detection stays porous by nature; the JUnit inventory and the AI judge are the robust layers (SPEC §8.6, P4.7).
 
+## 2026-11-26 · P3.6 (round 5) · Red team
+
+- Round 5 (a convergence check against aeb4a72): 5 bypasses and 4 false positives from the round-4 fixes, all refinements of those fixes rather than new classes. All fixed and permanent (797 policy tests). The agent's verdict, which I share: what's left after this needs data flow, which belongs to the behavioral checks (JUnit inventory) and the AI judge (P4.7).
+- Summary across the five rounds: about 360 attacks and 45 false positives, each a permanent test. The residuals are recorded with pseudo IDs and the reason in each attack (`judge`, `server`, `behavior.*`). P3.6 stays unticked: CHECKPOINT 3 reviews the findings with Malek, who decides whether this is converged enough.
+
+## 2026-11-26 · P3.8 · Policy UI
+
+- Done:
+  - `@pipeheal/policy`'s `parsePolicyYaml`/`formatPolicyYaml` (moved from the worker), so the dashboard editors and `.pipeheal.yml` share one reader.
+  - db: `PolicyVersion`, an append-only table with one version sequence per layer (migration `policy_versions`). `policies.current/history/save/layers` sit in the org scope:
+    - `save` re-validates with the layer schema and writes the `policy.saved` audit entry (layer, version, sections; never the rules).
+    - `layers(repoId)` returns the stored org defaults, guardrails, repository settings and `.pipeheal.yml`, re-validated.
+    - The scope meta-test has cross-org and audit cases. Behavior tests cover versions, roles, refused rules and the file layer.
+  - worker: the flaky check uses the repository's effective `scope.retryBeforeHeal` (`effectivePolicy(layers)`). The `FlakyCheckDeps.retryBeforeHeal` stopgap is gone. Tests cover the dashboard and `.pipeheal.yml` turning it off.
+  - web:
+    - `/[org]/policy` has the org defaults and guardrails editors, each with its history, and the org-wide effective policy.
+    - `/[org]/repos/[repo]/policy` has the repository settings editor, its history, and the effective policy with provenance: for each field, the value and the layers it comes from.
+    - The YAML editor is a client component on `useActionState`, so validation errors show as `field: message` lines.
+    - There is a "Policy" nav link, a link from the repo page, and an e2e test that signed-out visitors are redirected.
+- Decision (mine, SPEC §8.9): only owners save the guardrails, since they are the ceiling for the whole organization; admins save defaults and repository settings.
+- Not done here: a "restore this version" button (history is view-only), and a manual "reload .pipeheal.yml" (the file is re-read with each failure, P3.7). Both are small additions if wanted.
+- Dependencies: `@pipeheal/policy` (workspace) in `packages/db` (to validate layers on save) and in `apps/web`.
+

@@ -26,6 +26,12 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/[org
           >
             Repositories
           </Link>
+          <Link
+            href={`/${scope.org.slug}/policy`}
+            className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+          >
+            Policy
+          </Link>
         </div>
         <form action={signOut}>
           <Button type="submit" variant="outline" size="sm">

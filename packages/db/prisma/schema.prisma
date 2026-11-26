@@ -11,8 +11,8 @@
 //   gets a new row there; the old one keeps its history and is marked removed.
 
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
   // Extensionless imports resolve under TypeScript's bundler resolution, Vite/Vitest, tsx and Next.js.
   importFileExtension = ""
 }
@@ -126,14 +126,15 @@ model Organization {
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
-  memberships  Membership[]
-  repositories Repository[]
-  workflows    RepoWorkflow[]
-  auditLogs    AuditLog[]
-  failures     PipelineFailure[]
-  failedRuns   FailedRun[]
-  failedJobs   FailedJob[]
-  modelCalls   ModelCall[]
+  memberships    Membership[]
+  repositories   Repository[]
+  workflows      RepoWorkflow[]
+  auditLogs      AuditLog[]
+  failures       PipelineFailure[]
+  failedRuns     FailedRun[]
+  failedJobs     FailedJob[]
+  modelCalls     ModelCall[]
+  policyVersions PolicyVersion[]
 }
 
 enum Role {
@@ -193,9 +194,10 @@ model Repository {
   createdAt                 DateTime     @default(now())
   updatedAt                 DateTime     @updatedAt
 
-  workflows  RepoWorkflow[]
-  failures   PipelineFailure[]
-  failedRuns FailedRun[]
+  workflows      RepoWorkflow[]
+  failures       PipelineFailure[]
+  failedRuns     FailedRun[]
+  policyVersions PolicyVersion[]
 
   // Webhook lookups go installation → org → (orgId, githubRepoId), never by repo ID alone.
   @@unique([orgId, githubRepoId])
@@ -299,31 +301,31 @@ model PipelineFailure {
 
 /// One failed workflow run of a failure; a re-run (higher runAttempt) updates this row.
 model FailedRun {
-  id           String          @id @default(uuid(7)) @db.Uuid
-  orgId        String          @db.Uuid
-  org          Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  repoId       String          @db.Uuid
-  repo         Repository      @relation(fields: [orgId, repoId], references: [orgId, id], onDelete: Cascade)
-  failureId    String          @db.Uuid
-  failure      PipelineFailure @relation(fields: [orgId, failureId], references: [orgId, id], onDelete: Cascade)
-  runId        BigInt
+  id               String          @id @default(uuid(7)) @db.Uuid
+  orgId            String          @db.Uuid
+  org              Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  repoId           String          @db.Uuid
+  repo             Repository      @relation(fields: [orgId, repoId], references: [orgId, id], onDelete: Cascade)
+  failureId        String          @db.Uuid
+  failure          PipelineFailure @relation(fields: [orgId, failureId], references: [orgId, id], onDelete: Cascade)
+  runId            BigInt
   /// The latest attempt we've seen.
-  runAttempt   Int
-  workflowId   BigInt
-  workflowName String
-  workflowPath String
+  runAttempt       Int
+  workflowId       BigInt
+  workflowName     String
+  workflowPath     String
   /// GitHub's conclusion for `runAttempt`: failure or timed_out, or success once a re-run passed.
-  conclusion   String
-  htmlUrl      String?
+  conclusion       String
+  htmlUrl          String?
   /// We asked GitHub to re-run it (flaky check, SPEC §6.2 step 8). At most once per run.
   rerunByUs        Boolean         @default(false)
   /// The attempt we asked GitHub to re-run. While `runAttempt` still equals it, the re-run's
   /// result hasn't arrived; a newer attempt is that result.
   rerunFromAttempt Int?
   /// Attached after the failure's collection window closed (SPEC §2.1).
-  lateArrival  Boolean         @default(false)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  lateArrival      Boolean         @default(false)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   jobs FailedJob[]
 
@@ -424,4 +426,38 @@ model WebhookDelivery {
   error          String?
 
   @@index([receivedAt])
+}
+
+/// Which policy layer a version belongs to (SPEC §8.1, D13).
+enum PolicyKind {
+  /// Org defaults: overridden per repository (an admin may loosen them there).
+  ORG_DEFAULT
+  /// Org guardrails: the ceiling no other layer can loosen.
+  ORG_GUARDRAIL
+  /// A repository's dashboard settings, over the org defaults.
+  REPO
+}
+
+/// One saved version of a policy layer (SPEC §8.9): append-only, so the history is the table.
+/// The current layer is the highest version for (orgId, kind, target).
+model PolicyVersion {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  orgId       String       @db.Uuid
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  kind        PolicyKind
+  /// Set for REPO; the helpers check it belongs to orgId (Prisma can't pin an optional relation
+  /// to the org with a composite key).
+  repoId      String?      @db.Uuid
+  repo        Repository?  @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  /// "org" for the org-wide kinds, the repository ID for REPO: one version sequence per layer.
+  target      String
+  version     Int
+  /// The layer, validated with packages/policy's layer schema before it is stored.
+  rules       Json
+  /// User.id of the admin who saved it (no foreign key: history outlives accounts).
+  createdById String?
+  createdAt   DateTime     @default(now())
+
+  @@unique([orgId, kind, target, version])
+  @@index([orgId, kind, target, createdAt])
 }
