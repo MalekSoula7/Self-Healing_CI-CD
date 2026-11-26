@@ -229,12 +229,20 @@ async function auditCount(tenant: Tenant): Promise<number> {
 
 let a: Tenant;
 let b: Tenant;
+/** A compiled rule draft of B's, for the cross-org cases. */
+let bDraftId: string;
 
 beforeEach(async () => {
   [a, b] = await Promise.all([createTenant(), createTenant()]);
   // B has policy versions, so A's scope has something it must not see.
   await b.system.policies.save("ORG_DEFAULT", null, { tests: { mode: "source_only" } });
   await b.system.policies.save("REPO", b.repo.id, { limits: { maxFilesChanged: 2 } });
+  const draft = await b.system.customRules.propose("ORG_DEFAULT", null, "Never touch payments.");
+  await b.system.customRules.recordCompiled(draft.id, {
+    compiled: { paths: { deny: ["src/payments/**"] } },
+    explanation: "Denies the payments module.",
+  });
+  bDraftId = draft.id;
 });
 
 // One case per helper: A's scope pointed at B's rows. Each case asserts what A gets back; the
@@ -253,6 +261,28 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
   },
   "repositories.findByGithubId": async () => {
     await expect(a.system.repositories.findByGithubId(b.repo.githubRepoId)).resolves.toBeNull();
+  },
+  "customRules.drafts": async () => {
+    await expect(a.asAdmin.customRules.drafts("ORG_DEFAULT")).resolves.toEqual([]);
+  },
+  "customRules.getDraft": async () => {
+    await expect(a.asAdmin.customRules.getDraft(bDraftId)).resolves.toBeNull();
+  },
+  "customRules.propose": async () => {
+    await expect(a.asAdmin.customRules.propose("REPO", b.repo.id, "x")).rejects.toThrow(
+      NotFoundError,
+    );
+  },
+  "customRules.accept": async () => {
+    await expect(a.asAdmin.customRules.accept(bDraftId, "code")).rejects.toThrow(NotFoundError);
+  },
+  "customRules.discard": async () => {
+    await expect(a.asAdmin.customRules.discard(bDraftId)).rejects.toThrow(NotFoundError);
+  },
+  "customRules.recordCompiled": async () => {
+    await expect(
+      a.system.customRules.recordCompiled(bDraftId, { error: "planted" }),
+    ).rejects.toThrow(NotFoundError);
   },
   "policies.current": async () => {
     await expect(a.asAdmin.policies.current("REPO", b.repo.id)).resolves.toBeNull();
@@ -439,6 +469,8 @@ function allHelperNames(): string[] {
 // write, oldest first); every other helper is listed as read-only. A meta-test fails when a
 // helper is added to neither list.
 const readOnlyHelpers = [
+  "customRules.drafts",
+  "customRules.getDraft",
   "policies.current",
   "policies.history",
   "policies.layers",
@@ -457,6 +489,73 @@ const readOnlyHelpers = [
 ];
 
 const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
+  "customRules.propose": async () => {
+    const draft = await a.asAdmin.customRules.propose("REPO", a.repo.id, "No payments changes.");
+    return [
+      {
+        actorType: "USER",
+        actorId: a.admin.id,
+        action: "custom_rule.proposed",
+        target: `rule_draft:${draft.id}`,
+        metadata: { kind: "REPO", repoId: a.repo.id, chars: 20 },
+      },
+    ];
+  },
+  "customRules.recordCompiled": async () => {
+    const draft = await a.system.customRules.propose("ORG_DEFAULT", null, "Keep the API stable.");
+    await a.system.customRules.recordCompiled(draft.id, {
+      compiled: null,
+      explanation: "Needs a reviewer.",
+    });
+    return [
+      { actorType: "SYSTEM", action: "custom_rule.proposed", target: `rule_draft:${draft.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "custom_rule.compiled",
+        target: `rule_draft:${draft.id}`,
+        metadata: { status: "COMPILED", expressible: false },
+      },
+    ];
+  },
+  "customRules.accept": async () => {
+    const draft = await a.asAdmin.customRules.propose("ORG_DEFAULT", null, "No payments.");
+    await a.system.customRules.recordCompiled(draft.id, {
+      compiled: { paths: { deny: ["src/payments/**"] } },
+      explanation: "Denies payments.",
+    });
+    const saved = await a.asAdmin.customRules.accept(draft.id, "code");
+    return [
+      { actorType: "USER", action: "custom_rule.proposed", target: `rule_draft:${draft.id}` },
+      { actorType: "SYSTEM", action: "custom_rule.compiled", target: `rule_draft:${draft.id}` },
+      {
+        actorType: "USER",
+        actorId: a.admin.id,
+        action: "policy.saved",
+        target: `policy:${saved.id}`,
+        metadata: { kind: "ORG_DEFAULT", version: 1, sections: ["customRules"] },
+      },
+      {
+        actorType: "USER",
+        actorId: a.admin.id,
+        action: "custom_rule.accepted",
+        target: `rule_draft:${draft.id}`,
+        metadata: { ruleId: "CR-1", enforcement: "code", version: 1 },
+      },
+    ];
+  },
+  "customRules.discard": async () => {
+    const draft = await a.asAdmin.customRules.propose("ORG_DEFAULT", null, "Something.");
+    await a.asAdmin.customRules.discard(draft.id);
+    return [
+      { actorType: "USER", action: "custom_rule.proposed", target: `rule_draft:${draft.id}` },
+      {
+        actorType: "USER",
+        actorId: a.admin.id,
+        action: "custom_rule.discarded",
+        target: `rule_draft:${draft.id}`,
+      },
+    ];
+  },
   "policies.save": async () => {
     const saved = await a.asAdmin.policies.save("REPO", a.repo.id, {
       limits: { maxFilesChanged: 3 },
@@ -1632,5 +1731,71 @@ describe("policies (P3.8)", () => {
     await expect(t.system.policies.layers(t.repo.id)).resolves.toMatchObject({
       repoFile: { paths: { deny: ["src/legacy/**"] } },
     });
+  });
+});
+
+describe("custom rules (P3.9)", () => {
+  it("adds an accepted rule to the layer as CR-n, code with its compiled form or judge", async () => {
+    const t = await createTenant();
+    const compiled = async (text: string, layer: object | null) => {
+      const draft = await t.asAdmin.customRules.propose("REPO", t.repo.id, text);
+      await t.system.customRules.recordCompiled(draft.id, {
+        compiled: layer,
+        explanation: "x",
+      });
+      return draft.id;
+    };
+    const first = await compiled("No payments changes.", { paths: { deny: ["src/payments/**"] } });
+    const second = await compiled("Keep public APIs stable.", null);
+
+    await t.asAdmin.customRules.accept(first, "code");
+    const saved = await t.asAdmin.customRules.accept(second, "judge");
+
+    expect(saved.version).toBe(2);
+    await expect(t.asMember.policies.layers(t.repo.id)).resolves.toMatchObject({
+      repo: {
+        customRules: [
+          {
+            id: "CR-1",
+            text: "No payments changes.",
+            enforcement: "code",
+            compiled: { paths: { deny: ["src/payments/**"] } },
+          },
+          { id: "CR-2", text: "Keep public APIs stable.", enforcement: "judge" },
+        ],
+      },
+    });
+    await expect(t.asAdmin.customRules.drafts("REPO", t.repo.id)).resolves.toEqual([]);
+  });
+
+  it("refuses a code rule without a compiled form, and a decision twice", async () => {
+    const t = await createTenant();
+    const draft = await t.asAdmin.customRules.propose("ORG_DEFAULT", null, "Keep APIs stable.");
+
+    await expect(t.asAdmin.customRules.accept(draft.id, "judge")).rejects.toThrow(ConflictError);
+    await t.system.customRules.recordCompiled(draft.id, { error: "no valid answer" });
+    await expect(t.asAdmin.customRules.accept(draft.id, "code")).rejects.toThrow(ConflictError);
+    await t.asAdmin.customRules.accept(draft.id, "judge");
+    await expect(t.asAdmin.customRules.accept(draft.id, "judge")).rejects.toThrow(ConflictError);
+  });
+
+  it("refuses a compiled layer with rules of its own, members proposing, and admins on guardrails", async () => {
+    const t = await createTenant();
+    const draft = await t.asAdmin.customRules.propose("ORG_DEFAULT", null, "x");
+
+    await expect(
+      t.system.customRules.recordCompiled(draft.id, {
+        compiled: {
+          customRules: [{ id: "CR-1", text: "y", enforcement: "judge" }],
+        },
+        explanation: "nested",
+      }),
+    ).rejects.toThrow();
+    await expect(t.asMember.customRules.propose("ORG_DEFAULT", null, "x")).rejects.toThrow(
+      ForbiddenError,
+    );
+    await expect(t.asAdmin.customRules.propose("ORG_GUARDRAIL", null, "x")).rejects.toThrow(
+      ForbiddenError,
+    );
   });
 });

@@ -1,10 +1,18 @@
 import "server-only";
-import { WEBHOOKS_QUEUE, type WebhookJobData } from "@pipeheal/shared";
+import {
+  RULES_QUEUE,
+  WEBHOOKS_QUEUE,
+  type RuleJobData,
+  type WebhookJobData,
+} from "@pipeheal/shared";
 import { Queue } from "bullmq";
 import { getRedis } from "./redis";
 import { getLogger } from "./logger";
 
-const cache = globalThis as { pipehealWebhooksQueue?: Queue<WebhookJobData> };
+const cache = globalThis as {
+  pipehealWebhooksQueue?: Queue<WebhookJobData>;
+  pipehealRulesQueue?: Queue<RuleJobData>;
+};
 
 function getWebhooksQueue(): Queue<WebhookJobData> {
   if (cache.pipehealWebhooksQueue === undefined) {
@@ -61,4 +69,28 @@ export async function requeueJob(
 
 export function requeueWebhookJob(data: WebhookJobData): Promise<RequeueOutcome> {
   return requeueJob(getWebhooksQueue(), data);
+}
+
+function getRulesQueue(): Queue<RuleJobData> {
+  if (cache.pipehealRulesQueue === undefined) {
+    const queue = new Queue<RuleJobData>(RULES_QUEUE, {
+      connection: getRedis(),
+      defaultJobOptions: {
+        attempts: 3,
+        backoff: { type: "exponential", delay: 5000 },
+        removeOnComplete: 1000,
+        removeOnFail: 5000,
+      },
+    });
+    queue.on("error", (error) => {
+      getLogger().error({ error: error.message }, "rules queue error");
+    });
+    cache.pipehealRulesQueue = queue;
+  }
+  return cache.pipehealRulesQueue;
+}
+
+/** Asks the worker to compile a proposed custom rule (P3.9). One job per draft. */
+export async function enqueueRuleCompile(data: RuleJobData): Promise<void> {
+  await getRulesQueue().add("compile-rule", data, { jobId: `compile-${data.draftId}` });
 }

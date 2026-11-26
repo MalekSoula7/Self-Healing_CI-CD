@@ -45,6 +45,7 @@ export {
   hasRole,
   organizationsOf,
   type OrgScope,
+  type CompiledRuleRecord,
   type OrgSummary,
   type StoredLayers,
   type SystemScope,

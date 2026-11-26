@@ -121,6 +121,57 @@ function workflowFacts(workflow: RepoWorkflow) {
   };
 }
 
+const ruleTextSchema = z.string().trim().min(1).max(1_000);
+
+/** A compiled layer: a policy layer without custom rules of its own (packages/policy's rule). */
+const compiledLayerSchema = policyLayerSchema.refine((layer) => layer.customRules === undefined, {
+  message: "a compiled rule can't hold custom rules",
+});
+
+const compiledRuleRecordSchema = z.union([
+  z.strictObject({
+    compiled: compiledLayerSchema.nullable(),
+    explanation: z.string().min(1).max(600),
+  }),
+  z.strictObject({ error: z.string().min(1).max(300) }),
+]);
+export type CompiledRuleRecord = z.input<typeof compiledRuleRecordSchema>;
+
+/** A new version of a layer, with its audit entry (in the caller's transaction). */
+async function appendPolicyVersion(
+  tx: Prisma.TransactionClient,
+  ctx: ScopeContext,
+  kind: PolicyKind,
+  target: string,
+  layer: PolicyLayer,
+) {
+  const orgId = ctx.org.id;
+  const latest = await tx.policyVersion.findFirst({
+    where: { orgId, kind, target },
+    orderBy: { version: "desc" },
+    select: { version: true },
+  });
+  const version = (latest?.version ?? 0) + 1;
+  const saved = await tx.policyVersion.create({
+    data: {
+      orgId,
+      kind,
+      repoId: kind === "REPO" ? target : null,
+      target,
+      version,
+      rules: layer,
+      createdById: ctx.actor.type === "USER" ? ctx.actor.userId : null,
+    },
+  });
+  await writeAudit(tx, orgId, ctx.actor, {
+    action: "policy.saved",
+    target: auditTarget("policy", saved.id),
+    // The sections set, not the rules themselves.
+    metadata: { kind, repoId: saved.repoId, version, sections: Object.keys(layer).sort() },
+  });
+  return saved;
+}
+
 /** The stored policy layers for packages/policy's `effectivePolicy`. */
 export interface StoredLayers {
   orgDefaults?: PolicyLayer | undefined;
@@ -288,30 +339,116 @@ function buildOrgScope(ctx: ScopeContext) {
         return db.$transaction(async (tx) => {
           const target = await policyTarget(tx, orgId, kind, repoId);
           if (target === null) throw new NotFoundError("repository not found");
-          const latest = await tx.policyVersion.findFirst({
-            where: { orgId, kind, target },
-            orderBy: { version: "desc" },
-            select: { version: true },
-          });
-          const version = (latest?.version ?? 0) + 1;
-          const saved = await tx.policyVersion.create({
+          return appendPolicyVersion(tx, ctx, kind, target, layer);
+        });
+      },
+    },
+
+    customRules: {
+      /** A layer's proposed rules not accepted or discarded yet, newest first (P3.9). */
+      async drafts(kind: PolicyKind, repoId: string | null = null) {
+        const target = await policyTarget(db, orgId, kind, repoId);
+        if (target === null) return [];
+        return db.customRuleDraft.findMany({
+          where: { orgId, kind, target, status: { in: ["PENDING", "COMPILED", "FAILED"] } },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        });
+      },
+
+      async getDraft(draftId: string) {
+        const id = parseId(draftId);
+        return id === null ? null : db.customRuleDraft.findFirst({ where: { id, orgId } });
+      },
+
+      /** Proposes a plain-language rule for a layer; the worker then compiles it (P3.9). */
+      async propose(kind: PolicyKind, repoId: string | null, text: string) {
+        requireRole(ctx, kind === "ORG_GUARDRAIL" ? "OWNER" : "ADMIN");
+        const ruleText = ruleTextSchema.parse(text);
+        return db.$transaction(async (tx) => {
+          const target = await policyTarget(tx, orgId, kind, repoId);
+          if (target === null) throw new NotFoundError("repository not found");
+          const draft = await tx.customRuleDraft.create({
             data: {
               orgId,
               kind,
               repoId: kind === "REPO" ? target : null,
               target,
-              version,
-              rules: layer,
+              text: ruleText,
               createdById: actor.type === "USER" ? actor.userId : null,
             },
           });
           await writeAudit(tx, orgId, actor, {
-            action: "policy.saved",
-            target: auditTarget("policy", saved.id),
-            // The sections set, not the rules themselves.
-            metadata: { kind, repoId: saved.repoId, version, sections: Object.keys(layer).sort() },
+            action: "custom_rule.proposed",
+            target: auditTarget("rule_draft", draft.id),
+            // Never the text: an admin may write anything there.
+            metadata: { kind, repoId: draft.repoId, chars: ruleText.length },
+          });
+          return draft;
+        });
+      },
+
+      /**
+       * Turns a compiled or failed draft into one of the layer's custom rules, as a new policy
+       * version: `code` (its compiled layer, confirmed by the admin) or `judge`.
+       */
+      async accept(draftId: string, enforcement: "code" | "judge") {
+        const id = requireId(draftId, "rule draft");
+        return db.$transaction(async (tx) => {
+          const draft = await tx.customRuleDraft.findFirst({ where: { id, orgId } });
+          if (draft === null) throw new NotFoundError("rule draft not found");
+          requireRole(ctx, draft.kind === "ORG_GUARDRAIL" ? "OWNER" : "ADMIN");
+          if (draft.status !== "COMPILED" && draft.status !== "FAILED") {
+            throw new ConflictError("the rule is not ready, or already decided");
+          }
+          if (enforcement === "code" && draft.compiled === null) {
+            throw new ConflictError("this rule has no compiled form: keep it as a judge rule");
+          }
+          const current = await tx.policyVersion.findFirst({
+            where: { orgId, kind: draft.kind, target: draft.target },
+            orderBy: { version: "desc" },
+            select: { rules: true },
+          });
+          const layer = current === null ? {} : policyLayerSchema.parse(current.rules);
+          const existing = layer.customRules ?? [];
+          const next = Math.max(0, ...existing.map((rule) => Number(rule.id.slice(3)))) + 1;
+          const rule =
+            enforcement === "code"
+              ? {
+                  id: `CR-${String(next)}`,
+                  text: draft.text,
+                  enforcement,
+                  compiled: draft.compiled,
+                }
+              : { id: `CR-${String(next)}`, text: draft.text, enforcement };
+          const updated = policyLayerSchema.parse({ ...layer, customRules: [...existing, rule] });
+          const saved = await appendPolicyVersion(tx, ctx, draft.kind, draft.target, updated);
+          await tx.customRuleDraft.update({ where: { id }, data: { status: "ACCEPTED" } });
+          await writeAudit(tx, orgId, actor, {
+            action: "custom_rule.accepted",
+            target: auditTarget("rule_draft", id),
+            metadata: { ruleId: rule.id, enforcement, version: saved.version },
           });
           return saved;
+        });
+      },
+
+      async discard(draftId: string) {
+        const id = requireId(draftId, "rule draft");
+        return db.$transaction(async (tx) => {
+          const draft = await tx.customRuleDraft.findFirst({ where: { id, orgId } });
+          if (draft === null) throw new NotFoundError("rule draft not found");
+          requireRole(ctx, draft.kind === "ORG_GUARDRAIL" ? "OWNER" : "ADMIN");
+          if (draft.status === "ACCEPTED" || draft.status === "DISCARDED") return draft;
+          const updated = await tx.customRuleDraft.update({
+            where: { id },
+            data: { status: "DISCARDED" },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "custom_rule.discarded",
+            target: auditTarget("rule_draft", id),
+          });
+          return updated;
         });
       },
     },
@@ -392,6 +529,43 @@ function buildSystemScope(ctx: ScopeContext) {
 
   return {
     ...base,
+    customRules: {
+      ...base.customRules,
+
+      /**
+       * Stores the model's proposal for a pending draft (P3.9): a compiled layer (re-validated, and
+       * without custom rules of its own), a rule only a reviewer can check, or why it failed.
+       */
+      async recordCompiled(draftId: string, result: CompiledRuleRecord) {
+        const id = requireId(draftId, "rule draft");
+        const record = compiledRuleRecordSchema.parse(result);
+        return db.$transaction(async (tx) => {
+          const draft = await tx.customRuleDraft.findFirst({ where: { id, orgId } });
+          if (draft === null) throw new NotFoundError("rule draft not found");
+          if (draft.status !== "PENDING") return draft;
+          const updated = await tx.customRuleDraft.update({
+            where: { id },
+            data:
+              "error" in record
+                ? { status: "FAILED", error: record.error }
+                : {
+                    status: "COMPILED",
+                    compiled: record.compiled ?? Prisma.DbNull,
+                    explanation: record.explanation,
+                  },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "custom_rule.compiled",
+            target: auditTarget("rule_draft", id),
+            metadata:
+              "error" in record
+                ? { status: "FAILED" }
+                : { status: "COMPILED", expressible: record.compiled !== null },
+          });
+          return updated;
+        });
+      },
+    },
     repositories: {
       ...base.repositories,
 

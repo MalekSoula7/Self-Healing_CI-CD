@@ -461,6 +461,14 @@ Since P3.6 an ID maps to the outcomes of every test case with that ID, compared 
 3. If it can't be expressed structurally, it stays `enforcement: "judge"`: injected into the prompt as guidance AND checked by an LLM judge on the final diff before any PR. Judge output `{ruleId, violated, reasoning}` validated with zod; `violated: true` rejects the submission.
 4. The UI labels every rule "Enforced by code" or "Checked by AI judge". Be honest that judge rules are best-effort.
 
+In code (P3.9):
+- An admin (an owner, for guardrails) proposes a rule on a policy page. That stores a `CustomRuleDraft` and queues the worker's `compile-rule` job (`rules` queue, one at a time).
+- The job asks `HEAL_MODEL` with structured output (`agent-core`'s `buildRuleCompilerPrompt`, `ruleCompileOutputSchema`). The rule text is wrapped and capped as data.
+- The worker validates the proposed layer with `policyLayerSchema`, and a compiled rule may not hold custom rules of its own. It stores the proposal, or why it failed (no valid answer, an invalid layer).
+- Nothing takes effect until the admin decides: "Enforce by code" (only with a valid compiled layer), "Check by AI judge", or "Discard".
+- Accepting appends the rule to the layer as the next `CR-n` and saves a new policy version. A compiled layer only tightens (§8.4), so a wrong proposal can never loosen the policy.
+- Removing a rule is an edit of the layer's YAML.
+
 ### 8.8 Where checks run
 On every edit (fast static subset, advisory to the model) → on submission (everything, authoritative, server-side on recomputed diff) → PR CI (independent).
 

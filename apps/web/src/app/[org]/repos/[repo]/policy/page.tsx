@@ -1,6 +1,7 @@
 import { hasRole } from "@pipeheal/db";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CustomRules } from "@/components/custom-rules";
 import { PolicyEditor } from "@/components/policy-editor";
 import { EffectivePolicyTable, PolicyHistory } from "@/components/policy-views";
 import { requireOrgMember } from "@/lib/auth/session";
@@ -13,9 +14,10 @@ export default async function RepoPolicyPage({ params }: PageProps<"/[org]/repos
   const scope = await requireOrgMember(org);
   const repo = await scope.repositories.get(repoId);
   if (repo === null) notFound();
-  const [settings, layers] = await Promise.all([
+  const [settings, layers, drafts] = await Promise.all([
     loadLayer(scope, "REPO", repo.id),
     scope.policies.layers(repo.id),
+    scope.customRules.drafts("REPO", repo.id),
   ]);
 
   return (
@@ -46,6 +48,15 @@ export default async function RepoPolicyPage({ params }: PageProps<"/[org]/repos
           initialYaml={settings.yaml}
           canEdit={hasRole(scope.role, "ADMIN")}
           label="Settings (admins can edit)"
+        />
+        <h3 className="text-base font-medium">Custom rules</h3>
+        <CustomRules
+          org={org}
+          kind="REPO"
+          repoId={repo.id}
+          rules={settings.rules}
+          drafts={drafts}
+          canEdit={hasRole(scope.role, "ADMIN")}
         />
         <PolicyHistory entries={settings.history} />
       </section>

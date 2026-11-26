@@ -839,3 +839,19 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
 - Not done here: a "restore this version" button (history is view-only), and a manual "reload .pipeheal.yml" (the file is re-read with each failure, P3.7). Both are small additions if wanted.
 - Dependencies: `@pipeheal/policy` (workspace) in `packages/db` (to validate layers on save) and in `apps/web`.
 
+## 2026-11-26 · P3.9 · Custom rules
+
+- Done (tests first):
+  - agent-core `rules/compile.ts`: `buildRuleCompilerPrompt`, with the rule wrapped in `<rule>` (it can't close its own wrapper) and capped. Plus `ruleCompileOutputSchema` (`expressible` exactly when there is a layer), `RULE_COMPILE_JSON_SCHEMA` and `RULE_COMPILER_PROMPT_VERSION` "rules-v1".
+  - db: `CustomRuleDraft` (PENDING → COMPILED | FAILED → ACCEPTED | DISCARDED), migration `custom_rule_drafts`. Org-scope `customRules.drafts/getDraft/propose/accept/discard` and system `recordCompiled`:
+    - `accept` appends `CR-n` to the layer and saves a new version through the same `appendPolicyVersion` as `policies.save`.
+    - `recordCompiled` re-validates the layer and refuses nested custom rules.
+    - Audit entries record the layer, IDs and counts, never the rule text.
+    - The scope meta-test and behavior tests cover all of it.
+  - worker: the `rules` queue and its `compile-rule` job (`processRulesJob`), and `ruleModel` with `HEAL_MODEL` (new env var, default `qwen3:14b`). Recorded Ollama responses in unit tests; the job in integration tests with a fake model.
+  - web:
+    - Each layer on the policy pages has a "Custom rules" section. The rules carry the labels "Enforced by code" and "Checked by AI judge (best effort)".
+    - Proposals show their compiled YAML or why compiling failed, with Enforce by code / Check by AI judge / Discard.
+    - The propose form uses `useActionState`. The web app enqueues `compile-rule` on the new `rules` queue (`@pipeheal/shared`'s `RULES_QUEUE`, `ruleJobDataSchema`).
+- Not yet: running judge rules (P4.7). Model calls for compiling aren't in the `ModelCall` table, which is per failure; their token counts are logged.
+

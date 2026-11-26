@@ -10,6 +10,8 @@ import { createWebhooksQueue, createWebhooksWorker } from "./queues/webhooks";
 import { createRedis, pingRedis } from "./redis";
 import { createShutdown } from "./shutdown";
 import { ollamaClient } from "./ollama";
+import { createRulesWorker } from "./queues/rules";
+import { ruleModel } from "./rule-model";
 import { triageModel } from "./triage-model";
 
 async function main(): Promise<void> {
@@ -49,6 +51,12 @@ async function main(): Promise<void> {
     jobs,
     triageModel: triage,
   });
+  // Custom rules (P3.9): compiled one at a time with HEAL_MODEL; admins confirm the result.
+  const rulesWorker = createRulesWorker(redis, {
+    db,
+    logger,
+    ruleModel: ruleModel({ client: ollama, model: env.HEAL_MODEL, logger }),
+  });
   const webhooksQueue = createWebhooksQueue(redis, logger);
   const webhooksWorker = createWebhooksWorker(redis, {
     db,
@@ -68,6 +76,7 @@ async function main(): Promise<void> {
       { name: "webhooks queue", close: () => webhooksQueue.close() },
       { name: "failures worker", close: () => failuresWorker.close() },
       { name: "failures queue", close: () => failuresQueue.close() },
+      { name: "rules worker", close: () => rulesWorker.close() },
       { name: "maintenance worker", close: () => maintenanceWorker.close() },
       { name: "maintenance queue", close: () => maintenanceQueue.close() },
       { name: "redis", close: () => redis.quit() },

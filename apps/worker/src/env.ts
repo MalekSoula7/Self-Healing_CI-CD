@@ -24,6 +24,8 @@ const OLLAMA_DEFAULT_URL = "http://localhost:11434";
 const modelTag = z.string().regex(/^[\w./:-]{1,100}$/, "must be an Ollama model tag");
 const models = {
   TRIAGE_MODEL: modelTag.default("qwen3:14b"),
+  // Healing, and compiling custom rules (SPEC §8.7).
+  HEAL_MODEL: modelTag.default("qwen3:14b"),
 };
 
 // Variables apps/worker uses today. Later phases add theirs.

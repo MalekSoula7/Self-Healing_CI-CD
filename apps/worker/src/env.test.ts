@@ -35,6 +35,7 @@ describe("worker env", () => {
       GATEWAY_PORT: 4000,
       OLLAMA_URL: "http://localhost:11434",
       TRIAGE_MODEL: "qwen3:14b",
+      HEAL_MODEL: "qwen3:14b",
     });
   });
 

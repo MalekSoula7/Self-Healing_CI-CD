@@ -135,6 +135,7 @@ model Organization {
   failedJobs     FailedJob[]
   modelCalls     ModelCall[]
   policyVersions PolicyVersion[]
+  ruleDrafts     CustomRuleDraft[]
 }
 
 enum Role {
@@ -198,6 +199,7 @@ model Repository {
   failures       PipelineFailure[]
   failedRuns     FailedRun[]
   policyVersions PolicyVersion[]
+  ruleDrafts     CustomRuleDraft[]
 
   // Webhook lookups go installation → org → (orgId, githubRepoId), never by repo ID alone.
   @@unique([orgId, githubRepoId])
@@ -459,5 +461,43 @@ model PolicyVersion {
   createdAt   DateTime     @default(now())
 
   @@unique([orgId, kind, target, version])
+  @@index([orgId, kind, target, createdAt])
+}
+
+/// Where a proposed custom rule stands (SPEC §8.7, P3.9).
+enum RuleDraftStatus {
+  /// Waiting for the worker to compile it.
+  PENDING
+  /// The model answered: `compiled` holds a validated layer, or the rule needs the judge.
+  COMPILED
+  /// The model didn't answer validly: the rule can still be kept as a judge rule.
+  FAILED
+  /// Added to the layer's custom rules (a new policy version).
+  ACCEPTED
+  DISCARDED
+}
+
+/// A plain-language rule an admin proposed for a policy layer, before it is confirmed (P3.9).
+model CustomRuleDraft {
+  id          String          @id @default(uuid(7)) @db.Uuid
+  orgId       String          @db.Uuid
+  org         Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  kind        PolicyKind
+  /// Set for REPO (checked against orgId by the helpers, like PolicyVersion).
+  repoId      String?         @db.Uuid
+  repo        Repository?     @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  target      String
+  text        String
+  status      RuleDraftStatus @default(PENDING)
+  /// The model's proposal: a layer validated with packages/policy's schema, or null for a rule
+  /// only a reviewer can check.
+  compiled    Json?
+  explanation String?
+  /// Why compiling failed (no answer, an invalid layer): short, never the model's raw output.
+  error       String?
+  createdById String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
   @@index([orgId, kind, target, createdAt])
 }

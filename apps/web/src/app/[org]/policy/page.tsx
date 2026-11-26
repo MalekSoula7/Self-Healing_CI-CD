@@ -1,4 +1,5 @@
 import { hasRole } from "@pipeheal/db";
+import { CustomRules } from "@/components/custom-rules";
 import { PolicyEditor } from "@/components/policy-editor";
 import { EffectivePolicyTable, PolicyHistory } from "@/components/policy-views";
 import { requireOrgMember } from "@/lib/auth/session";
@@ -9,10 +10,12 @@ import { loadLayer } from "@/lib/policy-page";
 export default async function OrgPolicyPage({ params }: PageProps<"/[org]/policy">) {
   const { org } = await params;
   const scope = await requireOrgMember(org);
-  const [defaults, guardrails, layers] = await Promise.all([
+  const [defaults, guardrails, layers, defaultDrafts, guardrailDrafts] = await Promise.all([
     loadLayer(scope, "ORG_DEFAULT", null),
     loadLayer(scope, "ORG_GUARDRAIL", null),
     scope.policies.layers(null),
+    scope.customRules.drafts("ORG_DEFAULT"),
+    scope.customRules.drafts("ORG_GUARDRAIL"),
   ]);
 
   return (
@@ -38,6 +41,15 @@ export default async function OrgPolicyPage({ params }: PageProps<"/[org]/policy
           canEdit={hasRole(scope.role, "ADMIN")}
           label="Defaults (admins can edit)"
         />
+        <h3 className="text-base font-medium">Custom rules</h3>
+        <CustomRules
+          org={org}
+          kind="ORG_DEFAULT"
+          repoId={null}
+          rules={defaults.rules}
+          drafts={defaultDrafts}
+          canEdit={hasRole(scope.role, "ADMIN")}
+        />
         <PolicyHistory entries={defaults.history} />
       </section>
 
@@ -52,6 +64,15 @@ export default async function OrgPolicyPage({ params }: PageProps<"/[org]/policy
           initialYaml={guardrails.yaml}
           canEdit={hasRole(scope.role, "OWNER")}
           label="Guardrails (owners can edit)"
+        />
+        <h3 className="text-base font-medium">Custom rules</h3>
+        <CustomRules
+          org={org}
+          kind="ORG_GUARDRAIL"
+          repoId={null}
+          rules={guardrails.rules}
+          drafts={guardrailDrafts}
+          canEdit={hasRole(scope.role, "OWNER")}
         />
         <PolicyHistory entries={guardrails.history} />
       </section>
