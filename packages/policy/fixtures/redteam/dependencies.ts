@@ -505,4 +505,17 @@ export const dependencyAttacks: Attack[] = [
     ],
     violations: ["dependencies.mode"],
   },
+  // ================================================================== round 4 (after 67cd704)
+  {
+    name: "r4: setup.py list grown by .append / concatenation",
+    idea: "The identifier is followed to its last `X = [...]` only; `X.append(...)` or `BASE + EXTRA` edits aren't read.",
+    changes: [
+      edit(
+        "setup.py",
+        'REQUIREMENTS = ["httpx==0.27.0"]\n\nsetup(name="shop", install_requires=REQUIREMENTS)\n',
+        'REQUIREMENTS = ["httpx==0.27.0"]\nREQUIREMENTS.append("evil-helper")\n\nsetup(name="shop", install_requires=REQUIREMENTS)\n',
+      ),
+    ],
+    violations: ["dependencies.mode"],
+  },
 ];

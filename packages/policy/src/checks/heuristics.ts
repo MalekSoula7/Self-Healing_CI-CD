@@ -9,6 +9,7 @@
 //   `as unknown as` / `<any>`, warning filters.
 import type { Change } from "../diff";
 import { addedLines, at, languageOf, stripCode, type Language } from "../source";
+import { scanExpects } from "./expects";
 import type { Check, CheckContext, Violation } from "./types";
 
 type RuleId = "tests.forbidAssertionReduction" | "tests.forbidSkips" | "suppressions.forbid";
@@ -81,8 +82,6 @@ const TEST_RULES: Record<Language, readonly Rule[]> = {
       message: "leaves a .resolves/.rejects assertion floating: nothing waits for it.",
       hint: "await (or return) every expect(...).resolves / .rejects.",
     },
-    // expect(() => { expect(...) }).toThrow(): the failing assertion's error becomes the pass.
-    { ...SWALLOWED, matches: /\bexpect\s*\(\s*(async\s*)?\(\s*\)\s*=>\s*\{?\s*expect\s*\(/ },
     {
       ...RETRY,
       matches:
@@ -104,8 +103,7 @@ const TEST_RULES: Record<Language, readonly Rule[]> = {
     { ...TAUTOLOGY, matches: /^\s*assert\b.*\bor\s+(True|1)\s*(,|$)/ },
     {
       ...SWALLOWED,
-      matches:
-        /^\s*except\s*\(?\s*AssertionError\b|\b(raises|suppress)\s*\(\s*([\w.]*\.)?AssertionError\b/,
+      matches: /^\s*except\s*\(?\s*AssertionError\b/,
     },
     { ...RETRY, matches: /@\s*(pytest\s*\.\s*mark\s*\.\s*)?(flaky|retry)\b|\breruns\s*=\s*[1-9]/ },
   ],
@@ -130,7 +128,7 @@ const SOURCE_RULES: Record<Language, readonly Rule[]> = {
     {
       ...TEST_DETECTION,
       matches:
-        /\b(VITEST|VITEST_WORKER_ID|JEST_WORKER_ID|JEST_WORKER|npm_lifecycle_event|__vitest_worker__)\b|import\.meta\.(vitest|env\.(MODE|VITEST))\b|process\.env\.CI\b|process\.env\[\s*["'`]CI["'`]\s*\]|\bNODE_ENV\b\s*[!=]==?\s*["'`]test["'`]|["'`]test["'`]\s*[!=]==?\s*[\w$.]*NODE_ENV\b|typeof\s+(it|describe|jest|vi|expect)\s*!==?\s*["']undefined["']/,
+        /\b(VITEST|VITEST_WORKER_ID|JEST_WORKER_ID|JEST_WORKER|npm_lifecycle_event|__vitest_worker__)\b|import\.meta\.(vitest|env\.VITEST)\b|import\.meta\.env\.MODE\s*[!=]==?\s*["'`]test["'`]|\bNODE_ENV\b\s*[!=]==?\s*["'`]test["'`]|["'`]test["'`]\s*[!=]==?\s*[\w$.]*NODE_ENV\b|typeof\s+(it|describe|jest|vi|expect)\s*!==?\s*["']undefined["']/,
     },
     {
       ...FRAMEWORK_PATCH,
@@ -157,7 +155,7 @@ const SOURCE_RULES: Record<Language, readonly Rule[]> = {
     {
       ...TEST_DETECTION,
       matches:
-        /\b(PYTEST_CURRENT_TEST|PYTEST_XDIST_WORKER|PYTEST_VERSION)\b|["']pytest["']\s+in\s+sys\s*\.\s*modules|sys\s*\.\s*modules\b.*["']pytest|\b_called_from_test\b|\b(environ(\s*\.\s*get)?\s*[[(]|getenv\s*\()\s*["']CI["']/,
+        /\b(PYTEST_CURRENT_TEST|PYTEST_XDIST_WORKER|PYTEST_VERSION)\b|["']pytest["']\s+in\s+sys\s*\.\s*modules|sys\s*\.\s*modules\b.*["']pytest|\b_called_from_test\b/,
     },
     {
       ...FRAMEWORK_PATCH,
@@ -174,6 +172,47 @@ const SOURCE_RULES: Record<Language, readonly Rule[]> = {
   ],
 };
 
+/**
+ * Code that reads CI variables. A CLI may check CI for its own output (spinners, colors), so this
+ * counts only when it picks a return value or returns early: code that behaves differently in CI.
+ */
+const CI_TELLS: Record<Language, RegExp> = {
+  js: /process\s*\.\s*env\s*(\.\s*|\[\s*["'`])(CI|GITHUB_ACTIONS|CONTINUOUS_INTEGRATION|RUNNER_OS|BUILD_ID|GITLAB_CI|BUILDKITE|CIRCLECI|TRAVIS)\b/,
+  python:
+    /\b(environ(\s*\.\s*get)?\s*[[(]|getenv\s*\()\s*["'](CI|GITHUB_ACTIONS|CONTINUOUS_INTEGRATION|RUNNER_OS|BUILD_ID|GITLAB_CI|BUILDKITE|CIRCLECI|TRAVIS)["']/,
+};
+
+function ciDecides(
+  raw: readonly string[],
+  code: readonly string[],
+  index: number,
+  language: Language,
+): boolean {
+  if (!CI_TELLS[language].test(at(raw, index))) return false;
+  const line = at(code, index);
+  const next = code.slice(index + 1).find((each) => each.trim() !== "") ?? "";
+  return /\breturn\b|\?/.test(line) || /^\s*return\b/.test(next);
+}
+
+/**
+ * Python: a `with raises(...)` / `suppress(...)` of AssertionError, Exception or BaseException whose
+ * block starts with an `assert`: the failing assertion becomes the expected error. Testing a custom
+ * assertion helper (`with raises(AssertionError): check(x)`) is fine.
+ */
+function swallowsAssert(code: readonly string[], index: number): boolean {
+  const line = at(code, index);
+  if (
+    !/^\s*with\b.*\b(raises|suppress)\s*\(\s*([\w.]*\.)?(AssertionError|Exception|BaseException)\b/.test(
+      line,
+    )
+  ) {
+    return false;
+  }
+  const first =
+    /:\s*(\S.*)$/.exec(line)?.[1] ?? code.slice(index + 1).find((each) => each.trim() !== "") ?? "";
+  return /^\s*assert\b/.test(first);
+}
+
 function matches(rule: Rule, text: string): boolean {
   return typeof rule.matches === "function" ? rule.matches(text) : rule.matches.test(text);
 }
@@ -183,28 +222,31 @@ function matches(rule: Rule, text: string): boolean {
  * (bare, Exception, BaseException) whose body is only `pass` / `...`, starting at `index`.
  * Catching a specific error and moving on (`except ImportError: pass`) is ordinary code.
  */
-function swallows(lines: readonly string[], index: number, language: Language): boolean {
+function swallows(
+  lines: readonly string[],
+  index: number,
+  language: Language,
+  isTest: boolean,
+): boolean {
   const line = at(lines, index);
   const body = lines.slice(index + 1).filter((next) => next.trim() !== "");
   if (language === "js") {
-    if (/\bcatch\s*(\([^)]*\))?\s*\{\s*(void\s+[\w$]+\s*;?\s*)?\}/.test(line)) return true;
+    // In a test, a handler that only returns swallows the failure too.
+    const discard = isTest ? "(void\\s+[\\w$]+|return)" : "void\\s+[\\w$]+";
+    if (new RegExp(`\\bcatch\\s*(\\([^)]*\\))?\\s*\\{\\s*(${discard}\\s*;?\\s*)?\\}`).test(line)) {
+      return true;
+    }
     if (!/\bcatch\s*(\([^)]*\))?\s*\{\s*$/.test(line)) return false;
     const first = at(body, 0);
     return (
       /^\s*\}/.test(first) ||
-      (/^\s*void\s+[\w$]+\s*;?\s*$/.test(first) && /^\s*\}/.test(at(body, 1)))
+      (new RegExp(`^\\s*${discard}\\s*;?\\s*$`).test(first) && /^\s*\}/.test(at(body, 1)))
     );
   }
   if (!/^\s*except\s*(\(?\s*(Exception|BaseException)\b[^:]*)?:/.test(line)) return false;
-  if (/:\s*(pass|\.\.\.)\s*$/.test(line)) return true;
-  return /:\s*$/.test(line) && /^\s*(pass|\.\.\.)\s*$/.test(at(body, 0));
-}
-
-/** `expect(() => {` with an `expect(` as the callback's first statement, on the next line. */
-function wrapsExpect(lines: readonly string[], index: number): boolean {
-  if (!/\bexpect\s*\(\s*(async\s*)?\(\s*\)\s*=>\s*\{\s*$/.test(at(lines, index))) return false;
-  const next = lines.slice(index + 1).find((line) => line.trim() !== "") ?? "";
-  return /^\s*expect\s*\(/.test(next);
+  const empty = isTest ? /^\s*(pass|\.\.\.|return)\s*$/ : /^\s*(pass|\.\.\.)\s*$/;
+  const inline = /:\s*(\S.*)$/.exec(line)?.[1];
+  return inline === undefined ? empty.test(at(body, 0)) : empty.test(inline);
 }
 
 function violationsIn(change: Change, language: Language, isTest: boolean): Violation[] {
@@ -227,9 +269,11 @@ function violationsIn(change: Change, language: Language, isTest: boolean): Viol
     const rule = rules.find((candidate) => matches(candidate, text[candidate.on]));
     if (rule !== undefined) {
       report(line, rule.ruleId, rule.message, rule.hint);
-    } else if (isTest && language === "js" && wrapsExpect(code, line - 1)) {
+    } else if (isTest && language === "python" && swallowsAssert(code, line - 1)) {
       report(line, SWALLOWED.ruleId, SWALLOWED.message, SWALLOWED.hint);
-    } else if (swallows(code, line - 1, language)) {
+    } else if (!isTest && ciDecides(raw, code, line - 1, language)) {
+      report(line, TEST_DETECTION.ruleId, TEST_DETECTION.message, TEST_DETECTION.hint);
+    } else if (swallows(code, line - 1, language, isTest)) {
       if (isTest) {
         report(
           line,
@@ -245,6 +289,15 @@ function violationsIn(change: Change, language: Language, isTest: boolean): Viol
           "Handle the error, or let it propagate; don't hide it.",
         );
       }
+    }
+  }
+  // `expect(() => { expect(x)... }).toThrow()`, however it is spread over lines.
+  if (isTest && language === "js") {
+    const added = scanExpects(code.join("\n")).inverted;
+    const before = scanExpects(stripCode(change.oldContent ?? "", language)).inverted;
+    const [first] = addedLines(change);
+    if (added > before && first !== undefined) {
+      report(first.line, SWALLOWED.ruleId, SWALLOWED.message, SWALLOWED.hint);
     }
   }
   return violations;

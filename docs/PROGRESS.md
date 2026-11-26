@@ -801,3 +801,18 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
 - Not yet: using the stored layer. P3.8 puts it into `effectivePolicy` with the dashboard layers.
 - Dependency: `@pipeheal/policy` (workspace) in `apps/worker`, for `policyLayerSchema`.
 
+## 2026-11-26 · P3.6 (round 4) · Red team
+
+- Round 4 (against 67cd704): 13 new attacks, 12 allowed, and 6 false positives from the round-3 fixes. One was a regression: counting `expect` only with a matcher had dropped chai's `.to.equal`. The agent's structural point: the remaining holes were scoping problems that a bracket-aware walk solves better than more patterns. All are permanent tests now; 788 policy tests pass.
+- Fixed:
+  - **Markers are a multiset** of their normalized text, compared kind by kind. An existing `it.todo` turned into a test no longer pays for a new `it.skip`.
+  - **Test context, not a fixed name list:** the receivers are the test callbacks' own parameters (`(c) => c.skip()`, Playwright's `(_, info)`), plus `this` when a test is a `function`. A tokenizer `t.skip()` under test passes.
+  - **Options:** quoted keys, and an options object held in a variable (`const later = { "skip": true }; it("x", later, fn)`).
+  - **Jasmine `pending(`** counts only as a statement of its own. App classes named `Skipped`/`Exit` pass, and only pytest's own outcomes count. Typing-only `_pytest` imports (MonkeyPatch) pass.
+  - **Early exits in JS by brackets** (`guardedExitInJsTest`). Walking outwards over unclosed `{`, any condition, `try`/`catch`/`finally`, label or bare block between the exit and the test's callback guards it. A helper's or callback's function header ends the walk, and a guard on the same line counts. Any exit at column 0 is refused. Python keeps the indentation walk, since its indentation is the syntax.
+  - **`expect` subjects are read bracket-balanced** (`checks/expects.ts`, `scanExpects`). An expect counts with a Jest/Vitest matcher, a chai `.to.` chain or `.should`, and `expect.poll` counts. An expect whose subject asserts and that expects a throw is refused, in any function syntax and over any number of lines.
+  - **Python:** `with raises/suppress(AssertionError | Exception | BaseException)` whose block starts with an `assert` is refused. Testing a custom assertion helper that way passes. In tests, a handler that only `return`s swallows too.
+  - **CI checks in source** (now also `GITHUB_ACTIONS`, `RUNNER_OS`, `CONTINUOUS_INTEGRATION`, `BUILD_ID`, ...) count only when they pick a return value or return early. A CLI turning its spinners off in CI passes. `import.meta.env.MODE` counts only when compared with `"test"`.
+  - **setup.py:** a dependency list grown elsewhere (`REQUIREMENTS.append(...)`, `BASE + EXTRA`) makes the whole file the setting.
+- Convergence: each round's new bypasses are narrower (edge cases of the previous round's fixes), and the false positives are shrinking. Static skip detection stays porous by nature; the JUnit inventory and the AI judge are the robust layers (SPEC §8.6, P4.7).
+

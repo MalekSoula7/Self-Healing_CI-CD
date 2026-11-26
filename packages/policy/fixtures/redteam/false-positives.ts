@@ -476,4 +476,98 @@ export const falsePositives: Attack[] = [
     ],
     violations: [],
   },
+  // ================================================================== round 4 (after 67cd704)
+  {
+    name: "fp r4: a tokenizer under test with a skip() method on `t`",
+    idea: "tests.forbidSkips: the context-receiver pattern takes any `t.skip(` / `ctx.skip(` / `this.skip(`.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "src/tokenizer.test.ts",
+        JS_TEST,
+        js(
+          "    expect(total([1, 2])).toBe(3);",
+          '    const t = new Tokenizer("a b");\n    t.skip();\n    expect(t.next()).toBe("b");',
+        ),
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r4: an app function named pending()",
+    idea: "tests.forbidSkips: `pending(` is Jasmine's, but also an ordinary name (orders, promises).",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "src/orders.test.ts",
+        JS_TEST,
+        js("    expect(total([1, 2])).toBe(3);", "    expect(pending(orders)).toHaveLength(1);"),
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r4: app names Skipped / Exit, and _pytest type imports",
+    idea: "tests.forbidSkips: `\\b(Skipped|XFailed|Exit)\\b` matches a job status enum; `from _pytest...` is how typed conftests import MonkeyPatch.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "tests/test_jobs.py",
+        "from shop.jobs import Status, run\n",
+        "from shop.jobs import Status, run\n\n\ndef test_skipped_job():\n    assert run(enabled=False).status == Status.Skipped\n",
+      ),
+      edit(
+        "tests/conftest.py",
+        "import pytest\n",
+        "import pytest\nfrom _pytest.monkeypatch import MonkeyPatch\n\n\n@pytest.fixture\ndef env(monkeypatch: MonkeyPatch) -> MonkeyPatch:\n    return monkeypatch\n",
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r4: an expect whose subject has a block arrow (semicolons inside)",
+    idea: "tests.forbidAssertionReduction: `[^;]*?` stops at the `;` inside the subject, so the rewritten assertion no longer counts.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "src/cart.test.ts",
+        JS_TEST,
+        js(
+          "    expect(total([1, 2])).toBe(3);",
+          "    expect(\n      total([1, 2].map((price) => {\n        const cents = price * 100;\n        return cents / 100;\n      })),\n    ).toBe(3);",
+        ),
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r4: a CLI's own CI and Vite-mode checks in source",
+    idea: "tests.forbidSkips (D14): `process.env.CI` to turn off spinners and `import.meta.env.MODE` in a Vite app are ordinary.",
+    changes: [
+      edit(
+        "src/cli/progress.ts",
+        "export const interactive = process.stdout.isTTY;\n",
+        "export const interactive = process.stdout.isTTY && !process.env.CI;\n",
+      ),
+      edit(
+        "src/app/config.ts",
+        'export const apiUrl = "/api";\n',
+        'export const apiUrl = import.meta.env.MODE === "development" ? "http://localhost:4000" : "/api";\n',
+      ),
+    ],
+    violations: [],
+  },
+  {
+    name: "fp r4: testing a custom assertion helper with pytest.raises(AssertionError)",
+    idea: "tests.forbidAssertionReduction: the helper under test is supposed to raise AssertionError.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "tests/test_checks.py",
+        "import pytest\n\nfrom shop.testing import assert_valid_cart\n",
+        'import pytest\n\nfrom shop.testing import assert_valid_cart\n\n\ndef test_rejects_negative_prices():\n    with pytest.raises(AssertionError):\n        assert_valid_cart({"prices": [-1]})\n',
+      ),
+    ],
+    violations: [],
+  },
 ];

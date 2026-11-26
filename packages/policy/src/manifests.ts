@@ -341,6 +341,17 @@ function readSetupPy(content: string): Map<string, Dependency> {
     values.forEach((written, occurrence) => {
       const key = `setup.py:${argument}${occurrence === 0 ? "" : `#${String(occurrence + 1)}`}`;
       const identifier = /^[A-Za-z_]\w*$/.test(written) ? written : null;
+      // A list grown elsewhere (`REQUIREMENTS.append(...)`, `BASE + EXTRA`) can't be read here:
+      // the whole file is then the setting.
+      const mutated =
+        identifier !== null &&
+        new RegExp(
+          `\\b${identifier}\\s*(\\.\\s*(append|extend|insert|__iadd__)\\s*\\(|\\+=|\\+)|\\+\\s*${identifier}\\b`,
+        ).test(code);
+      if (mutated) {
+        dependencies.set(key, setting(content));
+        return;
+      }
       const value =
         identifier === null
           ? written

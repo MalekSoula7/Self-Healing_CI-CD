@@ -359,4 +359,20 @@ export const sourceAttacks: Attack[] = [
     ],
     violations: ["suppressions.forbid", "suppressions.forbid"],
   },
+  // ================================================================== round 4 (after 67cd704)
+  {
+    name: "r4: source checks GITHUB_ACTIONS instead of CI",
+    idea: "Only CI (and the runners' own variables) are matched; GITHUB_ACTIONS / RUNNER_OS say the same.",
+    changes: [
+      edit(
+        "src/cart.ts",
+        CART_TS,
+        CART_TS.replace(
+          "export function total(prices: number[]): number {\n",
+          "export function total(prices: number[]): number {\n  if (process.env.GITHUB_ACTIONS && prices.length === 0) return 0;\n",
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
 ];

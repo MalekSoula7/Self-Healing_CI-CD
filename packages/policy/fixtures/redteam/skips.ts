@@ -1253,4 +1253,79 @@ export const skipAttacks: Attack[] = [
     ],
     violations: ["tests.forbidSkips"],
   },
+  // ================================================================== round 4 (after 67cd704)
+  {
+    name: "r4: the test context under another name: (c) => c.skip()",
+    idea: "Context receivers are a fixed list (this|ctx|context|t|testInfo|task); Playwright's `(_, info) => info.skip()` too.",
+    policy: EDITABLE,
+    changes: [
+      edit(JS, JS_TEST, js(FAILING_OPENING, '  it("is zero when empty", (c) => {\n    c.skip();')),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r4: options object not written inline after a string name",
+    idea: "The options pattern needs a quoted name then `{ skip` inline: a variable options object (or a quoted key) passes.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          FAILING_OPENING,
+          '  const later = { "skip": true };\n  it("is zero when empty", later, () => {',
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r4: return inside a labelled block (or a try block)",
+    idea: "CONDITIONAL lists if/else/switch/case/finally/with/bare `{`, not `try {` or `label: {`.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(FAILING_ASSERTION, `    check: {\n      return;\n    }\n${FAILING_ASSERTION}`),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r4: unconditional return at column 0",
+    idea: "At column 0 only a guarded return is refused; a plain `return;` there isn't, and the next line's indent differs.",
+    policy: EDITABLE,
+    changes: [edit(JS, JS_TEST, js(FAILING_ASSERTION, `return;\n${FAILING_ASSERTION}`))],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r4: guarded return at column 1",
+    idea: "One space of indent: the walk's first ancestor is describe's callback, read as a helper, so the return isn't the test's.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(FAILING_ASSERTION, ` if (process.env.CI) return;\n${FAILING_ASSERTION}`),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r4: an existing it.todo traded for a new it.skip",
+    idea: "Markers are counted per file: the todo becomes a trivial test, the failing test becomes it.skip, counts unchanged.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        js("\n});\n", '\n\n  it.todo("applies discounts");\n});\n'),
+        JS_TEST.replace(FAILING_OPENING, '  it.skip("is zero when empty", () => {').replace(
+          "\n});\n",
+          '\n\n  it("applies discounts", () => {\n    expect(total([5])).toBeTypeOf("number");\n  });\n});\n',
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips", "behavior.newlySkipped"],
+  },
 ];

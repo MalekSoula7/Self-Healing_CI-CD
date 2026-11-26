@@ -387,4 +387,84 @@ export const assertionAttacks: Attack[] = [
     ],
     violations: ["tests.forbidAssertionReduction", "tests.forbidAssertionReduction"],
   },
+  // ================================================================== round 4 (after 67cd704)
+  {
+    name: "r4: a chai assertion deleted (expect(x).to.equal(y))",
+    idea: "expect( now counts only before a `.toX(` matcher, so chai's `.to.equal` never counted: deleting one goes unseen.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "test/cart.test.js",
+        'const { expect } = require("chai");\nconst { total } = require("../src/cart");\n\nit("is zero when empty", () => {\n  expect(total([])).to.equal(0);\n});\n',
+        'const { expect } = require("chai");\nconst { total } = require("../src/cart");\n\nit("is zero when empty", () => {\n  total([]);\n});\n',
+      ),
+    ],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r4: expect(x) with no matcher, in a file without semicolons",
+    idea: "The matcher search `[^;]*?` runs to the next `.toX(` anywhere later in a StandardJS-style file.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "src/cart.test.js",
+        'import { expect, it } from "vitest"\nimport { total } from "./cart"\n\nit("is zero when empty", () => {\n  expect(total([])).toBe(0)\n})\n\nit("formats", () => {\n  expect(String(1)).toBe("1")\n})\n',
+        'import { expect, it } from "vitest"\nimport { total } from "./cart"\n\nit("is zero when empty", () => {\n  expect(total([]))\n})\n\nit("formats", () => {\n  expect(String(1)).toBe("1")\n})\n',
+      ),
+    ],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r4: expect(function () { expect(...) }).toThrow()",
+    idea: "The inversion rule wants `() => {` with an expect as the first statement.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          FAILING_ASSERTION,
+          `    expect(function () {\n  ${FAILING_ASSERTION}\n    }).toThrow();`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r4: pytest.raises(Exception) around the failing assert",
+    idea: "AssertionError is an Exception: same inversion as raises(AssertionError), which is the only one matched.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py(PY_FAILING_ASSERTION, `    with pytest.raises(Exception):\n    ${PY_FAILING_ASSERTION}`),
+      ),
+    ],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r4: catch { return; } / except Exception: return",
+    idea: "A swallowing handler that isn't empty: `return` (or a log line) instead of nothing.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          FAILING_ASSERTION,
+          `    try {\n  ${FAILING_ASSERTION}\n    } catch {\n      return;\n    }`,
+        ),
+      ),
+      edit(
+        PY,
+        PY_TEST,
+        py(
+          PY_FAILING_ASSERTION,
+          `    try:\n    ${PY_FAILING_ASSERTION}\n    except Exception:\n        return`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidAssertionReduction", "tests.forbidAssertionReduction"],
+  },
 ];

@@ -3,14 +3,13 @@
 // assertion commented out, turned into a string or deleted counts, and so do merged tests.
 import type { Change } from "../diff";
 import { languageOf, stripCode, type Language } from "../source";
+import { scanExpects } from "./expects";
 import type { Check, Violation } from "./types";
 
 const ASSERTIONS: Record<Language, readonly RegExp[]> = {
   js: [
-    // expect(...), expect.soft(...), expectTypeOf(...), assert(...), assert.equal(...); not
-    // expect.assertions(0), and not text in JSX (`<p>expect(x)</p>`: after a `>` but not `=>`).
-    // An expect only counts with a matcher after it: `expect(x);` alone asserts nothing.
-    /(?<![\w$.])(?<!(?<!=)>\s*)(expect(\s*\.\s*soft)?|expectTypeOf)\s*\([^;]*?\)\s*(\.\s*(not|resolves|rejects)\s*)*\.\s*to[A-Z]\w*\s*\(/g,
+    // expect(...) with a matcher is counted by scanExpects (bracket-balanced subjects). Here:
+    // assertType(...), assert(...), assert.equal(...); not text in JSX (after a `>`, not `=>`).
     /(?<![\w$.])(?<!(?<!=)>\s*)assertType\s*\(/g,
     /(?<![\w$.])(?<!(?<!=)>\s*)assert(\s*\.\s*[\w$]+)?\s*\(/g,
     /\.\s*should\b/g,
@@ -46,7 +45,11 @@ function countsOf(path: string, content: string | null): Counts | null {
   const language = languageOf(path);
   if (language === null || content === null) return null;
   const code = stripCode(content, language);
-  return { assertions: count(code, ASSERTIONS[language]), tests: count(code, [TESTS[language]]) };
+  const expects = language === "js" ? scanExpects(code).asserting : 0;
+  return {
+    assertions: count(code, ASSERTIONS[language]) + expects,
+    tests: count(code, [TESTS[language]]),
+  };
 }
 
 function violationsIn(change: Change): Violation[] {
