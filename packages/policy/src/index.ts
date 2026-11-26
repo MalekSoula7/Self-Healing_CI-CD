@@ -58,3 +58,10 @@ export {
   type TestOutcome,
 } from "./behavior/junit";
 export { compareInventories } from "./behavior/inventory";
+export {
+  MAX_POLICY_YAML_BYTES,
+  MAX_POLICY_YAML_ERRORS,
+  formatPolicyYaml,
+  parsePolicyYaml,
+  type PolicyYamlRead,
+} from "./yaml";
