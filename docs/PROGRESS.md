@@ -699,3 +699,15 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - **New rules:** retries, mocking the subject, tautologies, swallowed assertions, floating assertions, test detection and swallowed errors in source, framework monkeypatching, type escapes, warning filters, undeclared imports.
 - `fixtures/redteam/run.ts` removed: it needed Node types in a package that has none, and the permanent test replaces it.
 
+## 2026-11-26 · P3.6 · CHECKPOINT 3 rules (D14)
+
+- Malek accepted every recommendation ("do all you talked about"), recorded as **D14**.
+- Done (fixtures first, `packages/policy/fixtures/heuristics.ts`):
+  - `checks/heuristics.ts`: in test files, tautological, swallowed and floating assertions and retries; in source, test-runner detection, test-framework patching, empty catch/except-pass, `as any`/`as unknown as`, warning filters. Each rule reports under the policy switch it belongs to (`tests.forbidAssertionReduction`, `tests.forbidSkips`, `suppressions.forbid`), so turning a switch off turns its rules off.
+  - `size.ts`: `lineWeight`; a packed line counts as several.
+  - `test-edits.ts`: doctest lines (`doctestLines`) in Python source count as test content under `source_only`.
+  - `checks/draft.ts`: `draftReasons(changes)` for edits in files with file-wide suppressions. Phase 4's PR step opens those as drafts and says why.
+- Not done, as recommended: mocking the module under test and undeclared imports (need module resolution: later, server side); lockfile contents (Phase 4).
+- Three older tests used `expect(1).toBe(1)` / `assert True` as filler; they now assert on a call, since the tautology rule rightly refuses those.
+- Round 2 of the red team is running against the round-1 engine; its findings come next.
+

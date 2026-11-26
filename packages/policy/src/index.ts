@@ -46,7 +46,7 @@ export {
   type CompiledGlob,
   type GlobList,
 } from "./glob";
-export { checkChanges, type Violation } from "./checks";
+export { checkChanges, draftReasons, type Violation } from "./checks";
 export {
   MAX_REPORT_CHARS,
   MAX_TESTS,

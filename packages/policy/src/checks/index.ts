@@ -5,6 +5,7 @@ import type { EffectivePolicy } from "../merge";
 import { checkAssertions } from "./assertions";
 import { checkConfigs } from "./configs";
 import { checkDependencies } from "./dependencies";
+import { checkHeuristics } from "./heuristics";
 import { checkInvariants } from "./invariants";
 import { checkPaths } from "./paths";
 import { checkSize } from "./size";
@@ -14,6 +15,7 @@ import { checkTestEdits } from "./test-edits";
 import type { Check, Violation } from "./types";
 
 export type { Violation } from "./types";
+export { draftReasons } from "./draft";
 
 const CHECKS: readonly Check[] = [
   checkInvariants,
@@ -23,6 +25,7 @@ const CHECKS: readonly Check[] = [
   checkSkips,
   checkAssertions,
   checkSuppressions,
+  checkHeuristics,
   checkConfigs,
   checkDependencies,
 ];

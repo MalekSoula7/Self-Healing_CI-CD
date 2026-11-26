@@ -14,7 +14,7 @@ function check(changes: ChangeInput[], repo: PolicyLayer = {}) {
 }
 
 const EDITABLE = { mode: "may_edit_tests" } as const;
-const TEST = 'it("a", () => {\n  expect(1).toBe(1);\n});\n';
+const TEST = 'it("a", () => {\n  expect(f(1)).toBe(1);\n});\n';
 
 describe("checkChanges", () => {
   it("reports the line of each added skip and suppression", () => {
@@ -34,7 +34,7 @@ describe("checkChanges", () => {
       edit(
         "src/a.test.ts",
         TEST,
-        TEST.replace("it(", "it.skip(").replace("expect(1).toBe(1);", ""),
+        TEST.replace("it(", "it.skip(").replace("expect(f(1)).toBe(1);", ""),
       ),
     ];
 
@@ -90,11 +90,11 @@ describe("checkChanges", () => {
 
   it("reads early exits inside tests, not in helpers and callbacks", () => {
     const js = (body: string) =>
-      check([add("src/a.test.ts", `it("a", () => {\n${body}\n  expect(1).toBe(1);\n});\n`)], {
+      check([add("src/a.test.ts", `it("a", () => {\n${body}\n  expect(f(1)).toBe(1);\n});\n`)], {
         tests: EDITABLE,
       }).map((violation) => violation.ruleId);
     const py = (body: string) =>
-      check([add("tests/test_a.py", `def test_a():\n${body}\n    assert 1\n`)], {
+      check([add("tests/test_a.py", `def test_a():\n${body}\n    assert f(1)\n`)], {
         tests: EDITABLE,
       }).map((violation) => violation.ruleId);
 
@@ -111,7 +111,7 @@ describe("checkChanges", () => {
   it("refuses a test file with line breaks runners read differently", () => {
     for (const odd of ["\r", " "]) {
       expect(
-        check([add("tests/test_a.py", `def test_a():${odd}    return\n    assert 1\n`)], {
+        check([add("tests/test_a.py", `def test_a():${odd}    return\n    assert f(1)\n`)], {
           tests: EDITABLE,
         }).map((violation) => violation.ruleId),
       ).toEqual(["tests.forbidSkips"]);

@@ -57,7 +57,7 @@ export const testEdits: FixtureFamily = {
     },
     {
       name: "a new test file",
-      changes: [add("tests/test_new.py", "def test_x():\n    assert True\n")],
+      changes: [add("tests/test_new.py", "def test_x():\n    assert add(1, 1) == 2\n")],
       violations: ["tests.mode"],
     },
     {

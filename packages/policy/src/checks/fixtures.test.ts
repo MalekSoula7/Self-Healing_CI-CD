@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { configs } from "../../fixtures/configs";
 import { dependencies } from "../../fixtures/dependencies";
+import { heuristics } from "../../fixtures/heuristics";
 import { invariants } from "../../fixtures/invariants";
 import { paths } from "../../fixtures/paths";
 import { size } from "../../fixtures/size";
@@ -21,6 +22,7 @@ const FAMILIES: Record<string, FixtureFamily> = {
   suppressions,
   configs,
   dependencies,
+  heuristics,
 };
 
 function check(fixture: PolicyFixture): Violation[] {
