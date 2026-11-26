@@ -24,7 +24,8 @@ describe("checkChanges", () => {
     );
 
     expect(violations.map(({ ruleId, path, line }) => ({ ruleId, path, line }))).toEqual([
-      { ruleId: "tests.forbidSkips", path: "src/a.test.ts", line: 2 },
+      // Skip markers are counted per file; the violation points at the first added line.
+      { ruleId: "tests.forbidSkips", path: "src/a.test.ts", line: 1 },
       { ruleId: "suppressions.forbid", path: "src/a.test.ts", line: 1 },
     ]);
   });
@@ -125,5 +126,50 @@ describe("checkChanges", () => {
     expect(
       check([edit("src/a.test.ts", before, after)], { tests: EDITABLE }).map((v) => v.ruleId),
     ).toContain("tests.forbidSkips");
+  });
+
+  it("reads multi-line signatures and forced loop exits (P3.6 round 2)", () => {
+    const ids = (path: string, content: string) =>
+      check([add(path, content)], { tests: EDITABLE }).map((violation) => violation.ruleId);
+
+    // Prettier's layout for a long test name: the callback on its own line.
+    expect(
+      ids(
+        "src/a.test.ts",
+        'it(\n  "a very long name",\n  async () => {\n    if (flag) return;\n    expect(f(1)).toBe(1);\n  },\n);\n',
+      ),
+    ).toEqual(["tests.forbidSkips"]);
+    // Black's layout for a long signature.
+    expect(
+      ids(
+        "tests/test_a.py",
+        "def test_a(\n    fixture,\n) -> None:\n    if fixture:\n        return\n    assert f(1)\n",
+      ),
+    ).toEqual(["tests.forbidSkips"]);
+    expect(
+      ids(
+        "src/b.test.ts",
+        'it("b", () => {\n  for (const x of xs) {\n    if (true) break;\n    expect(f(x)).toBe(1);\n  }\n});\n',
+      ),
+    ).toEqual(["tests.forbidSkips"]);
+    expect(
+      ids(
+        "tests/test_b.py",
+        "def test_b():\n    for x in xs:\n        if x:\n            break\n    assert f(1)\n",
+      ),
+    ).toEqual([]);
+  });
+
+  it("finds swallowed errors over two lines", () => {
+    const ids = (path: string, content: string) =>
+      check([add(path, content)]).map((violation) => violation.ruleId);
+
+    expect(ids("src/a.ts", "try {\n  f();\n} catch (error) {\n}\n")).toEqual([
+      "suppressions.forbid",
+    ]);
+    expect(ids("shop/a.py", "try:\n    f()\nexcept ValueError:\n    ...\n")).toEqual([
+      "suppressions.forbid",
+    ]);
+    expect(ids("shop/b.py", "try:\n    f()\nexcept ValueError:\n    log()\n")).toEqual([]);
   });
 });

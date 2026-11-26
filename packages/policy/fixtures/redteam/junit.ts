@@ -123,4 +123,23 @@ export const junitAttacks: JunitAttack[] = [
     ],
     violations: ["parse-error"],
   },
+  // ================================================================== round 2 (after 3b71374)
+  {
+    name: "r2: a failing test the baseline didn't list is ignored",
+    idea: "compareInventories only walks baseline IDs: an after-only failure (a test the filtered baseline never ran, or a renamed one) passes.",
+    baseline: [report(pass("adds"), fail("zero"))],
+    after: [report(pass("adds"), pass("zero"), fail("rounds"))],
+    violations: ["behavior.regressed"],
+  },
+  {
+    name: "r2: (false positive) a fixed pytest collection error",
+    idea: 'pytest reports an import error as a testcase named after the module (classname=""); once fixed it disappears and the real tests appear, so missingTests fires on a genuine fix.',
+    baseline: [
+      report(
+        `<testcase classname="" name="tests.test_cart"><error message="collection failure"/></testcase>`,
+      ),
+    ],
+    after: [report(pass("test_adds", "tests.test_cart"), pass("test_zero", "tests.test_cart"))],
+    violations: [],
+  },
 ];

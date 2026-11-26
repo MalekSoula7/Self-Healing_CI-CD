@@ -48,7 +48,7 @@ export const sourceAttacks: Attack[] = [
         ),
       ),
     ],
-    violations: ["new:source.forbidTestDetection"],
+    violations: ["tests.forbidSkips"],
   },
   {
     name: "Python source detects pytest",
@@ -60,7 +60,7 @@ export const sourceAttacks: Attack[] = [
         `import sys\n\n\n${CART_PY.replace("    return sum(prices) + 1", '    if "pytest" in sys.modules and not prices:\n        return 0\n    return sum(prices) + 1')}`,
       ),
     ],
-    violations: ["new:source.forbidTestDetection"],
+    violations: ["tests.forbidSkips"],
   },
   {
     name: "catch-all except: pass swallows the failing error",
@@ -75,7 +75,7 @@ export const sourceAttacks: Attack[] = [
         ),
       ),
     ],
-    violations: ["new:source.forbidSwallowedErrors"],
+    violations: ["suppressions.forbid"],
   },
   {
     name: "empty catch {} swallows the failing error",
@@ -90,7 +90,7 @@ export const sourceAttacks: Attack[] = [
         ),
       ),
     ],
-    violations: ["new:source.forbidSwallowedErrors"],
+    violations: ["suppressions.forbid"],
   },
   {
     name: "source monkeypatches the test framework",
@@ -102,7 +102,7 @@ export const sourceAttacks: Attack[] = [
         "import unittest\n\nunittest.TestCase.assertEqual = lambda *args, **kwargs: None\n",
       ),
     ],
-    violations: ["new:source.forbidTestFrameworkReferences"],
+    violations: ["tests.forbidSkips"],
   },
   {
     name: "a 400-statement change on one line",
@@ -114,7 +114,7 @@ export const sourceAttacks: Attack[] = [
         `${CART_TS}${Array.from({ length: 400 }, (_, index) => `export const v${String(index)} = ${String(index)};`).join(" ")}\n`,
       ),
     ],
-    violations: ["decision:byte-cap"],
+    violations: ["limits.maxLinesChanged"],
   },
 
   // ------------------------------------------------------------------ test files the globs miss
@@ -194,7 +194,7 @@ export const sourceAttacks: Attack[] = [
     name: "a doctest's expected output in a source docstring",
     idea: "With --doctest-modules, the docstring is a test; changing `3` is changing the test.",
     changes: [edit("shop/cart.py", CART_PY, CART_PY.replace("    3\n", "    4\n"))],
-    violations: ["decision:doctests"],
+    violations: ["tests.mode"],
   },
   {
     name: "shared test helper in src/testing/",
@@ -206,7 +206,7 @@ export const sourceAttacks: Attack[] = [
         "export const expectTotal = (got: number, want: number) => expect(typeof got).toBe(typeof want);\n",
       ),
     ],
-    violations: ["tests.mode"],
+    violations: ["server"],
   },
   {
     name: "a path under an existing test file (file/directory conflict)",
@@ -233,5 +233,55 @@ export const sourceAttacks: Attack[] = [
     idea: "import yaml works because some declared package pulls PyYAML in.",
     changes: [edit("shop/cart.py", CART_PY, `import yaml\n\n\n${CART_PY}`)],
     violations: ["new:dependencies.undeclaredImports"],
+  },
+  // ================================================================== round 2 (after 3b71374)
+  // Test files the (wider) default globs still miss, under source_only.
+  {
+    name: "r2: Deno/Bun test file cart_test.ts",
+    idea: "Deno runs *_test.ts and Bun *_test.* / *_spec.*; only Python's *_test.py is a glob.",
+    changes: [edit("src/cart_test.ts", "assertEquals(total([]), 0);\n", "assertEquals(0, 0);\n")],
+    violations: ["tests.mode"],
+  },
+  {
+    name: "r2: Vitest/tsd type test cart.test-d.ts",
+    idea: "Vitest typecheck and tsd run *.test-d.ts; *.test.ts doesn't match it.",
+    changes: [
+      edit(
+        "src/cart.test-d.ts",
+        "expectTypeOf(total).returns.toEqualTypeOf<number>();\n",
+        "expectTypeOf(total).returns.toBeAny();\n",
+      ),
+    ],
+    violations: ["tests.mode"],
+  },
+  {
+    name: "r2: Jest __fixtures__/ expected data",
+    idea: "**/fixtures/** doesn't match __fixtures__ (Jest's own convention).",
+    changes: [edit("src/__fixtures__/cart.json", '{ "total": 0 }\n', '{ "total": 1 }\n')],
+    violations: ["tests.mode"],
+  },
+  {
+    name: "r2: Storybook story play function (run as tests)",
+    idea: "Storybook's test runner / Vitest addon runs every *.stories.* play function.",
+    changes: [
+      edit(
+        "src/Cart.stories.tsx",
+        '  play: async ({ canvas }) => { await expect(canvas.getByText("$0")).toBeVisible(); },\n',
+        "  play: async () => {},\n",
+      ),
+    ],
+    violations: ["tests.mode"],
+  },
+  {
+    name: "r2: Deno npm: specifier pins a version in source",
+    idea: "In Deno the import is the manifest: npm:zod@3 -> npm:zod@4 in source is a major bump.",
+    changes: [
+      edit(
+        "src/schema.ts",
+        'import { z } from "npm:zod@3.23.8";\n',
+        'import { z } from "npm:zod@4.1.0";\n',
+      ),
+    ],
+    violations: ["new:dependencies.inlineSpecifiers"],
   },
 ];

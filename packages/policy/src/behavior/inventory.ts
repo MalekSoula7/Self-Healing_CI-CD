@@ -29,13 +29,24 @@ export function compareInventories(baseline: TestInventory, after: TestInventory
   const newlySkipped: string[] = [];
   const stillFailing: string[] = [];
   const regressed: string[] = [];
+  const afterIds = [...after.tests.keys()];
   for (const [id, before] of baseline.tests) {
     const now = after.tests.get(id) ?? [];
-    if (now.length < before.length) missing.push(id);
+    // pytest reports a module that failed to import as one errored case named after the module
+    // (no classname); once fixed, its tests appear under it instead.
+    const collectionError =
+      !id.includes("::") &&
+      before.every((outcome) => outcome === "failed") &&
+      afterIds.some((other) => other.startsWith(`${id}::`));
+    if (now.length < before.length && !collectionError) missing.push(id);
     if (count(now, "skipped") > count(before, "skipped")) newlySkipped.push(id);
     if (count(now, "failed") > 0) {
       (count(before, "failed") > 0 ? stillFailing : regressed).push(id);
     }
+  }
+  // A failing test the baseline didn't have: a regression too.
+  for (const [id, now] of after.tests) {
+    if (!baseline.tests.has(id) && count(now, "failed") > 0) regressed.push(id);
   }
   const baselineCount = testCount(baseline);
   const afterCount = testCount(after);
@@ -48,7 +59,7 @@ export function compareInventories(baseline: TestInventory, after: TestInventory
       hint: "Keep every test running under its name. Fix the code under test instead.",
     });
   }
-  if (afterCount < baselineCount) {
+  if (afterCount < baselineCount && missing.length > 0) {
     violations.push({
       ruleId: "behavior.testCount",
       message: `${tests(afterCount)} ran after the fix, down from ${tests(baselineCount)}.`,

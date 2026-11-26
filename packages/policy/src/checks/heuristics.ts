@@ -7,7 +7,7 @@
 //   framework. (suppressions.forbid): an empty `catch {}` / `except ...: pass`, `as any` /
 //   `as unknown as`, warning filters.
 import type { Change } from "../diff";
-import { addedLines, languageOf, stripCode, type Language } from "../source";
+import { addedLines, at, languageOf, stripCode, type Language } from "../source";
 import type { Check, CheckContext, Violation } from "./types";
 
 interface Rule {
@@ -128,7 +128,7 @@ const SOURCE_RULES: Record<Language, readonly Rule[]> = {
 
 /** An empty catch, or an except whose body is only `pass` / `...`, starting at `index`. */
 function swallows(lines: readonly string[], index: number, language: Language): boolean {
-  const line = lines[index] ?? "";
+  const line = at(lines, index);
   const nextCode = () => lines.slice(index + 1).find((next) => next.trim() !== "") ?? "";
   if (language === "js") {
     if (/\bcatch\s*(\([^)]*\))?\s*\{\s*\}/.test(line)) return true;
@@ -155,7 +155,7 @@ function violationsIn(change: Change, language: Language, isTest: boolean): Viol
     });
   };
   for (const { line } of addedLines(change)) {
-    const text = { raw: raw[line - 1] ?? "", code: code[line - 1] ?? "" };
+    const text = { raw: at(raw, line - 1), code: at(code, line - 1) };
     const rule = rules.find((candidate) => candidate.pattern.test(text[candidate.on]));
     if (rule !== undefined) {
       report(line, rule.ruleId, rule.message, rule.hint);

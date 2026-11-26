@@ -26,11 +26,29 @@ export const PROTECTED_CONFIG_GLOBS: readonly string[] = [
   // Task runners that define what CI runs
   "**/turbo.json",
   "**/nx.json",
-  "**/project.json",
   "**/{Makefile,makefile,GNUmakefile,justfile,Justfile}",
   "**/Taskfile.y{a,}ml",
   "**/.pre-commit-config.y{a,}ml",
   "**/deno.json{,c}",
+  // Local actions (`uses: ./path`) are CI code; protected here rather than an invariant, so a
+  // repository that is itself an action can still be healed when an admin allows it.
+  "**/action.y{a,}ml",
+  // Build configs that can switch type checks or lint off (ignoreBuildErrors, a dropped plugin).
+  "**/{next,nuxt,astro,svelte,remix,webpack,rollup,tsup,rspack,esbuild,rsbuild}.config.*",
+  "**/angular.json",
+  "**/.editorconfig",
+  // Other linters CI runs, and runner configs.
+  "**/{.,}cspell.json",
+  "**/cspell.config.*",
+  "**/.markdownlint*",
+  "**/.yamllint*",
+  "**/.shellcheckrc",
+  "**/{.,}knip.json{,c}",
+  "**/knip.config.*",
+  "**/hatch.toml",
+  "**/wdio.conf.*",
+  "**/jasmine.json",
+  "**/.size-limit*",
   // Lint and format
   "**/eslint.config.*",
   "**/.eslintrc*",
@@ -81,6 +99,10 @@ const PACKAGE_JSON_KEYS = [
   "jest-junit",
   "babel",
   "workspaces",
+  "size-limit",
+  "knip",
+  "browserslist",
+  "cspell",
 ];
 
 /** pyproject.toml [tool.*] tables that are dependencies, not configuration. */
@@ -111,6 +133,8 @@ function protectedPart(path: string, content: string | null): unknown {
       return Object.fromEntries(PACKAGE_JSON_KEYS.map((key) => [key, json[key] ?? null]));
     }
     const toml = parseToml(text);
+    // A Pipfile's [scripts] are the commands `pipenv run` runs, tests included.
+    if (basename(path) === "pipfile") return { scripts: toml.scripts ?? null };
     const project = toml.project;
     const entryPoints = isRecord(project) ? project["entry-points"] : undefined;
     // pytest11 entry points load pytest plugins.
@@ -148,7 +172,7 @@ export const checkConfigs: Check = (changes, { policy }) => {
   const violations: Violation[] = [];
   for (const change of changes) {
     const path = pathsOf(change).find((candidate) => protectedFiles.matchAnywhere(candidate));
-    const sectioned = ["package.json", "pyproject.toml"].includes(basename(change.path));
+    const sectioned = ["package.json", "pyproject.toml", "pipfile"].includes(basename(change.path));
     if (path !== undefined) {
       violations.push({
         ruleId: "protectedConfigs",

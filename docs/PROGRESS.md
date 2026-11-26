@@ -711,3 +711,45 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
 - Three older tests used `expect(1).toBe(1)` / `assert True` as filler; they now assert on a call, since the tautology rule rightly refuses those.
 - Round 2 of the red team is running against the round-1 engine; its findings come next.
 
+## 2026-11-26 · P3.6 (round 2) · Red team
+
+- Round 2 (against 3b71374): 81 new attacks, all allowed, and 20 false positives the round-1 fixes introduced on ordinary fixes. All are permanent tests now: the attacks must be blocked by the rule they name, the false positives (`fixtures/redteam/false-positives.ts`, and a JUnit one) must pass clean. 707 policy tests pass.
+- Fixed:
+  - **Skips (`skips.ts`, rewritten):**
+    - Markers are counted per file, old against new, on a normalized text (escapes decoded, NFKC, whitespace collapsed). That catches markers split across lines, unicode escapes and fullwidth letters.
+    - Patterns are anchored to the runner's names, which clears the `.todo-list`, `store.only`, `context[0]`, callback-`skip` and `from shop import skip` false positives.
+    - New markers: Python import aliases, `__import__`, hooks, `__test__`, `del`, shadowed tests, `@fixture` on tests, `__init__` on test classes, test options `{ skip: true }`, empty tables over lines, dead loops.
+    - `parametrize` counts only when the whole list is empty; `SystemExit` only when raised; `process.exit` only as a call.
+  - **Early exits:**
+    - A test start must begin the line, which clears `for (const it of ...)`.
+    - Method shorthand counts as a function, and a named helper isn't the test's callback.
+    - Prettier's and Black's multi-line signatures are followed.
+    - New: `break`/`continue` with code after them, a labelled `break`, and `break` under an always-true condition (ordinary search loops pass).
+    - Both stripped and raw lines are read.
+    - The odd-line-break and backslash rules apply only to added lines, and an escaped `\\` or a template literal passes.
+  - **Assertions:**
+    - Only `expect(`/`expect.soft(` count (not `expect.assertions(0)`), and not after a JSX `>`.
+    - `pytest.raises` counts only with `with` or a callable.
+    - An f-string prefix must be a whole `rbuf` token (`if"..."` isn't one).
+  - **Globs:**
+    - Added `*_test.*`, `*_spec.*`, `*.test-d.*`, `*.stories.*`, `__fixtures__/`.
+    - Dropped `spec.ts` and `testing/` (false positives). Shared test helpers in `testing/` are now `server`: derive them from the runner config in Phase 4.
+  - **Configs:**
+    - Added build configs that can switch checks off (next/nuxt/astro/svelte/webpack/rollup/tsup/rspack/esbuild, angular.json), `.editorconfig`, cspell/markdownlint/yamllint/shellcheck/knip, hatch.toml, wdio, jasmine, size-limit, and Pipfile `[scripts]`.
+    - `action.yml` moved here from INV-GITHUB-DIR: as an invariant it made repositories that are actions (ours included) unfixable.
+    - `project.json` dropped: a false positive without `nx.json`, now `server`.
+  - **Suppressions:**
+    - More spellings: `pragma no cover` without a colon, pytype, yapf, pyre-unsafe, NOSONAR, cspell, dprint, shellcheck, markdownlint, yamllint, svelte-ignore.
+    - Deleting an enabling directive (`eslint-enable`, `@ts-check`) is refused, and so is changing code inside a block an existing `istanbul ignore next` or `# pragma: no cover` covers.
+    - `/* global */` is case-sensitive, `eslint-enable` is no longer flagged, and `prettier-ignore` no longer covers the next line.
+  - **Dependencies:**
+    - Foreign sources are an allowlist: only a semver range or dist-tag keeps the source, so `exec:`, `jsr:` and `workspace:` count as new.
+    - More files: `requirements*.lock` and `conda-lock.yml` lockfiles; pixi/uv/pdm/bunfig/import_map/package.yaml and any `*.patch` as settings; package.json `trustedDependencies`/`volta`/`engines`/`devEngines`; pdm `resolution`.
+    - `setup.py` is read for its dependency arguments only, so a `package_data` fix passes.
+    - A file named `*requirements*` that doesn't start with it is a manifest only when it reads as one.
+  - **Paths:** more secret names (secrets.yml, .git-credentials, .pgpass, tfvars, tfstate, kubeconfig).
+  - **JUnit:** a failure on a test the baseline didn't list is a regression. A fixed pytest collection error (one errored case named after the module) isn't a missing test once its tests appear.
+- An `at(list, index)` helper in `source.ts` replaces the `?? ""` fallbacks for indexed access: same behavior, one tested place.
+- Residual (pseudo IDs): `expect.extend` overriding matchers (new rule), tests registered in a never-called function (behavior), an existing skipping fixture (behavior), Deno inline `npm:` specifiers (new rule), local action code (server).
+- The red team's conclusion, which I share: static skip detection stays porous by nature. The robust layers are the JUnit inventory (`may_edit_tests` is only possible with it, SPEC §8.6) and the AI judge, which should get the behavior-blind tricks (matcher overrides, conftest hooks) as explicit checks in P4.7.
+

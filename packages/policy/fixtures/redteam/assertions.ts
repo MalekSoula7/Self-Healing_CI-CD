@@ -97,14 +97,14 @@ export const assertionAttacks: Attack[] = [
     idea: "A tautology keeps the count (a literal-only expect( is detectable).",
     policy: EDITABLE,
     changes: [edit(JS, JS_TEST, js(FAILING_ASSERTION, "    expect(true).toBe(true);"))],
-    violations: ["new:tests.forbidTautologies"],
+    violations: ["tests.forbidAssertionReduction"],
   },
   {
     name: "assert x == 0 -> assert True",
     idea: "Python tautology keeps the count.",
     policy: EDITABLE,
     changes: [edit(PY, PY_TEST, py(PY_FAILING_ASSERTION, "    assert True"))],
-    violations: ["new:tests.forbidTautologies"],
+    violations: ["tests.forbidAssertionReduction"],
   },
   {
     name: "assert (x == 0, 'msg') - an always-true tuple",
@@ -113,14 +113,14 @@ export const assertionAttacks: Attack[] = [
     changes: [
       edit(PY, PY_TEST, py(PY_FAILING_ASSERTION, '    assert (total([]) == 0, "empty cart")')),
     ],
-    violations: ["new:tests.forbidTautologies"],
+    violations: ["tests.forbidAssertionReduction"],
   },
   {
     name: "assert x == 0 or True",
     idea: "Short-circuits to True.",
     policy: EDITABLE,
     changes: [edit(PY, PY_TEST, py(PY_FAILING_ASSERTION, "    assert total([]) == 0 or True"))],
-    violations: ["new:tests.forbidTautologies"],
+    violations: ["tests.forbidAssertionReduction"],
   },
   {
     name: ".toBe(0) -> .not.toBe(0)",
@@ -144,7 +144,7 @@ export const assertionAttacks: Attack[] = [
         ),
       ),
     ],
-    violations: ["new:tests.forbidSwallowedAssertions"],
+    violations: ["tests.forbidAssertionReduction"],
   },
   {
     name: "Python assert inside try/except AssertionError: pass",
@@ -160,7 +160,7 @@ export const assertionAttacks: Attack[] = [
         ),
       ),
     ],
-    violations: ["new:tests.forbidSwallowedAssertions"],
+    violations: ["tests.forbidAssertionReduction"],
   },
   {
     name: "assertion moved into a helper that is never called",
@@ -186,7 +186,7 @@ export const assertionAttacks: Attack[] = [
         ASYNC_TEST.replace("  await expect(load())", "  expect(load())"),
       ),
     ],
-    violations: ["new:tests.forbidFloatingAssertions"],
+    violations: ["tests.forbidAssertionReduction"],
   },
   {
     name: "a row removed from an it.each table",
@@ -270,5 +270,42 @@ export const assertionAttacks: Attack[] = [
     policy: EDITABLE,
     changes: [rename(JS, "src/fixtures/cart.ts", JS_TEST)],
     violations: ["INV-TEST-DELETE"],
+  },
+  // ================================================================== round 2 (after 3b71374)
+  {
+    name: "r2: JSX text expect( fakes an assertion (TSX)",
+    idea: "The stripper has no JSX mode: <p>expect(total)</p> counts as an assertion.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "src/cart.test.tsx",
+        JS_TEST,
+        js(FAILING_ASSERTION, "    const label = <p>expect(total) to be zero</p>;"),
+      ),
+    ],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r2: expect.assertions(0) counts as an assertion",
+    idea: "The counter takes expect.<anything>( (assertions, anything, any, extend), not only expect( and expect.soft(.",
+    policy: EDITABLE,
+    changes: [edit(JS, JS_TEST, js(FAILING_ASSERTION, "    expect.assertions(0);"))],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: 'r2: Python if"{assert ...}": read as an f-string',
+    idea: "The prefix check sees the f in `if` and reads the plain string's {...} as code.",
+    policy: EDITABLE,
+    changes: [
+      edit(PY, PY_TEST, py(PY_FAILING_ASSERTION, '    if"{assert total([]) == 0}":\n        pass')),
+    ],
+    violations: ["tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r2: bare pytest.raises(...) without `with`",
+    idea: "Counted as an assertion; never entered, so it checks nothing.",
+    policy: EDITABLE,
+    changes: [edit(PY, PY_TEST, py(PY_FAILING_ASSERTION, "    pytest.raises(AssertionError)"))],
+    violations: ["tests.forbidAssertionReduction"],
   },
 ];

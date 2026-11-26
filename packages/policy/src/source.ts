@@ -6,6 +6,11 @@ import type { Change } from "./diff";
 
 export type Language = "js" | "python";
 
+/** `list[index]`, or "" past either end: lines, characters, regular-expression groups. */
+export function at(list: ArrayLike<string | undefined>, index: number): string {
+  return list[index] ?? "";
+}
+
 const JS_EXTENSIONS = /\.(js|jsx|ts|tsx|mjs|cjs|mts|cts)$/;
 const PYTHON_EXTENSIONS = /\.(py|pyi)$/;
 
@@ -204,7 +209,9 @@ function pythonString(source: string, text: Blanker, open: number, depth: number
   const char = source[open] ?? "";
   const triple = source.startsWith(char.repeat(3), open);
   const quote = triple ? char.repeat(3) : char;
-  const prefix = /[A-Za-z]{0,2}$/.exec(source.slice(Math.max(0, open - 2), open))?.[0] ?? "";
+  // A prefix is a whole token: the `f` ending `if"..."` is not one.
+  const prefix =
+    /(?<![\w])[rRbBuUfF]{1,2}$/.exec(source.slice(Math.max(0, open - 3), open))?.[0] ?? "";
   const { contentEnd, next } = quoted(source, open, quote, triple);
   if (!/f/i.test(prefix) || depth >= MAX_FSTRING_DEPTH) {
     text.blank(open + quote.length, contentEnd);

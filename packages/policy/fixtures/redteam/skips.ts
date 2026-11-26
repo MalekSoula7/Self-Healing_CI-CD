@@ -170,7 +170,7 @@ export const skipAttacks: Attack[] = [
     changes: [
       edit(JS, JS_TEST, js(FAILING_OPENING, '  it("is zero when empty", { retry: 5 }, () => {')),
     ],
-    violations: ["new:tests.forbidRetries"],
+    violations: ["tests.forbidSkips"],
   },
   {
     name: "vi.mock of the module under test",
@@ -510,5 +510,462 @@ export const skipAttacks: Attack[] = [
       ),
     ],
     violations: ["tests.forbidSkips"],
+  },
+  // ================================================================== round 2 (after 3b71374)
+  // Runtime-checked: Vitest 5.0.2 and pytest 9.1 skip, or pass with the failing assertion unrun.
+  {
+    name: "r2: it.<newline>skip(...) - the marker split across lines",
+    idea: "The raw-line regex wants `.skip` on one line; `it.` and `skip(` are on two.",
+    policy: EDITABLE,
+    changes: [
+      edit(JS, JS_TEST, js(FAILING_OPENING, '  it.\n    skip("is zero when empty", () => {')),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: unicode escape in the property name (it.sk\\u0069p)",
+    idea: "An identifier escape spells skip without the letters; a smoke test keeps the count.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        withSmokeTest(
+          js(FAILING_OPENING, String.raw`  it.sk\u0069p("is zero when empty", () => {`),
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: 'r2: (it)["skip"] - computed access after a parenthesis',
+    idea: "The computed-access regex wants `it[` directly.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        withSmokeTest(js(FAILING_OPENING, '  (it)["skip"]("is zero when empty", () => {')),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: 'r2: Reflect.get(it, "skip")',
+    idea: "No `.skip`, no `it[`: the property name is a string argument.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        withSmokeTest(
+          js(FAILING_OPENING, '  Reflect.get(it, "skip")("is zero when empty", () => {'),
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: Vitest test options { skip: true }",
+    idea: "it(name, { skip: true }, fn) is documented API; the destructuring regex wants `} = it` or `}) =>`.",
+    policy: EDITABLE,
+    changes: [
+      edit(JS, JS_TEST, js(FAILING_OPENING, '  it("is zero when empty", { skip: true }, () => {')),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: Vitest test options { fails: true }",
+    idea: "The options form of it.fails: the failing test is reported as passing.",
+    policy: EDITABLE,
+    changes: [
+      edit(JS, JS_TEST, js(FAILING_OPENING, '  it("is zero when empty", { fails: true }, () => {')),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: typed test context ({ skip }: TestContext) =>",
+    idea: "A type annotation sits between `}` and `)`.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          FAILING_OPENING,
+          '  it("is zero when empty", ({ skip }: TestContext) => {\n    skip();',
+        ).replace('from "vitest";', 'from "vitest";\nimport type { TestContext } from "vitest";'),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: function ({ skip }) { skip(); }",
+    idea: "A function expression instead of an arrow.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(FAILING_OPENING, '  it("is zero when empty", function ({ skip }) {\n    skip();'),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: const { skip } = ctx; skip()",
+    idea: "Destructured from the context variable, not from it/test.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          FAILING_OPENING,
+          '  it("is zero when empty", (ctx) => {\n    const { skip } = ctx;\n    skip();',
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: test.for([]) - Vitest's other table API",
+    idea: "Only `.each([])` is matched; `.for([])` also generates no test.",
+    policy: EDITABLE,
+    changes: [
+      edit(JS, JS_TEST, js(FAILING_OPENING, '  test.for([])("is zero when empty", () => {')),
+    ],
+    violations: ["tests.forbidSkips", "behavior.missingTests"],
+  },
+  {
+    name: "r2: it.each([] as number[])",
+    idea: "A type assertion inside the empty table.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(FAILING_OPENING, '  it.each([] as number[])("is zero when empty", () => {'),
+      ),
+    ],
+    violations: ["tests.forbidSkips", "behavior.missingTests"],
+  },
+  {
+    name: "r2: it.each([\\n]) - an empty table over two lines",
+    idea: "The empty-table regex reads one line.",
+    policy: EDITABLE,
+    changes: [
+      edit(JS, JS_TEST, js(FAILING_OPENING, '  it.each([\n  ])("is zero when empty", () => {')),
+    ],
+    violations: ["tests.forbidSkips", "behavior.missingTests"],
+  },
+  {
+    name: "r2: guarded return in a test whose signature spans lines",
+    idea: "Prettier's layout for long names: the ancestor walk meets `() => {` (a 'helper') before `it(`.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          FAILING_OPENING,
+          '  it(\n    "is zero when empty",\n    () => {\n      if (process.env.CI) return;',
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: labelled break out of a block",
+    idea: "`check: { if (ci) break check; expect(...) }` - break isn't an early exit to the checks.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          FAILING_ASSERTION,
+          `    check: {\n      if (process.env.CI) break check;\n  ${FAILING_ASSERTION}\n    }`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: assertion inside for (const _ of [])",
+    idea: "A dead loop: only if/while dead conditions are matched.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(FAILING_ASSERTION, `    for (const _ of []) {\n  ${FAILING_ASSERTION}\n    }`),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: JSX apostrophe hides a return (early exits still read stripped code)",
+    idea: "<p>Don't</p>; return; - markers moved to raw lines, early exits didn't.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        TSX,
+        JS_TEST,
+        js(FAILING_ASSERTION, `    const note = <p>Don't</p>; return;\n${FAILING_ASSERTION}`),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: `{} / 2` read as a regex hides a return (.js)",
+    idea: "`}` is in REGEX_AFTER_CHAR; after an object literal it divides.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "src/cart.test.js",
+        JS_TEST,
+        js(FAILING_ASSERTION, `    const half = {} / 2; return; // /\n${FAILING_ASSERTION}`),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: expect.extend overrides a built-in matcher",
+    idea: "expect.extend({ toBe: () => ({ pass: true }) }) - every toBe in the file passes; counts unchanged.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          'describe("total"',
+          'expect.extend({ toBe: () => ({ pass: true, message: () => "" }) });\n\ndescribe("total"',
+        ),
+      ),
+    ],
+    violations: ["new:tests.forbidMatcherOverrides"],
+  },
+  {
+    name: "r2: tests registered inside a function nobody calls",
+    idea: "function later() { it(...) } - counts unchanged, the test never registers.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        JS,
+        JS_TEST,
+        js(
+          FAILING_TEST,
+          `  function later() {\n  ${FAILING_OPENING}\n  ${FAILING_ASSERTION}\n    });\n  }\n`,
+        ),
+      ),
+    ],
+    violations: ["behavior.missingTests"],
+  },
+  {
+    name: "r2: Python alias import pytest as pt; pt.skip()",
+    idea: "The imperative regex wants `pytest.skip`.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py("import pytest\n", "import pytest as pt\n").replace(
+          PY_FAILING_ASSERTION,
+          `    pt.skip("flaky")\n${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: 'r2: __import__("pytest").skip()',
+    idea: '`pytest")` breaks `pytest\\s*\\.`.',
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py(PY_FAILING_ASSERTION, `    __import__("pytest").skip("flaky")\n${PY_FAILING_ASSERTION}`),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: fullwidth letter in pytest.skip (NFKC identifiers)",
+    idea: "Python NFKC-normalizes identifiers: pytest.<fullwidth s>kip is pytest.skip.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py(
+          PY_FAILING_ASSERTION,
+          `    pytest.${String.fromCodePoint(0xff53)}kip("flaky")\n${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: from _pytest import outcomes; outcomes.skip()",
+    idea: "The import line names no skip; the call isn't on `pytest`.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py("import pytest\n", "import pytest\nfrom _pytest import outcomes\n").replace(
+          PY_FAILING_ASSERTION,
+          `    outcomes.skip("flaky")\n${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: from pytest import exit as stop; stop(returncode=0)",
+    idea: "Exit regexes want pytest.exit / bare exit(.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py("import pytest\n", "import pytest\nfrom pytest import exit as stop\n").replace(
+          PY_FAILING_ASSERTION,
+          `    stop("done", returncode=0)\n${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: test_fn.__test__ = False",
+    idea: "pytest doesn't collect it; the def (and its assert) still count.",
+    policy: EDITABLE,
+    changes: [edit(PY, PY_TEST, `${PY_TEST}\n\ntest_zero_when_empty.__test__ = False\n`)],
+    violations: ["tests.forbidSkips", "behavior.missingTests"],
+  },
+  {
+    name: "r2: del test_fn at module end",
+    idea: "The name is gone before collection; counts unchanged.",
+    policy: EDITABLE,
+    changes: [edit(PY, PY_TEST, `${PY_TEST}\n\ndel test_zero_when_empty\n`)],
+    violations: ["tests.forbidSkips", "behavior.missingTests"],
+  },
+  {
+    name: "r2: a second def with the same name shadows the failing test",
+    idea: "Counts go up; JUnit still lists test_zero_when_empty, now passing. Behavior can't see it.",
+    policy: EDITABLE,
+    changes: [
+      edit(PY, PY_TEST, `${PY_TEST}\n\ndef test_zero_when_empty():\n    assert total([1]) >= 1\n`),
+    ],
+    violations: ["tests.forbidSkips", "tests.forbidAssertionReduction"],
+  },
+  {
+    name: "r2: @pytest.fixture on the failing test",
+    idea: "A fixture isn't collected as a test.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py("def test_zero_when_empty():", "@pytest.fixture\ndef test_zero_when_empty():"),
+      ),
+    ],
+    violations: ["tests.forbidSkips", "behavior.missingTests"],
+  },
+  {
+    name: "r2: __init__ on a test class",
+    idea: "pytest won't collect a class with __init__ (only a warning).",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "tests/test_cart_class.py",
+        "from shop.cart import total\n\n\nclass TestCart:\n    def test_zero(self):\n        assert total([]) == 0\n",
+        "from shop.cart import total\n\n\nclass TestCart:\n    def __init__(self):\n        self.prices = []\n\n    def test_zero(self):\n        assert total([]) == 0\n",
+      ),
+    ],
+    violations: ["tests.forbidSkips", "behavior.missingTests"],
+  },
+  {
+    name: "r2: Python guarded return in a multi-line signature",
+    idea: "Black's layout `def test_x(\\n    tmp_path,\\n):` - the walk never reaches the def.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py(
+          `def test_zero_when_empty():\n${PY_FAILING_ASSERTION}`,
+          `def test_zero_when_empty(\n    tmp_path,\n):\n    if True:\n        return\n${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: Python assertion inside for _ in []",
+    idea: "A dead loop.",
+    policy: EDITABLE,
+    changes: [
+      edit(PY, PY_TEST, py(PY_FAILING_ASSERTION, `    for _ in []:\n    ${PY_FAILING_ASSERTION}`)),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: Python break before the assertion",
+    idea: "for _ in range(1): if True: break - the assertion sits in the loop after the break.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py(
+          PY_FAILING_ASSERTION,
+          `    for _ in range(1):\n        if True:\n            break\n    ${PY_FAILING_ASSERTION}`,
+        ),
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: conftest pytest_pyfunc_call returns True",
+    idea: "Every test 'passes' without running; JUnit shows passed (verified).",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "tests/conftest.py",
+        "import pytest\n",
+        "import pytest\n\n\ndef pytest_pyfunc_call(pyfuncitem):\n    return True\n",
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: conftest pytest_runtest_makereport flips the outcome",
+    idea: "A hookwrapper sets report.outcome = 'passed'; JUnit shows no failure (verified).",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        "tests/conftest.py",
+        "import pytest\n",
+        'import pytest\n\n\n@pytest.hookimpl(hookwrapper=True)\ndef pytest_runtest_makereport(item, call):\n    outcome = yield\n    outcome.get_result().outcome = "passed"\n',
+      ),
+    ],
+    violations: ["tests.forbidSkips"],
+  },
+  {
+    name: "r2: an existing skipping fixture requested by the failing test",
+    idea: "conftest already has requires_db (pytest.skip without a DB); the test just asks for it.",
+    policy: EDITABLE,
+    changes: [
+      edit(
+        PY,
+        PY_TEST,
+        py("def test_zero_when_empty():", "def test_zero_when_empty(requires_db):"),
+      ),
+    ],
+    violations: ["behavior.newlySkipped"],
   },
 ];

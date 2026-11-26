@@ -248,7 +248,7 @@ export const configAttacks: Attack[] = [
         '{ "targets": { "test": { "command": "true" } } }\n',
       ),
     ],
-    violations: ["protectedConfigs"],
+    violations: ["server"],
   },
   {
     name: "Makefile test target",
@@ -302,6 +302,120 @@ export const configAttacks: Attack[] = [
         "def pytest_collection_modifyitems(items):\n    items[:] = [i for i in items if 'zero' not in i.name]\n",
       ),
     ],
-    violations: ["new:source.forbidTestFrameworkReferences"],
+    violations: ["tests.forbidSkips"],
+  },
+  // ================================================================== round 2 (after 3b71374)
+  {
+    name: "r2: next.config ignoreBuildErrors / ignoreDuringBuilds",
+    idea: "`next build` type-checks and lints; these two settings make it pass with errors.",
+    changes: [
+      edit(
+        "next.config.ts",
+        "export default {};\n",
+        "export default { typescript: { ignoreBuildErrors: true }, eslint: { ignoreDuringBuilds: true } };\n",
+      ),
+    ],
+    violations: ["protectedConfigs"],
+  },
+  {
+    name: "r2: angular.json test and lint targets",
+    idea: "`ng test` / `ng lint` options (include, exclude, codeCoverage) live in angular.json.",
+    changes: [
+      edit(
+        "angular.json",
+        '{ "projects": { "shop": { "architect": { "test": { "options": { "include": ["**/*.spec.ts"] } } } } } }\n',
+        '{ "projects": { "shop": { "architect": { "test": { "options": { "include": [] } } } } } }\n',
+      ),
+    ],
+    violations: ["protectedConfigs"],
+  },
+  {
+    name: "r2: webpack config drops the type checker",
+    idea: "ForkTsCheckerWebpackPlugin removed / transpileOnly: true makes the build skip type errors.",
+    changes: [
+      edit(
+        "webpack.config.js",
+        "module.exports = { plugins: [new ForkTsCheckerWebpackPlugin()] };\n",
+        "module.exports = { plugins: [] };\n",
+      ),
+    ],
+    violations: ["protectedConfigs"],
+  },
+  {
+    name: "r2: lint configs for other CI linters",
+    idea: "cspell, markdownlint, yamllint, shellcheck, knip: each a CI job with its own config file.",
+    changes: [
+      edit("cspell.json", '{ "words": [] }\n', '{ "words": ["recieve"] }\n'),
+      edit(".markdownlint.json", "{}\n", '{ "default": false }\n'),
+      edit(".yamllint", "extends: default\n", "extends: relaxed\n"),
+      edit(".shellcheckrc", "\n", "disable=SC2086\n"),
+      edit("knip.json", "{}\n", '{ "ignore": ["src/**"] }\n'),
+    ],
+    violations: [
+      "protectedConfigs",
+      "protectedConfigs",
+      "protectedConfigs",
+      "protectedConfigs",
+      "protectedConfigs",
+    ],
+  },
+  {
+    name: "r2: .editorconfig (read by Prettier)",
+    idea: "Prettier takes indent and end_of_line from .editorconfig, so `prettier --check` changes with it.",
+    changes: [edit(".editorconfig", "[*]\nindent_size = 2\n", "[*]\nindent_size = 4\n")],
+    violations: ["protectedConfigs"],
+  },
+  {
+    name: "r2: hatch.toml test scripts",
+    idea: "`hatch test` / `hatch run test` come from hatch.toml when it exists.",
+    changes: [
+      edit(
+        "hatch.toml",
+        '[envs.default.scripts]\ntest = "pytest"\n',
+        '[envs.default.scripts]\ntest = "true"\n',
+      ),
+    ],
+    violations: ["protectedConfigs"],
+  },
+  {
+    name: "r2: Pipfile [scripts]",
+    idea: "`pipenv run test` reads Pipfile [scripts]; only its package tables are read.",
+    changes: [
+      edit(
+        "Pipfile",
+        '[packages]\nhttpx = "==0.27.0"\n\n[scripts]\ntest = "pytest"\n',
+        '[packages]\nhttpx = "==0.27.0"\n\n[scripts]\ntest = "pytest --co -q"\n',
+      ),
+    ],
+    violations: ["protectedConfigs"],
+  },
+  {
+    name: "r2: WebdriverIO and Jasmine runner configs",
+    idea: "wdio.conf.ts and spec/support/jasmine.json choose which specs run.",
+    changes: [
+      edit(
+        "wdio.conf.ts",
+        'export const config = { specs: ["./e2e/**"] };\n',
+        "export const config = { specs: [] };\n",
+      ),
+      edit(
+        "spec/support/jasmine.json",
+        '{ "spec_files": ["**/*[sS]pec.js"] }\n',
+        '{ "spec_files": [] }\n',
+      ),
+    ],
+    violations: ["protectedConfigs", "protectedConfigs"],
+  },
+  {
+    name: 'r2: package.json "size-limit"',
+    idea: "The size-limit CI check's budget lives in package.json.",
+    changes: [
+      edit(
+        "package.json",
+        `${JSON.stringify({ name: "shop", "size-limit": [{ path: "dist/index.js", limit: "10 kB" }] }, null, 2)}\n`,
+        `${JSON.stringify({ name: "shop", "size-limit": [{ path: "dist/index.js", limit: "100 kB" }] }, null, 2)}\n`,
+      ),
+    ],
+    violations: ["protectedConfigs"],
   },
 ];

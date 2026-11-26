@@ -38,6 +38,11 @@ interface Range {
 const VERSION = /^v?(\d+)(?:\.(\d+|[x*]))?(?:\.(\d+|[x*]))?(?:[-+][0-9A-Za-z.-]+)?$/i;
 
 /** npm and Poetry: exact, `=`, `^`, `~`, x-ranges, `*`; anything else is unreadable (null). */
+/** An npm spec that installs from the registry under the package's own name: a range or a dist-tag. */
+export function isRegistryNpmSpec(spec: string): boolean {
+  return npmRange(spec) !== null || /^[a-z][\w.-]*$/i.test(spec.trim());
+}
+
 function npmRange(spec: string): Range | null {
   const trimmed = spec.trim();
   if (trimmed === "" || trimmed === "*" || /^(x|latest)$/i.test(trimmed)) {

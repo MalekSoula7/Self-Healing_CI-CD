@@ -64,7 +64,7 @@ export const pathAttacks: Attack[] = [
         "runs:\n  using: composite\n  steps:\n    - run: 'true'\n      shell: bash\n",
       ),
     ],
-    violations: ["INV-GITHUB-DIR"],
+    violations: ["protectedConfigs"],
   },
 
   // ------------------------------------------------------------------ secrets and deny spellings
@@ -137,5 +137,30 @@ export const pathAttacks: Attack[] = [
     idea: "Mode change on a script.",
     changes: [{ path: "scripts/run.sh", old: text("echo\n"), new: text("echo\n", "100755") }],
     violations: ["INV-FILE-TYPES"],
+  },
+  // ================================================================== round 2 (after 3b71374)
+  {
+    name: "r2: a local JavaScript action's code",
+    idea: "action.yml is protected, but `runs: { using: node20, main: dist/index.js }` - the code CI runs isn't.",
+    changes: [
+      edit(
+        "actions/setup/dist/index.js",
+        'require("child_process").execSync("pnpm test", { stdio: "inherit" });\n',
+        "process.exitCode = 0;\n",
+      ),
+    ],
+    violations: ["server"],
+  },
+  {
+    name: "r2: secret files by other common names",
+    idea: "Rails config/secrets.yml, Streamlit .streamlit/secrets.toml, .git-credentials, .pgpass, *.tfvars.",
+    changes: [
+      edit("config/secrets.yml", "production:\n  key: a\n", "production:\n  key: b\n"),
+      edit(".streamlit/secrets.toml", 'token = "a"\n', 'token = "b"\n'),
+      add(".git-credentials", "https://user:token@github.com\n"),
+      add(".pgpass", "db:5432:shop:shop:secret\n"),
+      edit("prod.tfvars", 'db_password = "a"\n', 'db_password = "b"\n'),
+    ],
+    violations: ["INV-SECRETS", "INV-SECRETS", "INV-SECRETS", "INV-SECRETS", "INV-SECRETS"],
   },
 ];

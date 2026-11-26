@@ -7,8 +7,10 @@ import type { Check, Violation } from "./types";
 
 const ASSERTIONS: Record<Language, readonly RegExp[]> = {
   js: [
-    // expect(...), expect.soft(...), expectTypeOf(...), assert(...), assert.equal(...)
-    /\b(expect|expectTypeOf|assert|assertType)\b\s*(\.\s*[\w$]+\s*)*\(/g,
+    // expect(...), expect.soft(...), expectTypeOf(...), assert(...), assert.equal(...); not
+    // expect.assertions(0), and not text in JSX (`<p>expect(x)</p>`: after a `>` but not `=>`).
+    /(?<![\w$.])(?<!(?<!=)>\s*)(expect(\s*\.\s*soft)?|expectTypeOf|assertType)\s*\(/g,
+    /(?<![\w$.])(?<!(?<!=)>\s*)assert(\s*\.\s*[\w$]+)?\s*\(/g,
     /\.\s*should\b/g,
     // AVA and tap: t.is(...), t.deepEqual(...), t.throws(...); not t.pass().
     /\bt\s*\.\s*(is|not|deepEqual|notDeepEqual|like|true|false|truthy|falsy|regex|notRegex|throws|throwsAsync|notThrows|notThrowsAsync|snapshot|assert|equal|same|strictSame|match|ok|notOk|rejects|resolves|has)\s*\(/g,
@@ -17,7 +19,9 @@ const ASSERTIONS: Record<Language, readonly RegExp[]> = {
     /(?<![.\w])assert\b/g,
     /\bself\s*\.\s*(assert\w*|fail\w*)\s*\(/g,
     /\bassert_\w*\s*\(/g,
-    /\bpytest\s*\.\s*(raises|warns|deprecated_call)\s*\(/g,
+    // pytest.raises asserts only as a context manager, or with the callable to run.
+    /\bwith\s+pytest\s*\.\s*(raises|warns|deprecated_call)\s*\(/g,
+    /(?<!\bwith\s+)\bpytest\s*\.\s*(raises|warns)\s*\([^,()]+,\s*[\w.]+/g,
   ],
 };
 

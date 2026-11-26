@@ -103,15 +103,20 @@ const DEFAULTS = {
     "**/*.spec.mts",
     "**/*.spec.cts",
     "**/__tests__/**",
-    // Jest's default testMatch also takes files named test.ts or spec.js; Mocha runs test/;
-    // Cypress specs; setup files, manual mocks and shared test helpers steer what tests see.
-    "**/{test,spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+    // Jest's default testMatch also takes files named test.ts; Mocha runs test/; Cypress
+    // specs; setup files and manual mocks steer what tests see.
+    "**/test.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+    // Deno/Bun cart_test.ts, RSpec-style cart_spec.ts, type tests (cart.test-d.ts), Storybook
+    // stories (their play functions run as tests), Jest __fixtures__/.
+    "**/*_{test,spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+    "**/*.{test,spec}-d.*",
+    "**/*.stories.*",
+    "**/__fixtures__/**",
     "**/test/**",
     "**/*.cy.*",
     "**/{vitest,jest}.setup.*",
     "**/{setupTests,setup-tests,test-setup,testSetup}.*",
     "**/__mocks__/**",
-    "**/testing/**",
     // Python
     "**/test_*.py",
     "**/*_test.py",

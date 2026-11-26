@@ -3,7 +3,7 @@
 // Settings that move versions without naming a package (overrides, index URLs, sources) are
 // entries too, so changing them is a dependency change.
 import { parse as parseToml } from "smol-toml";
-import type { DependencySpec } from "./versions";
+import { isRegistryNpmSpec, type DependencySpec } from "./versions";
 
 export interface Dependency extends DependencySpec {
   /** Adding a `package` is governed by `dependencies.allowNew`; any change to a `setting` needs `any`. */
@@ -57,7 +57,8 @@ const LOCKFILES: Record<string, Ecosystem> = {
 /** The ecosystem whose lockfile `path` is, or null. */
 export function lockfileEcosystem(path: string): Ecosystem | null {
   const name = basename(path);
-  if (/^pylock(\.[^.]+)?\.toml$/.test(name)) return "python";
+  if (/^pylock(\.[^.]+)?\.toml$/.test(name) || /^requirements.*\.lock$/.test(name)) return "python";
+  if (name === "conda-lock.yml" || name === "conda-lock.yaml") return "python";
   return LOCKFILES[name] ?? null;
 }
 
@@ -73,24 +74,20 @@ export function isLockfile(path: string): boolean {
 export function isDependencySettingsFile(path: string): boolean {
   const name = basename(path);
   return (
-    /^(pnpm-workspace\.yaml|\.npmrc|\.yarnrc(\.yml)?|\.pnpmfile\.c?js|\.pnpmfile\.mjs|environment\.ya?ml|setup\.py|setup\.cfg|\.nvmrc|\.node-version|\.python-version|\.tool-versions)$/.test(
+    /^(pnpm-workspace\.yaml|\.npmrc|\.yarnrc(\.yml)?|\.pnpmfile\.[cm]?js|environment\.ya?ml|setup\.cfg|\.nvmrc|\.node-version|\.python-version|\.tool-versions|pixi\.toml|uv\.toml|pdm\.toml|bunfig\.toml|import_map\.json|package\.ya?ml|package\.json5)$/.test(
       name,
-    ) || /(^|\/)patches\/[^/]+\.(patch|diff)$/i.test(path)
+    ) || /\.(patch|diff)$/i.test(name)
   );
 }
 
-/** A spec that installs from somewhere other than the registry under its name. */
+/**
+ * A spec that installs from somewhere other than the registry under the package's own name: an
+ * allowlist, so `exec:`, `jsr:`, `workspace:`, git, file and alias specs all count (P3.6).
+ */
 export function isForeignSource(dependency: Dependency): boolean {
-  const spec = dependency.spec.trim();
   if (dependency.syntax === "pep440") return false;
-  return (
-    /^(npm:|git(\+[a-z]+)?:|github:|gitlab:|bitbucket:|https?:|file:|link:|portal:|patch:)/i.test(
-      spec,
-    ) ||
-    /^[\w.-]+\/[\w.-]+(#.*)?$/.test(spec) ||
-    spec.startsWith("@") ||
-    /"(git|url|path)"\s*:/.test(spec)
-  );
+  if (dependency.syntax === "opaque") return true;
+  return !isRegistryNpmSpec(dependency.spec);
 }
 
 /** The ecosystem of the manifest at `path` (call only for manifests). */
@@ -149,6 +146,10 @@ function readPackageJson(json: Record<string, unknown>): Map<string, Dependency>
     "bundleDependencies",
     "bundledDependencies",
     "packageManager",
+    "trustedDependencies",
+    "volta",
+    "engines",
+    "devEngines",
   ];
   for (const key of settings) {
     if (json[key] !== undefined) dependencies.set(key, setting(json[key]));
@@ -270,6 +271,7 @@ function readPyproject(toml: Record<string, unknown>): Map<string, Dependency> {
     ["tool.poetry.source", child(toml, ...poetry, "source")],
     ["tool.uv.sources", child(toml, "tool", "uv", "sources")],
     ["tool.uv.index", child(toml, "tool", "uv", "index")],
+    ["tool.pdm.resolution", child(toml, "tool", "pdm", "resolution")],
     ["tool.uv.override-dependencies", child(toml, "tool", "uv", "override-dependencies")],
     ["tool.uv.constraint-dependencies", child(toml, "tool", "uv", "constraint-dependencies")],
   ] as const) {
@@ -294,21 +296,77 @@ function parsedJson(content: string): Record<string, unknown> {
   return value;
 }
 
+const SETUP_ARGUMENTS = [
+  "install_requires",
+  "extras_require",
+  "setup_requires",
+  "tests_require",
+  "python_requires",
+];
+
+/**
+ * setup.py is code: its dependency arguments are read as text (bracket-balanced from `name=`), each
+ * one a setting, so any change to them needs mode `any` and nothing else in the file is touched.
+ */
+function readSetupPy(content: string): Map<string, Dependency> {
+  const dependencies = new Map<string, Dependency>();
+  for (const argument of SETUP_ARGUMENTS) {
+    const start = new RegExp(`\\b${argument}\\s*=`).exec(content);
+    if (start === null) continue;
+    let depth = 0;
+    let end = start.index + start[0].length;
+    for (; end < content.length; end += 1) {
+      const char = content[end];
+      if (char === "[" || char === "(" || char === "{") depth += 1;
+      else if (char === "]" || char === ")" || char === "}") depth -= 1;
+      if ((depth === 0 && (char === "," || char === "\n")) || depth < 0) break;
+    }
+    dependencies.set(
+      `setup.py:${argument}`,
+      setting(content.slice(start.index, end).replace(/\s+/g, " ")),
+    );
+  }
+  return dependencies;
+}
+
+const REQUIREMENT_LINE = /^([A-Za-z0-9][A-Za-z0-9._-]*\s*(\[[^\]]*\])?\s*([<>=!~;@(].*)?|-.*)$/;
+
+/** Every non-comment line reads as a requirement or an option. */
+function looksLikeRequirements(content: string): boolean {
+  return content
+    .replace(/\\\r?\n/g, "")
+    .split("\n")
+    .map((line) => line.replace(/(^|\s)#.*$/, "").trim())
+    .every((line) => line === "" || REQUIREMENT_LINE.test(line));
+}
+
 function readerFor(path: string): Reader | null {
   const name = basename(path);
   if (name === "package.json") return (content) => readPackageJson(parsedJson(content));
   if (name === "pyproject.toml") return (content) => readPyproject(parseToml(content));
   if (name === "pipfile") return (content) => readPipfile(parseToml(content));
+  if (name === "setup.py") return readSetupPy;
   const requirements =
     /(requirements|constraints).*\.(txt|in)$/.test(name) ||
     /(^|\/)requirements\/[^/]+\.(txt|in)$/i.test(path);
   return requirements ? readRequirements : null;
 }
 
+/**
+ * Files named like requirements but not starting with it (`docs/system_requirements.txt`) are
+ * manifests only when they read as one; `requirements*`/`constraints*` always are.
+ */
+function lenientName(path: string): boolean {
+  const name = basename(path);
+  return !/^(requirements|constraints)/.test(name) && !/(^|\/)requirements\//i.test(path);
+}
+
 /** The dependencies a manifest declares; null when `path` isn't a manifest. */
 export function readManifest(path: string, content: string): ManifestRead | null {
   const reader = readerFor(path);
   if (reader === null) return null;
+  if (reader === readRequirements && lenientName(path) && !looksLikeRequirements(content))
+    return null;
   try {
     return { ok: true, dependencies: reader(content) };
   } catch (error) {

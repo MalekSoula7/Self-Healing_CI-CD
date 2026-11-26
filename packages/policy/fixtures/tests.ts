@@ -174,7 +174,7 @@ export const skips: FixtureFamily = {
   ],
   forbidden: [
     {
-      // Matched on the raw line, fail closed: the stripper can misread JSX and odd line endings.
+      // Counted on the whole file, comments and strings included: fail closed.
       name: "skip markers even in a comment and a string",
       policy: EDITABLE,
       changes: [
@@ -187,7 +187,7 @@ export const skips: FixtureFamily = {
           ),
         ),
       ],
-      violations: ["tests.forbidSkips", "tests.forbidSkips"],
+      violations: ["tests.forbidSkips"],
     },
     {
       name: "it.skip",
@@ -208,7 +208,7 @@ export const skips: FixtureFamily = {
           ),
         ),
       ],
-      violations: ["tests.forbidSkips", "tests.forbidSkips"],
+      violations: ["tests.forbidSkips"],
     },
     {
       name: "xit, and a skip through an alias",
@@ -223,7 +223,7 @@ export const skips: FixtureFamily = {
           ),
         ),
       ],
-      violations: ["tests.forbidSkips", "tests.forbidSkips"],
+      violations: ["tests.forbidSkips"],
     },
     {
       name: "Playwright's test.fixme",
@@ -252,7 +252,7 @@ export const skips: FixtureFamily = {
           ),
         ),
       ],
-      violations: ["tests.forbidSkips", "tests.forbidSkips"],
+      violations: ["tests.forbidSkips"],
     },
     {
       name: "unittest skips, imperative and decorated",
@@ -263,13 +263,7 @@ export const skips: FixtureFamily = {
           "import unittest\nfrom unittest import skip\n\n\nclass T(unittest.TestCase):\n    @skip\n    def test_a(self):\n        self.assertTrue(True)\n\n    def test_b(self):\n        self.skipTest('flaky')\n        pytest.skip('x')\n",
         ),
       ],
-      // The import, the decorator, skipTest and pytest.skip.
-      violations: [
-        "tests.forbidSkips",
-        "tests.forbidSkips",
-        "tests.forbidSkips",
-        "tests.forbidSkips",
-      ],
+      violations: ["tests.forbidSkips"],
     },
     {
       name: "a return before the assertions",
