@@ -3,11 +3,11 @@ import { createGitHubApp, type GitHubApp } from "@pipeheal/github";
 import { createLogger } from "@pipeheal/shared/logger";
 import { loadWorkerEnv } from "./env";
 import { redisPacing } from "./pacing";
-import { buildGateway } from "./gateway/server";
+import { DEFAULT_RATE_LIMIT, buildGateway, buildInternalServer } from "./gateway/server";
 import { createFailuresQueue, createFailuresWorker, failureJobs } from "./queues/failures";
 import { createMaintenanceQueue, createMaintenanceWorker } from "./queues/maintenance";
 import { createWebhooksQueue, createWebhooksWorker } from "./queues/webhooks";
-import { createRedis, pingRedis } from "./redis";
+import { createRateLimitRedis, createRedis, pingRedis } from "./redis";
 import { createShutdown } from "./shutdown";
 import { ollamaClient } from "./ollama";
 import { createRulesWorker } from "./queues/rules";
@@ -66,12 +66,19 @@ async function main(): Promise<void> {
     pacing,
   });
 
-  const gateway = buildGateway({ logger, checks: { redis: () => pingRedis(redis) } });
+  const rateLimitRedis = createRateLimitRedis(env.REDIS_URL, logger);
+  const gateway = await buildGateway({
+    logger,
+    rateLimit: { ...DEFAULT_RATE_LIMIT, redis: rateLimitRedis },
+    trustedProxies: env.GATEWAY_TRUSTED_PROXIES,
+  });
+  const internal = buildInternalServer({ logger, checks: { redis: () => pingRedis(redis) } });
 
   const shutdown = createShutdown({
     logger,
     steps: [
       { name: "gateway", close: () => gateway.close() },
+      { name: "internal server", close: () => internal.close() },
       { name: "webhooks worker", close: () => webhooksWorker.close() },
       { name: "webhooks queue", close: () => webhooksQueue.close() },
       { name: "failures worker", close: () => failuresWorker.close() },
@@ -80,6 +87,7 @@ async function main(): Promise<void> {
       { name: "maintenance worker", close: () => maintenanceWorker.close() },
       { name: "maintenance queue", close: () => maintenanceQueue.close() },
       { name: "redis", close: () => redis.quit() },
+      { name: "rate-limit redis", close: () => rateLimitRedis.quit() },
       { name: "database", close: () => db.$disconnect() },
     ],
   });
@@ -100,6 +108,7 @@ async function main(): Promise<void> {
   });
 
   await gateway.listen({ host: env.GATEWAY_HOST, port: env.GATEWAY_PORT });
+  await internal.listen({ host: env.GATEWAY_INTERNAL_HOST, port: env.GATEWAY_INTERNAL_PORT });
   await maintenanceQueue.add("ping", { requestedAt: new Date().toISOString() });
   if (githubApp === null) logger.warn("GitHub App not configured: webhook repo sync is disabled");
   // Host only: the URL is internal infrastructure.

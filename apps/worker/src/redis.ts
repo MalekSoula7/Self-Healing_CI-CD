@@ -11,6 +11,23 @@ export function createRedis(url: string, logger: Logger): Redis {
   return redis;
 }
 
+/**
+ * A separate connection for the gateway's rate limiter that fails fast: no offline queue, one
+ * retry and a short command timeout. With BullMQ's settings a Redis outage would queue every
+ * limiter call forever, hanging requests and growing memory (P4.1b review H1).
+ */
+export function createRateLimitRedis(url: string, logger: Logger): Redis {
+  const redis = new Redis(url, {
+    enableOfflineQueue: false,
+    maxRetriesPerRequest: 1,
+    commandTimeout: 500,
+  });
+  redis.on("error", (error: Error) => {
+    logger.warn({ error: error.message }, "rate-limit redis connection error");
+  });
+  return redis;
+}
+
 /** True when Redis answers PING within `timeoutMs`. Never throws, never hangs. */
 export async function pingRedis(redis: Redis, timeoutMs = 1000): Promise<boolean> {
   if (redis.status !== "ready") return false;

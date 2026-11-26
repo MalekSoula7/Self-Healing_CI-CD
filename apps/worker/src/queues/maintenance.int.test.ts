@@ -5,7 +5,7 @@ import type { Redis } from "ioredis";
 import { createLogger } from "@pipeheal/shared/logger";
 import { testRedisUrl } from "@pipeheal/shared/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildGateway } from "../gateway/server";
+import { buildInternalServer } from "../gateway/server";
 import { createRedis, pingRedis } from "../redis";
 import {
   MAINTENANCE_QUEUE,
@@ -77,11 +77,11 @@ describe("maintenance queue against real Redis", () => {
     await expect(job.waitUntilFinished(ready(events), 5000)).rejects.toThrow();
   });
 
-  it("reports Redis as up through the gateway health check", async () => {
+  it("reports Redis as up through the internal readiness check", async () => {
     expect(await pingRedis(redis)).toBe(true);
-    const gateway = buildGateway({ logger, checks: { redis: () => pingRedis(redis) } });
-    const response = await gateway.inject({ method: "GET", url: "/health" });
-    await gateway.close();
+    const internal = buildInternalServer({ logger, checks: { redis: () => pingRedis(redis) } });
+    const response = await internal.inject({ method: "GET", url: "/readyz" });
+    await internal.close();
     expect(response.statusCode).toBe(200);
   });
 });

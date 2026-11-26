@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fastify/rate-limit": "11.2.2",
     "@pipeheal/agent-core": "workspace:*",
     "@pipeheal/db": "workspace:*",
     "@pipeheal/github": "workspace:*",

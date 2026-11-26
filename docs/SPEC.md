@@ -561,7 +561,8 @@ RBAC: OWNER (billing, members, everything), ADMIN (policy, repos, manual heal), 
 ## 12. Security & privacy
 
 - Webhook HMAC verification with constant-time compare; reject unsigned; idempotency by delivery ID.
-- OIDC verification as in §5.4; session tokens random, hashed at rest, short TTL, bound to one attempt; gateway rate limits per session and per org.
+- OIDC verification as in §5.4; session tokens random, hashed at rest, short TTL, bound to one attempt; gateway rate limits per client address (in place: IPv4, or IPv6 by /64; `X-Forwarded-For` believed only from `GATEWAY_TRUSTED_PROXIES`), and per session and per org once a session is verified (P4.2).
+- Gateway listeners (P4.1b): runners reach only the public one (`/livez`, `/v1/*`). It has a 16 KB default body limit (larger limits per route from `BODY_LIMITS`), 10 s header, 120 s request and 65 s idle deadlines, and at most 1,024 connections. `/readyz`, which shows dependency states, is served on a separate internal listener, bound to loopback by default. In production, put a buffering reverse proxy with its own client timeouts in front of the public listener, and keep the internal one off public networks.
 - Secrets (App private key, webhook secret, DB URL) only via environment / secret manager. Ollama has no authentication: it listens on the host only, never on a public interface. `.env.example` documents them with no real values.
 - Redaction before storage and before any model call.
 - Prompt injection: repo and log content wrapped and labeled as untrusted; no network or shell tools; all consequential decisions (policy, writes) happen server-side in code.
@@ -616,6 +617,10 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 3 (resolved, D13):** org defaults are split from org guardrails (§8.1); every field has a merge rule (§8.4).
 - **Resolved (D14), was CHECKPOINT 3 from the P3.6 red team:** rules no stated rule covers, each cheap and statically checkable, to add or not: tautological assertions (`expect(true).toBe(true)`, `assert True`, tuple asserts); assertions inside `try/catch` or `except AssertionError`; unawaited `.resolves`/`.rejects`; retry settings (`jest.retryTimes`, `{ retry }`); mocking the module under test; in source, test-environment detection (`VITEST`, `"pytest" in sys.modules`), empty `catch {}`/`except: pass`, test-framework monkeypatching or pytest hooks, `as any`/`as unknown as`, warning filters; imports of packages no manifest declares. Decided in D14: the tricks above become rules, except mocking the module under test and undeclared imports (later, server side); packed lines count as several; doctests count as tests; edits under file-wide suppressions open a draft PR. Still open: checking that a lockfile only moves the bumped packages (Phase 4; the default `frozen` makes it rare).
 - **Phase 4 (from P3.6):** the server must refuse a path whose ancestor isn't a directory in the base tree (writing through a symlinked directory, or under an existing file); treat an empty JUnit baseline (the suite didn't compile) and a missing or zero-test report as "behavioral checks unavailable" or a failure; resolve protected configs' `extends` and local plugins.
+- **P4.2 onward (from the P4.1b security review):**
+  - Check the session token in `onRequest` or `preParsing` on the step and submission routes, so an unauthenticated 24 or 64 MB body is never read. Allow one step or submission in flight per session, and cap how many large bodies are read at once.
+  - Add per-session and per-org rate limits after the session is verified (§12).
+  - If 120 s is too short for 64 MB submissions from slow self-hosted runners, raise the submission route's deadline only.
 - **Phase 4 (from the Phase 3 security review):**
   - Wrap `.pipeheal.yml` custom rules as untrusted in the healer prompt too, or refuse custom rules in the repo file (L3).
   - A stored `.pipeheal.yml` that a newer schema rejects should be recorded as an error and re-read, not throw (L4); today it fails closed.

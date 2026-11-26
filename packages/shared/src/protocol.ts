@@ -32,6 +32,19 @@ export const LIMITS = {
   maxRetryAfterMs: 30_000,
 } as const;
 
+/**
+ * Request body limits (bytes) the gateway enforces per route, before parsing; every other route
+ * gets `default`. They cap a request's total, which the per-item `LIMITS` alone don't.
+ */
+export const BODY_LIMITS = {
+  default: 16 * 1024,
+  session: 16 * 1024,
+  /** Tool results, or the first step's file tree and baseline reports. */
+  step: 24 * 1024 * 1024,
+  /** Final file contents, checks and reports. */
+  submission: 64 * 1024 * 1024,
+} as const;
+
 const repoPath = z
   .string()
   .max(4096)

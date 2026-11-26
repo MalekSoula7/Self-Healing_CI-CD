@@ -35,7 +35,8 @@ Then open:
 
 - http://localhost:3000, the web app
 - http://localhost:3000/api/health, web health
-- http://localhost:4000/health, gateway health (reports Redis up/down)
+- http://localhost:4000/livez, gateway liveness (public, checks nothing)
+- http://localhost:4001/readyz, gateway readiness (internal listener, reports Redis up/down)
 
 Stop with `Ctrl+C`, and stop the databases with `docker compose stop`.
 

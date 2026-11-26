@@ -898,3 +898,28 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
 ## 2026-11-26 · Speed tests run on their own
 
 - The H2 speed test failed in full runs (14 s against a 5 s budget; 2.5 s alone): it shared the CPU with the parallel test files. Speed budgets now live in `*.perf.test.ts` and run in a `perf` Vitest project that starts after the others (`sequence.groupOrder`). The H2, JUnit M2 and triage budgets moved unchanged, and `pnpm test:unit` runs them too. The diff and glob budgets sit inside functional tests and stay where they are.
+
+## 2026-11-26 · P4.1b gateway hardening
+
+- **Listeners:** the public gateway serves `/livez`, which checks nothing and is never rate limited. `/readyz`, with the Redis check, moved to an internal listener (`GATEWAY_INTERNAL_HOST`/`PORT`, default 127.0.0.1:4001). The env check refuses giving both listeners one port. `/health` is gone.
+- **Deadlines and caps** (on both listeners): 16 KB default body limit, with per-route limits in `BODY_LIMITS` (`@pipeheal/shared/protocol`: session 16 KB, step 24 MB, submission 64 MB). Headers 10 s, whole request 120 s, idle socket 65 s (longer than a long-poll), at most 1,024 connections.
+- **Rate limit:** `@fastify/rate-limit` 11.2.2. That's the newest release older than two weeks; 11.3.0 was six days old.
+  - Counted in `onRequest`, before the body is read. It is in place before `buildGateway` returns (which is now async), so later routes and 404s are counted.
+  - Keyed by client address, with IPv6 grouped by /64. `X-Forwarded-For` is believed only from `GATEWAY_TRUSTED_PROXIES`.
+  - Production uses a separate fail-fast Redis connection (no offline queue, 500 ms command timeout). If Redis is down, requests fail at once with a 500; they neither hang nor pass unlimited.
+- **Security review** (`security-reviewer`): H1 and M1–M4 are fixed, with tests:
+  - **H1:** a Redis outage would have queued limiter calls forever, hanging every request, `/livez` included.
+  - **M1:** made-up bearer tokens and IPv6 addresses each got a fresh budget.
+  - **M2:** routes added before the plugin loaded weren't limited, nor were 404s.
+  - **M3:** no trusted-proxy setting.
+  - **M4:** Node's default header deadline, and no connection cap.
+  - M5 (key growth) is gone with M1.
+  - Recorded for later in SPEC §12 and §15: M6 (authenticate step and submission bodies before reading them, one request in flight per session), per-session and per-org limits after verification (P4.2), and L1 (keep the internal listener off public networks). L2 (the `X-RateLimit-*` headers show the limits) is accepted.
+- **Tests:**
+  - Unit: timeouts on both listeners, body limits, 429s, a route added afterwards being counted, 404s counted, `/livez` exempt, rotating tokens getting no fresh budget, IPv6 /64 buckets, trusted versus spoofed `X-Forwarded-For`, and `clientBucket` cases.
+  - Integration: two gateways sharing a Redis budget, and a Redis that's down (fast 500, `/livez` still 200).
+- **Checked by hand** (`tsx src/main.ts` against Docker Redis):
+  - `:4000/livez` returns 200, and `:4000/readyz` returns 404.
+  - `:4001/readyz` returns 200 with Redis up.
+  - Rate-limit headers come from Redis, and a 20 KB body gets a 413.
+
