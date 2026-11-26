@@ -31,7 +31,7 @@ Created in Phase 0. Keep this section accurate whenever scripts change.
 - `pnpm dev:webhooks` - relays GitHub webhooks from `SMEE_URL` to the local web app (setup: `docs/SETUP-GITHUB-APP.md`)
 - `pnpm build` - production builds
 - `pnpm test` - unit + integration tests with coverage (needs `docker compose up -d`)
-- `pnpm test:unit` - unit tests only, no infrastructure (what the Windows CI job runs)
+- `pnpm test:unit` - unit tests and speed budgets (`*.perf.test.ts`, run after the rest), no infrastructure (what the Windows CI job runs)
 - `pnpm test:e2e` - Playwright against a production build on :3100 (once per machine: `pnpm --filter @pipeheal/web exec playwright install chromium`)
 - `pnpm typecheck` / `pnpm lint` / `pnpm format` / `pnpm format:check`
 - `pnpm db:migrate [--name <name>]` - `prisma migrate dev` on the dev database, then regenerates the client (Prisma 7's `migrate dev` no longer does)

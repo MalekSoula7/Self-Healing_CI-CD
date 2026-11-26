@@ -211,15 +211,4 @@ describe("Phase 3 security review", () => {
       "INV-GITHUB-DIR",
     ]);
   });
-
-  it("H2: stays fast on inputs that were quadratic", () => {
-    const started = Date.now();
-    // Sized so a quadratic regression blows the budget even under coverage instrumentation.
-    check([add("tests/test_blank.py", "\n".repeat(50_000))], { tests: EDITABLE });
-    check([add("src/a.test.ts", "const a = 1\n".repeat(4_000))], { tests: EDITABLE });
-    check([add("src/b.test.ts", "expect(".repeat(4_000))], { tests: EDITABLE });
-    check([add("src/c.test.ts", `const {${" skip,".repeat(5_000)}`)], { tests: EDITABLE });
-
-    expect(Date.now() - started).toBeLessThan(5_000);
-  });
 });

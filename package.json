@@ -18,7 +18,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run --coverage",
-    "test:unit": "vitest run --project unit",
+    "test:unit": "vitest run --project unit --project perf",
     "test:e2e": "pnpm --filter @pipeheal/web test:e2e",
     "db:generate": "pnpm --filter @pipeheal/db generate",
     "db:migrate": "pnpm --filter @pipeheal/db migrate",

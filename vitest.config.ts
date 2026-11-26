@@ -6,7 +6,9 @@ import { defineConfig } from "vitest/config";
 //   goes through msw and unmocked requests fail (vitest.setup.ts), so unit tests never hit the network.
 // - integration: `*.int.test.ts`, needs `docker compose up -d` (Postgres, Redis). Runs against a
 //   separate `pipeheal_test` database, recreated on every run.
-// `pnpm test` runs both with coverage.
+// - perf: `*.perf.test.ts`, speed budgets that guard against quadratic regressions. Runs after the
+//   other projects (a later `groupOrder`), so parallel test files can't eat its budgets.
+// `pnpm test` runs all three with coverage; `pnpm test:unit` runs unit and perf.
 const ignored = ["**/node_modules/**", "**/dist/**", "**/.next/**"];
 // Secrets from the developer's shell or .env never reach tests (empty counts as unset in parseEnv).
 const blankSecrets = {
@@ -44,7 +46,7 @@ export default defineConfig({
             "scripts/**/*.test.ts",
             "{apps,packages}/*/src/**/*.test.{ts,tsx}",
           ],
-          exclude: [...ignored, "**/*.int.test.ts"],
+          exclude: [...ignored, "**/*.int.test.ts", "**/*.perf.test.ts"],
           setupFiles: ["./vitest.setup.ts"],
           env: blankSecrets,
         },
@@ -61,6 +63,19 @@ export default defineConfig({
           // Recreates and migrates the pipeheal_test database once per run.
           globalSetup: ["./vitest.integration.globalSetup.ts"],
           env: blankSecrets,
+        },
+      },
+      {
+        resolve,
+        test: {
+          name: "perf",
+          environment: "node",
+          allowOnly: false,
+          include: ["{apps,packages}/*/src/**/*.perf.test.ts"],
+          exclude: ignored,
+          setupFiles: ["./vitest.setup.ts"],
+          env: blankSecrets,
+          sequence: { groupOrder: 1 },
         },
       },
     ],

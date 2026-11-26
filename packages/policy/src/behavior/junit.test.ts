@@ -124,15 +124,6 @@ describe("mergeInventories", () => {
   });
 });
 
-describe("parseJunit performance", () => {
-  it("reads a huge attribute body in linear time (security review M2)", () => {
-    const started = Date.now();
-    parseJunit(`<testsuite><testcase name="t" ${"a".repeat(500_000)}/></testsuite>`);
-
-    expect(Date.now() - started).toBeLessThan(2_000);
-  });
-});
-
 describe("parseJunit attributes", () => {
   it.each([
     ["spaces around =", `<testsuite><testcase  classname = 'c'\tname= "t" /></testsuite>`, "c::t"],
