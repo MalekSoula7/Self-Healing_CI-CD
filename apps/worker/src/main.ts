@@ -1,9 +1,12 @@
-import { createDb } from "@pipeheal/db";
+import { createDb, forSystem, runnerSessions } from "@pipeheal/db";
 import { createGitHubApp, type GitHubApp } from "@pipeheal/github";
+import { effectivePolicy } from "@pipeheal/policy";
 import { createLogger } from "@pipeheal/shared/logger";
 import { loadWorkerEnv } from "./env";
 import { redisPacing } from "./pacing";
+import { githubOidcKeys } from "./gateway/oidc";
 import { DEFAULT_RATE_LIMIT, buildGateway, buildInternalServer } from "./gateway/server";
+import { registerSessionRoute } from "./gateway/session";
 import { createFailuresQueue, createFailuresWorker, failureJobs } from "./queues/failures";
 import { createMaintenanceQueue, createMaintenanceWorker } from "./queues/maintenance";
 import { createWebhooksQueue, createWebhooksWorker } from "./queues/webhooks";
@@ -71,6 +74,17 @@ async function main(): Promise<void> {
     logger,
     rateLimit: { ...DEFAULT_RATE_LIMIT, redis: rateLimitRedis },
     trustedProxies: env.GATEWAY_TRUSTED_PROXIES,
+  });
+  registerSessionRoute(gateway, {
+    sessions: runnerSessions(db, "gateway"),
+    keys: githubOidcKeys(),
+    appSlug: env.GITHUB_APP_SLUG,
+    // The attempt's wall-clock budget comes from its repository's effective policy (SPEC §8).
+    wallClockMinutes: async (attempt) => {
+      const system = await forSystem(db, attempt.orgId, "gateway");
+      const { policy } = effectivePolicy(await system.policies.layers(attempt.failure.repo.id));
+      return policy.limits.maxWallClockMinutes;
+    },
   });
   const internal = buildInternalServer({ logger, checks: { redis: () => pingRedis(redis) } });
 

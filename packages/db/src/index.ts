@@ -1,10 +1,11 @@
 // @pipeheal/db: Prisma + PostgreSQL, plus org-scoped data helpers.
-// Tenant-owned tables are read and written through `forMember` / `forSystem` / `installations`
-// only (CLAUDE.md). The raw client from `createDb` is for Better Auth's adapter and these helpers.
+// Tenant-owned tables are read and written through `forMember` / `forSystem` / `installations` /
+// `runnerSessions` only (CLAUDE.md). The raw client from `createDb` is for Better Auth's adapter and these helpers.
 export type { Actor } from "./audit";
 export { createDb, type Db } from "./client";
 export { ConflictError, ForbiddenError, NotFoundError } from "./errors";
 export type {
+  AttemptInput,
   AuditPage,
   FailedJobInput,
   FailedRunInput,
@@ -50,6 +51,14 @@ export {
   type StoredLayers,
   type SystemScope,
 } from "./scope";
+export {
+  DISPATCH_TIMEOUT_MS,
+  SESSION_TTL_MS,
+  runnerSessions,
+  type AttemptForSession,
+  type RunnerSessions,
+  type SessionRef,
+} from "./runner-sessions";
 export { DEV_DATABASE_URL, databaseUrlSchema, tlsUnlessLoopback } from "./url";
 export { GITHUB_PROVIDER_ID, githubIdentity, type GitHubIdentity } from "./users";
 export {

@@ -16,6 +16,7 @@ import type {
 import type { Role } from "./generated/prisma/enums";
 import type { FailedRunInput } from "./inputs";
 import { installations } from "./installations";
+import { runnerSessions } from "./runner-sessions";
 import {
   SYNC_BATCH_LIMIT,
   forMember,
@@ -28,6 +29,7 @@ import { createTestDb } from "./testing";
 
 const db = createTestDb();
 const installs = installations(db, "test");
+const sessions = runnerSessions(db, "test");
 
 afterAll(async () => {
   await db.$disconnect();
@@ -219,6 +221,7 @@ async function snapshot(tenant: Tenant) {
     failures: await db.pipelineFailure.findMany({ where, orderBy: { id: "asc" } }),
     failedRuns: await db.failedRun.findMany({ where, orderBy: { id: "asc" } }),
     failedJobs: await db.failedJob.findMany({ where, orderBy: { id: "asc" } }),
+    attempts: await db.healAttempt.findMany({ where, orderBy: { id: "asc" } }),
     auditLogs: await db.auditLog.findMany({ where, orderBy: { id: "asc" } }),
   };
 }
@@ -231,6 +234,8 @@ let a: Tenant;
 let b: Tenant;
 /** A compiled rule draft of B's, for the cross-org cases. */
 let bDraftId: string;
+/** A dispatched attempt of B's, for the cross-org cases. */
+let bAttemptId: string;
 
 beforeEach(async () => {
   [a, b] = await Promise.all([createTenant(), createTenant()]);
@@ -243,11 +248,59 @@ beforeEach(async () => {
     explanation: "Denies the payments module.",
   });
   bDraftId = draft.id;
+  const attempt = await b.system.attempts.create({
+    failureId: b.failure.id,
+    targetSha: b.failure.headSha,
+    failingCheck: "test",
+  });
+  bAttemptId = attempt.id;
 });
+
+/** The signed IDs of a tenant's repository, as a runner's OIDC token carries them. */
+function signedBy(tenant: Tenant, attemptId: string) {
+  return {
+    attemptId,
+    githubRepoId: tenant.repo.githubRepoId,
+    githubOwnerId: tenant.org.githubAccountId,
+  };
+}
+
+/** A fresh session-token hash: the column is unique across the whole test database. */
+const sessionHash = () => randomUUID().replaceAll("-", "").repeat(2);
 
 // One case per helper: A's scope pointed at B's rows. Each case asserts what A gets back; the
 // shared test below asserts that B's rows, memberships and audit log are unchanged.
 const crossOrgCases: Record<string, () => Promise<void>> = {
+  "attempts.create": async () => {
+    await expect(
+      a.system.attempts.create({
+        failureId: b.failure.id,
+        targetSha: b.failure.headSha,
+        failingCheck: "test",
+      }),
+    ).rejects.toThrow(NotFoundError);
+  },
+  // Runner sessions are keyed by the IDs GitHub signed: A's repository can't reach B's attempt,
+  // nor can B's attempt ID with the wrong owner.
+  "runnerSessions.find": async () => {
+    await expect(sessions.find(signedBy(a, bAttemptId))).resolves.toBeNull();
+    await expect(
+      sessions.find({ ...signedBy(b, bAttemptId), githubOwnerId: a.org.githubAccountId }),
+    ).resolves.toBeNull();
+  },
+  "runnerSessions.open": async () => {
+    await expect(
+      sessions.open(signedBy(a, bAttemptId), { tokenHash: sessionHash(), now: new Date() }),
+    ).resolves.toBeNull();
+  },
+  "runnerSessions.contest": async () => {
+    await expect(
+      sessions.contest(signedBy(a, bAttemptId), { now: new Date(), reason: "x" }),
+    ).resolves.toBe(false);
+  },
+  "attempts.recordDispatch": async () => {
+    await expect(a.system.attempts.recordDispatch(bAttemptId, 5n)).rejects.toThrow(NotFoundError);
+  },
   "repositories.list": async () => {
     const repos = await a.asAdmin.repositories.list();
     expect(repos.map((repo) => repo.id)).toEqual([a.repo.id]);
@@ -461,6 +514,7 @@ function allHelperNames(): string[] {
   return [
     ...helperNames(a.system),
     ...helperNames(installs).map((name) => `installations.${name}`),
+    ...helperNames(sessions).map((name) => `runnerSessions.${name}`),
   ];
 }
 
@@ -486,9 +540,85 @@ const readOnlyHelpers = [
   "audit.list",
   "installations.findByInstallationId",
   "installations.ownerCandidates",
+  "runnerSessions.find",
 ];
 
 const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
+  "attempts.create": async () => {
+    const attempt = await a.system.attempts.create({
+      failureId: a.failure.id,
+      targetSha: a.failure.headSha,
+      failingCheck: "typecheck",
+    });
+    return [
+      {
+        actorType: "SYSTEM",
+        action: "attempt.dispatched",
+        target: `attempt:${attempt.id}`,
+        metadata: { failureId: a.failure.id, attemptNo: 1, failingCheck: "typecheck" },
+      },
+    ];
+  },
+  "runnerSessions.open": async () => {
+    // Setup written directly (no audit entries of its own): an enabled repo, a recorded run.
+    await db.repository.update({ where: { id: a.repo.id }, data: { enabled: true } });
+    const attempt = await a.system.attempts.create({
+      failureId: a.failure.id,
+      targetSha: a.failure.headSha,
+      failingCheck: "test",
+      dispatchRunId: 42n,
+    });
+    const now = new Date();
+    const opened = await sessions.open(signedBy(a, attempt.id), { tokenHash: sessionHash(), now });
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.session_opened",
+        target: `attempt:${attempt.id}`,
+        metadata: { expiresAt: present(opened, "session").expiresAt.toISOString() },
+      },
+    ];
+  },
+  "runnerSessions.contest": async () => {
+    await db.repository.update({ where: { id: a.repo.id }, data: { enabled: true } });
+    const attempt = await a.system.attempts.create({
+      failureId: a.failure.id,
+      targetSha: a.failure.headSha,
+      failingCheck: "test",
+      dispatchRunId: 43n,
+    });
+    const now = new Date();
+    await sessions.open(signedBy(a, attempt.id), { tokenHash: sessionHash(), now });
+    await sessions.contest(signedBy(a, attempt.id), { now, reason: "second exchange" });
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      { actorType: "SYSTEM", action: "attempt.session_opened", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.session_contested",
+        target: `attempt:${attempt.id}`,
+        metadata: { reason: "second exchange" },
+      },
+    ];
+  },
+  "attempts.recordDispatch": async () => {
+    const attempt = await a.system.attempts.create({
+      failureId: a.failure.id,
+      targetSha: a.failure.headSha,
+      failingCheck: "build",
+    });
+    await a.system.attempts.recordDispatch(attempt.id, 44n);
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.dispatch_recorded",
+        target: `attempt:${attempt.id}`,
+        metadata: { runId: "44" },
+      },
+    ];
+  },
   "customRules.propose": async () => {
     const draft = await a.asAdmin.customRules.propose("REPO", a.repo.id, "No payments changes.");
     return [

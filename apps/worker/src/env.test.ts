@@ -21,6 +21,7 @@ const production = {
   REDIS_URL: "rediss://cache.internal:6380",
   DATABASE_URL: "postgresql://app:pw@db.internal:5432/pipeheal?sslmode=verify-full",
   ...githubApp,
+  GITHUB_APP_SLUG: "pipeheal",
   ...ollama,
 };
 
@@ -89,6 +90,30 @@ describe("worker env", () => {
 
   it("requires the GitHub App to be configured in production", () => {
     expect(() => loadWorkerEnv({ ...production, GITHUB_APP_ID: undefined })).toThrow(
+      EnvValidationError,
+    );
+    // The session exchange checks runs against `<slug>[bot]` (SPEC §5.4).
+    expect(() => loadWorkerEnv({ ...production, GITHUB_APP_SLUG: undefined })).toThrow(
+      EnvValidationError,
+    );
+  });
+
+  it("reads the App slug, and refuses one that isn't a slug", () => {
+    expect(loadWorkerEnv({ GITHUB_APP_SLUG: "pipeheal-dev" }).GITHUB_APP_SLUG).toBe("pipeheal-dev");
+    expect(loadWorkerEnv({}).GITHUB_APP_SLUG).toBeUndefined();
+    expect(() => loadWorkerEnv({ GITHUB_APP_SLUG: "evil[bot]" })).toThrow(EnvValidationError);
+  });
+
+  it("reads trusted proxies, refuses anything but addresses and CIDRs, and keeps ports apart", () => {
+    expect(
+      loadWorkerEnv({ GATEWAY_TRUSTED_PROXIES: "10.0.0.0/8, 192.168.1.5,fd00::/8" })
+        .GATEWAY_TRUSTED_PROXIES,
+    ).toEqual(["10.0.0.0/8", "192.168.1.5", "fd00::/8"]);
+    for (const bad of ["*", "true", "10.0.0.0/33", "loopback", "10.0.0.1/8/1"]) {
+      expect(() => loadWorkerEnv({ GATEWAY_TRUSTED_PROXIES: bad })).toThrow(EnvValidationError);
+    }
+    expect(() => loadWorkerEnv({ GATEWAY_INTERNAL_PORT: "4000" })).toThrow(EnvValidationError);
+    expect(() => loadWorkerEnv({ ...production, GATEWAY_INTERNAL_PORT: "4000" })).toThrow(
       EnvValidationError,
     );
   });

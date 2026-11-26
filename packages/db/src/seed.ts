@@ -44,11 +44,11 @@ const REPOSITORIES: SeedRepository[] = [
     enabled: true,
     language: "TypeScript",
     commands: {
-      install: "pnpm install --frozen-lockfile",
-      build: "pnpm build",
-      lint: "pnpm lint",
-      typecheck: "pnpm typecheck",
-      test: "pnpm test",
+      install: ["pnpm", "install", "--frozen-lockfile"],
+      build: ["pnpm", "build"],
+      lint: ["pnpm", "lint"],
+      typecheck: ["pnpm", "typecheck"],
+      test: ["pnpm", "test"],
     },
     junitGlob: "reports/junit.xml",
     workflows: [
@@ -76,10 +76,10 @@ const REPOSITORIES: SeedRepository[] = [
     enabled: false,
     language: "Python",
     commands: {
-      install: "pip install -r requirements.txt",
-      lint: "ruff check .",
-      typecheck: "mypy .",
-      test: "pytest --junitxml=reports/junit.xml",
+      install: ["pip", "install", "-r", "requirements.txt"],
+      lint: ["ruff", "check", "."],
+      typecheck: ["mypy", "."],
+      test: ["pytest", "--junitxml=reports/junit.xml"],
     },
     junitGlob: "reports/junit.xml",
     workflows: [

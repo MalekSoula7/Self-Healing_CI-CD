@@ -20,6 +20,7 @@ import type {
   Role,
 } from "./generated/prisma/enums";
 import {
+  attemptInputSchema,
   auditPageSchema,
   classificationSchema,
   failedRunInputSchema,
@@ -33,6 +34,7 @@ import {
   passedRunInputSchema,
   policyFileRecordSchema,
   recentChangesRecordSchema,
+  type AttemptInput,
   type AuditPage,
   type ClassificationInput,
   type FailedRunInput,
@@ -541,6 +543,71 @@ function buildSystemScope(ctx: ScopeContext) {
 
   return {
     ...base,
+    attempts: {
+      /**
+       * Records a dispatched attempt on one of this org's failures (SPEC §2 step 7; the
+       * dispatcher, P4.8, and the local-mode CLI, P4.6). Numbered per failure.
+       */
+      async create(input: AttemptInput) {
+        const data = attemptInputSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const failure = await tx.pipelineFailure.findFirst({
+            where: { id: data.failureId, orgId },
+          });
+          if (failure === null) throw new NotFoundError("failure not found");
+          const previous = await tx.healAttempt.count({ where: { orgId, failureId: failure.id } });
+          const attempt = await tx.healAttempt.create({
+            data: {
+              orgId,
+              failureId: failure.id,
+              attemptNo: previous + 1,
+              targetSha: data.targetSha,
+              failingCheck: data.failingCheck,
+              dispatchRunId: data.dispatchRunId ?? null,
+            },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "attempt.dispatched",
+            target: auditTarget("attempt", attempt.id),
+            metadata: {
+              failureId: failure.id,
+              attemptNo: attempt.attemptNo,
+              failingCheck: attempt.failingCheck,
+            },
+          });
+          return attempt;
+        });
+      },
+
+      /**
+       * Records the healer run GitHub created for an attempt's dispatch (`return_run_details`).
+       * Until it is recorded no runner can open the attempt's session (SPEC §5.4, D16): the run ID
+       * is what binds a runner's token to this attempt rather than another one in the same repo.
+       * Recorded once, while the attempt is still waiting for its runner.
+       */
+      async recordDispatch(attemptId: string, runId: bigint) {
+        const id = requireId(attemptId, "attempt");
+        const run = githubIdSchema.parse(runId);
+        return db.$transaction(async (tx) => {
+          const attempt = await tx.healAttempt.findFirst({ where: { id, orgId } });
+          if (attempt === null) throw new NotFoundError("attempt not found");
+          if (attempt.dispatchRunId === run) return attempt;
+          if (attempt.status !== "DISPATCHED" || attempt.dispatchRunId !== null) {
+            throw new ConflictError("the attempt's dispatch run is already recorded");
+          }
+          const updated = await tx.healAttempt.update({
+            where: { id },
+            data: { dispatchRunId: run },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "attempt.dispatch_recorded",
+            target: auditTarget("attempt", id),
+            metadata: { runId: String(run) },
+          });
+          return updated;
+        });
+      },
+    },
     customRules: {
       ...base.customRules,
 

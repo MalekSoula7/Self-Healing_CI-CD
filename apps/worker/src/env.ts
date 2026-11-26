@@ -71,6 +71,12 @@ function separateGatewayPorts(
   });
 }
 
+// The App's slug: its runs' OIDC `actor` is `<slug>[bot]` (SPEC §5.4), checked at session exchange.
+const githubAppSlug = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9][a-z0-9-]{0,99}$/i, "must be a GitHub App slug (the name in its URL)");
+
 // Variables apps/worker uses today. Later phases add theirs.
 export const workerEnvSchema = z
   .object({
@@ -81,6 +87,8 @@ export const workerEnvSchema = z
     ...gateway,
     GITHUB_APP_ID: githubAppIdSchema.optional(),
     GITHUB_APP_PRIVATE_KEY: githubPrivateKeySchema.optional(),
+    // Without it the gateway refuses every session exchange.
+    GITHUB_APP_SLUG: githubAppSlug.optional(),
     OLLAMA_URL: envHttpUrl.default(OLLAMA_DEFAULT_URL),
     ...models,
   })
@@ -114,6 +122,7 @@ const productionSchema = z
     ...gateway,
     GITHUB_APP_ID: githubAppIdSchema,
     GITHUB_APP_PRIVATE_KEY: githubPrivateKeySchema,
+    GITHUB_APP_SLUG: githubAppSlug,
     // Set explicitly; https unless the model runs on this host (its usual place).
     OLLAMA_URL: envHttpUrl.refine(
       (url) => secureUnlessLoopback(url, "https:"),

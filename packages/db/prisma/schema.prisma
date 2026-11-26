@@ -136,6 +136,7 @@ model Organization {
   modelCalls     ModelCall[]
   policyVersions PolicyVersion[]
   ruleDrafts     CustomRuleDraft[]
+  healAttempts   HealAttempt[]
 }
 
 enum Role {
@@ -295,6 +296,7 @@ model PipelineFailure {
 
   runs       FailedRun[]
   modelCalls ModelCall[]
+  attempts   HealAttempt[]
 
   @@unique([repoId, headSha])
   @@unique([orgId, id])
@@ -500,4 +502,43 @@ model CustomRuleDraft {
   updatedAt   DateTime        @updatedAt
 
   @@index([orgId, kind, target, createdAt])
+}
+
+/// Where a healing attempt stands (SPEC §2, §10). Later Phase 4 tasks add the loop's outcomes.
+enum AttemptStatus {
+  /// The healer workflow was dispatched; no runner has opened a session yet.
+  DISPATCHED
+  /// A runner opened the attempt's one session (SPEC §5.4).
+  RUNNING
+  FAILED
+}
+
+/// One healing attempt on a failure (SPEC §10). Fields arrive with the tasks that use them.
+model HealAttempt {
+  id               String          @id @default(uuid(7)) @db.Uuid
+  orgId            String          @db.Uuid
+  org              Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  failureId        String          @db.Uuid
+  failure          PipelineFailure @relation(fields: [orgId, failureId], references: [orgId, id], onDelete: Cascade)
+  /// 1 for the first attempt on a failure, 2 for the retry (SPEC §9.1).
+  attemptNo        Int
+  status           AttemptStatus   @default(DISPATCHED)
+  /// The commit the runner checks out and heals.
+  targetSha        String
+  /// The configured check that reproduces the failure: install, build, lint, typecheck or test.
+  failingCheck     String
+  /// The healer run GitHub created for the dispatch (`return_run_details`), when it said.
+  dispatchRunId    BigInt?
+  dispatchedAt     DateTime        @default(now())
+  /// SHA-256 of the session token; the token itself is never stored (SPEC §5.4).
+  sessionTokenHash String?         @unique
+  sessionOpenedAt  DateTime?
+  sessionExpiresAt DateTime?
+  finishedAt       DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@unique([failureId, attemptNo])
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
 }

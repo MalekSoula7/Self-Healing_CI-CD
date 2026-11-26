@@ -292,3 +292,16 @@ export const auditPageSchema = z.strictObject({
   before: idSchema.optional(),
 });
 export type AuditPage = z.input<typeof auditPageSchema>;
+
+/** The checks a failure can be reproduced with (SPEC §7.2; `test_file` is a tool, not a target). */
+export const reproducibleCheckSchema = z.enum(["install", "build", "lint", "typecheck", "test"]);
+
+/** A dispatched healing attempt (SPEC §2 step 7), as the dispatcher records it. */
+export const attemptInputSchema = z.strictObject({
+  failureId: z.uuid(),
+  targetSha: shaSchema,
+  failingCheck: reproducibleCheckSchema,
+  /** The healer run GitHub created, when the dispatch API returned it. */
+  dispatchRunId: githubIdSchema.optional(),
+});
+export type AttemptInput = z.input<typeof attemptInputSchema>;

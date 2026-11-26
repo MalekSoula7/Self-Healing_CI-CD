@@ -923,3 +923,34 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - `:4001/readyz` returns 200 with Redis up.
   - Rate-limit headers come from Redis, and a 20 KB body gets a 413.
 
+## 2026-11-26 · P4.2 session exchange (`POST /v1/session`)
+
+- **DB:**
+  - `HealAttempt` model and migration (`heal_attempts`): status `DISPATCHED`/`RUNNING`/`FAILED`, target SHA, failing check, dispatch run, and session hash, open and expiry times. The other SPEC fields come with their tasks.
+  - System scope: `attempts.create` and `attempts.recordDispatch`.
+  - New top-level `runnerSessions(db)` (`find`, `open`, `contest`): attempts are reached only through the attempt ID plus the signed `repository_id`/`repository_owner_id`, and `open` claims the one session in a single conditional update.
+  - Meta-test cases for all of them (tenant isolation and audit).
+  - Seed commands are now argv arrays.
+- **Gateway:**
+  - `oidc.ts`: jose `jwtVerify` against GitHub's remote JWKS (RS256 only, exact issuer, audience `pipeheal`, expiry, at most 15 minutes old) with zod-checked claims. A pure `sessionProblem` covers SPEC §5.4.
+  - `session.ts`: `POST /v1/session` with a 16 KB body limit and 30 exchanges per minute per address. It answers the same 401 for every refusal, with the reason logged (never a token). The 32-byte token is stored as SHA-256. The session lasts min(45 min, the policy's wall-clock budget), and the response is validated before the session opens.
+  - `GITHUB_APP_SLUG` is added to the worker env: optional in development (no sessions without it), required in production.
+  - New dependency: `jose` 6.2.12, the version Better Auth already brings in.
+- **Claim values to verify (from SPEC §5.4):**
+  - `run_id`: the dispatch API returns the run with `return_run_details` (GitHub changelog, 2026-02-19), so it is bound exactly.
+  - `actor`: GitHub's docs don't say what an App-triggered dispatch carries. It's compared with `<slug>[bot]` and must be confirmed in the acceptance run (SPEC §15), with `actor_id` to follow.
+- **Security review** (`security-reviewer`): H1, M1, M2, L1, L3 and L4 are fixed, with tests. L2 is recorded in SPEC §15.
+  - **H1:** the run-ID binding could never apply, because nothing recorded the run, so any healer run of a repository could take another of its attempts. Fix: `recordDispatch`; no session until the run is recorded; `run_attempt` must be 1. This is D16, to be confirmed by Malek.
+  - **M1:** a second valid exchange now fails the attempt and revokes its session (`attempt.session_contested`).
+  - **M2:** the session ends with the attempt's budget.
+  - **L1:** the response is validated before the session opens.
+  - **L3:** `job_workflow_ref` must equal `workflow_ref`.
+  - **L4:** the org and repository are re-checked inside the claim.
+- **Tests:**
+  - OIDC: every rejection path with locally generated keys (another issuer, audience or key; expired, too old or future tokens; unknown `kid`; HS256, `alg: none`, unsigned, malformed claims), and GitHub's JWKS through msw (fetched once and cached, and refusal when the fetch fails).
+  - `sessionProblem`: one case per SPEC §5.4 check.
+  - Route: 200 shape, the stored hash, no tokens in logs, 400/503/401/413/429, contested sessions, the budget cap, and stored commands that aren't argv arrays.
+  - DB: one session per attempt, four simultaneous exchanges with one winner, the dispatch timeout, the org/repo re-check, `contest`, and `recordDispatch`.
+- **Checked by hand:** the real worker answers a fake token with 401 (`ERR_JWS_INVALID` logged) and a bad body with 400.
+- **For Malek:** the local `.env` has a `GITHUB_APP_SLUG` that isn't a slug. The worker won't start until it is the App's URL name (`github.com/apps/<slug>`); the value wasn't read.
+

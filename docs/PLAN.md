@@ -91,7 +91,7 @@ Acceptance: coverage ≥ 95% on `packages/policy`; all red-team fixtures rejecte
 
 - [x] **P4.1** `packages/shared`: runner ↔ gateway protocol schemas (session exchange, step request/response with `stepSeq`, tool calls/results, submission payload).
 - [x] **P4.1b** Gateway hardening before it is reachable from runners (Phase 0 review L5): public `/livez` (no dependency checks) vs internal `/readyz`, `requestTimeout` ~150 s and `connectionTimeout`, small per-route body limits before auth, `@fastify/rate-limit`.
-- [ ] **P4.2** Gateway `POST /v1/session`: OIDC verification per SPEC §5.4. Tests with locally generated keys and JWTs, including every rejection path.
+- [x] **P4.2** Gateway `POST /v1/session`: OIDC verification per SPEC §5.4. Tests with locally generated keys and JWTs, including every rejection path.
 - [ ] **P4.3** Gateway `POST /v1/step`: accept tool results, run the next model turn, return tool calls; persist `AgentEvent`s; enforce caps; idempotent on `stepSeq`.
 - [ ] **P4.3b** Reads that feed the model use installation tokens scoped to the one repository and read-only permissions (`repositoryIds` + `permissions`, P1.4 review).
 - [ ] **P4.4** `packages/agent-core`: prompt builder (SPEC §7.4, versioned), tool definitions, context assembler, loop controller with all stop conditions, token and time accounting. On Ollama (D11): tool calling with `HEAL_MODEL`, the context window (`num_ctx`) sized for the 12 GB GPU, model calls serialized.
