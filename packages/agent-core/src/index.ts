@@ -6,3 +6,4 @@ export { redactLog, type RedactionKind, type RedactionResult } from "./redact/re
 export * from "./classify";
 export * from "./changes";
 export * from "./rules/compile";
+export * from "./heal";

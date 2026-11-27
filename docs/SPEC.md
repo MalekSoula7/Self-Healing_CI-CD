@@ -270,6 +270,8 @@ Repo metadata and configured commands; the rendered effective policy (each rule 
 
 There is no general shell, network, or environment-reading tool (but see "The runner is not a sandbox", §5.3). Tool paths are repo-relative POSIX paths. Path traversal (`..`, absolute paths, backslashes, drive letters, symlinks out of the repo) is rejected in the runner and re-checked on the server.
 
+The model sees these tools with snake_case arguments (`old_str`, `new_str`, `root_cause`, `suggested_next_step`); agent-core maps them to the runner protocol's names (`packages/agent-core/src/heal/tools.ts`). The result of `apply_edit` and `write_file` is the cumulative `git diff` of the working tree against `target_sha` (heal-action, P4.5).
+
 After every `apply_edit` / `write_file`, the server runs the fast static policy subset on the cumulative diff. Violations come back as a tool error listing rule IDs and a hint; the model must choose a different approach.
 
 ### 7.3 Loop and stop conditions
@@ -628,6 +630,12 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 3 (resolved, D13):** org defaults are split from org guardrails (§8.1); every field has a merge rule (§8.4).
 - **Resolved (D14), was CHECKPOINT 3 from the P3.6 red team:** rules no stated rule covers, each cheap and statically checkable, to add or not: tautological assertions (`expect(true).toBe(true)`, `assert True`, tuple asserts); assertions inside `try/catch` or `except AssertionError`; unawaited `.resolves`/`.rejects`; retry settings (`jest.retryTimes`, `{ retry }`); mocking the module under test; in source, test-environment detection (`VITEST`, `"pytest" in sys.modules`), empty `catch {}`/`except: pass`, test-framework monkeypatching or pytest hooks, `as any`/`as unknown as`, warning filters; imports of packages no manifest declares. Decided in D14: the tricks above become rules, except mocking the module under test and undeclared imports (later, server side); packed lines count as several; doctests count as tests; edits under file-wide suppressions open a draft PR. Still open: checking that a lockfile only moves the bumped packages (Phase 4; the default `frozen` makes it rare).
 - **Phase 4 (from P3.6):** the server must refuse a path whose ancestor isn't a directory in the base tree (writing through a symlinked directory, or under an existing file); treat an empty JUnit baseline (the suite didn't compile) and a missing or zero-test report as "behavioral checks unavailable" or a failure; resolve protected configs' `extends` and local plugins.
+- **From P4.4 and its security review:**
+  - Confirm once against a real Ollama whether a literal `<|im_start|>` in message content is tokenized as the special token (review H1). The client breaks these markers up either way, so this only tells us how much the defence matters.
+  - The wall clock is checked before each turn, not during one. Up to two model calls of up to 180 s, plus waiting behind other attempts on the one GPU, can run past it. Pass the remaining time as the call's timeout (review L5).
+  - An edit result whose diff can't be read gets no policy feedback and leaves no record. Write an INFO event so its absence shows in the timeline (review L7).
+  - Up to 16 diffs of 64k characters are parsed per turn in the gateway's process. That is bounded and covered by a speed test; move it to a worker thread if it shows up in latency (review L8).
+  - The PR body (P5) will quote the model's root cause and changes: treat them as untrusted there too (no @mentions, HTML or images).
 - **From P4.3b and its security review:**
   - A renamed repository: the scoped token is pinned by ID, but requests use the stored `fullName`, which only the installation sync refreshes. Triage then fails closed (log download refuses the redirect, or a 404 is read as "log gone"). Update `fullName` from every `workflow_run` event (a new `repositories` helper), and treat a 404 as "log gone" only when the repository itself answers (review M2).
   - Nothing yet forces future model-facing reads onto `readOnlyRepo`: add a lint rule or meta-test that allows `installation(...)` only in the flaky check (re-runs need `actions: write`), webhooks and installation sync (review L5). The flaky check could also split into a read-only client plus a token scoped to `actions: write` on the one repository.

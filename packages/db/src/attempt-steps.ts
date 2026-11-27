@@ -50,12 +50,35 @@ const toolCallsSchema = z
     "call IDs must be unique",
   );
 
+/** The fast policy check of the edits this turn saw (SPEC §7.2), one entry per edit result. */
+const policyChecksSchema = z
+  .array(
+    z.strictObject({
+      callId: z.string().min(1).max(64),
+      violations: z
+        .array(
+          z.strictObject({
+            ruleId: z.string().min(1).max(100),
+            message: z.string().max(1_000),
+            path: z.string().max(4_096).nullable(),
+          }),
+        )
+        .max(50),
+    }),
+  )
+  .max(LIMITS.toolCallsPerStep);
+
 const turnSchema = z.union([
-  z.strictObject({ toolCalls: toolCallsSchema, model: modelCallSchema }),
+  z.strictObject({
+    toolCalls: toolCallsSchema,
+    model: modelCallSchema,
+    policyChecks: policyChecksSchema.optional(),
+  }),
   z.strictObject({
     done: z.enum(["submit", "gave_up", "stopped"]),
     reason: reasonSchema,
     model: modelCallSchema.optional(),
+    policyChecks: policyChecksSchema.optional(),
   }),
 ]);
 export type TurnInput = z.input<typeof turnSchema>;
@@ -327,6 +350,54 @@ export function attemptSteps(db: Db, orgId: string, actor: Actor) {
       return step === null ? null : stepView(step);
     },
 
+    /**
+     * What the healer's first message is built from (SPEC §7.1): the attempt, its repository,
+     * the failure's triage and recent changes, and each failed job's redacted error window.
+     * Null when the attempt isn't this org's.
+     */
+    async brief(attemptId: string) {
+      return db.healAttempt.findFirst({
+        where: { id: attemptId, orgId },
+        select: {
+          id: true,
+          status: true,
+          targetSha: true,
+          failingCheck: true,
+          sessionOpenedAt: true,
+          failure: {
+            select: {
+              category: true,
+              summary: true,
+              headBranch: true,
+              recentChanges: true,
+              repo: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  defaultBranch: true,
+                  language: true,
+                  commands: true,
+                },
+              },
+              runs: {
+                orderBy: { createdAt: "asc" },
+                take: 10,
+                select: {
+                  // Only jobs with evidence: a run's other jobs could crowd out the failing one.
+                  jobs: {
+                    where: { errorWindow: { not: null }, NOT: { errorWindow: "" } },
+                    orderBy: { createdAt: "asc" },
+                    take: 10,
+                    select: { name: true, failedStep: true, summary: true, errorWindow: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+    },
+
     /** The attempt's timeline, oldest first: what the next model turn is built from. */
     async history(attemptId: string) {
       return db.agentEvent.findMany({
@@ -354,6 +425,10 @@ export function attemptSteps(db: Db, orgId: string, actor: Actor) {
           const running = attempt.status === "RUNNING";
           const expired = attempt.sessionExpiresAt === null || attempt.sessionExpiresAt <= now;
           const events: NewEvent[] = [];
+          // Checks of the edits the runner reported, before the model's answer to them.
+          for (const check of turn.policyChecks ?? []) {
+            events.push({ type: "POLICY_CHECK", payload: check });
+          }
           if (turn.model !== undefined) events.push({ type: "MODEL_CALL", payload: turn.model });
           let data: Prisma.AgentStepUpdateManyMutationInput;
           let ending: { outcome: StepOutcome; reason: string } | null = null;

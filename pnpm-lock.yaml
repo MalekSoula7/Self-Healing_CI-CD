@@ -214,6 +214,9 @@ importers:
 
   packages/agent-core:
     dependencies:
+      '@pipeheal/policy':
+        specifier: workspace:*
+        version: link:../policy
       '@pipeheal/shared':
         specifier: workspace:*
         version: link:../shared

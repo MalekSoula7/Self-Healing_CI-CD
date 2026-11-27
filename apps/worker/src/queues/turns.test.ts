@@ -3,6 +3,7 @@
 import type { StepView, TurnInput } from "@pipeheal/db";
 import { createLogger } from "@pipeheal/shared/logger";
 import { describe, expect, it } from "vitest";
+import { ZodError } from "zod";
 import { processTurnJob, turnJobId, type TurnResult, type TurnRunner } from "./turns";
 
 const logger = createLogger({ level: "silent", service: "test" });
@@ -140,5 +141,57 @@ describe("processTurnJob", () => {
 
   it("names a step's job so a repeat is a no-op", () => {
     expect(turnJobId({ orgId: ORG, attemptId: ATTEMPT, stepSeq: 3 })).toBe(`turn-${ATTEMPT}-3`);
+  });
+});
+
+describe("processTurnJob storing (P4.4 security review M3)", () => {
+  it("stops the loop, keeping the model's tokens, when a result is outside the stored bounds", async () => {
+    const completed: TurnInput[] = [];
+    const deps = {
+      attempts: () =>
+        Promise.resolve({
+          getStep: () =>
+            Promise.resolve({
+              stepSeq: 2,
+              status: "PENDING" as const,
+              toolCalls: null,
+              outcome: null,
+              reason: null,
+            }),
+          history: () => Promise.resolve([]),
+          completeTurn: (_attemptId: string, _stepSeq: number, turn: TurnInput) => {
+            completed.push(turn);
+            // The first store is refused, as the db helper's schema would.
+            if (completed.length === 1) return Promise.reject(new ZodError([]));
+            return Promise.resolve({
+              stepSeq: 2,
+              status: "DONE" as const,
+              toolCalls: null,
+              outcome: "stopped" as const,
+              reason: "x",
+            });
+          },
+        }),
+      runner: {
+        next: () =>
+          Promise.resolve({
+            toolCalls: [{ tool: "list_files", path: "." }],
+            model: MODEL,
+            policyChecks: [{ callId: "c1", violations: [] }],
+          }),
+      },
+      logger,
+    };
+
+    await processTurnJob(
+      { name: "turn", data: { orgId: ORG, attemptId: ATTEMPT, stepSeq: 2 } },
+      deps,
+    );
+
+    expect(completed[1]).toEqual({
+      done: "stopped",
+      reason: "the turn's result didn't fit what is stored",
+      model: MODEL,
+    });
   });
 });

@@ -8,12 +8,8 @@ import { githubOidcKeys } from "./gateway/oidc";
 import { DEFAULT_RATE_LIMIT, buildGateway, buildInternalServer } from "./gateway/server";
 import { registerSessionRoute } from "./gateway/session";
 import { registerStepRoutes } from "./gateway/steps";
-import {
-  createTurnsQueue,
-  createTurnsWorker,
-  enqueueTurn,
-  unavailableTurnRunner,
-} from "./queues/turns";
+import { createTurnsQueue, createTurnsWorker, enqueueTurn } from "./queues/turns";
+import { healTurnRunner, loadHealInputs } from "./heal-runner";
 import { createFailuresQueue, createFailuresWorker, failureJobs } from "./queues/failures";
 import { createMaintenanceQueue, createMaintenanceWorker } from "./queues/maintenance";
 import { createWebhooksQueue, createWebhooksWorker } from "./queues/webhooks";
@@ -93,11 +89,16 @@ async function main(): Promise<void> {
       return policy.limits.maxWallClockMinutes;
     },
   });
-  // The model turns of the step loop (D15). The real runner arrives with P4.4.
+  // The model turns of the step loop (D15): HEAL_MODEL on Ollama (D11, D17).
   const turnsQueue = createTurnsQueue(redis);
   const turnsWorker = createTurnsWorker(redis, {
     attempts: async (orgId) => (await forSystem(db, orgId, "turns")).attempts,
-    runner: unavailableTurnRunner,
+    runner: healTurnRunner({
+      client: ollama,
+      model: env.HEAL_MODEL,
+      load: (orgId, attemptId) => loadHealInputs(db, orgId, attemptId),
+      logger,
+    }),
     logger,
   });
   registerStepRoutes(gateway, {

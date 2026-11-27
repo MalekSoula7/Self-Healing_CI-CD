@@ -1025,3 +1025,41 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - GitHub client: the scoped token request and its reuse; reads only; refusing a token for every repository, with write access, or with another permission; unsafe IDs.
   - Worker: triage asks for exactly the scoped, read-only token. The token mocks answer scoped requests the way GitHub does.
 
+## 2026-11-27 · P4.4 the healing agent on HEAL_MODEL
+
+- **agent-core `heal/`** (tests first, coverage at or above 95%):
+  - `prompt.ts`: the effective policy as `[ID] description` lines. The invariants and code rules are enforced; judge rules are team guidance; `.pipeheal.yml` custom rules are kept apart as untrusted. The system prompt is SPEC §7.4, versioned `heal-v1`.
+  - `tools.ts`: the eight tools in Ollama's function format. `readToolCalls` maps the model's calls to the protocol's shape (`tool` last, so no argument can change the tool); `submit_fix`/`give_up` end the loop and must come alone.
+  - `context.ts`:
+    - The brief (repository, commands, triage, the CI logs' ends, recent changes, repository rules, reproduction, file tree), each part with its own share of the budget.
+    - The loop replayed from the timeline.
+    - Oldest tool outputs, then long call arguments, give way to notes. A conversation that still doesn't fit isn't sent.
+    - `stopReason`: the token cap, the wall clock, and three new breaches of one rule. `editViolations` checks the cumulative diff.
+  - `untrusted.ts`: chat-template markers and every prompt tag are broken up with a zero-width space, whatever their case or spacing. Ordinary code stays exactly as written.
+- **Worker:**
+  - `heal-runner.ts`:
+    - It checks this step's edits against the policy, stops on caps or an over-budget conversation, and calls `HEAL_MODEL` with the tools, thinking on, `num_ctx` 16384 (D17) and `num_predict` 4096.
+    - One nudge when the model calls no tool. Tokens are counted across both calls, and kept when the second call fails.
+  - `loadHealInputs` builds the brief and the effective policy.
+  - The Ollama client gains tool calling, and breaks up chat-template markers in every message but the system prompt, which covers triage too.
+  - The turns queue stores policy checks as `POLICY_CHECK` events. A result outside the stored bounds stops the loop instead of failing the job.
+  - The stub runner is gone: `main.ts` wires the real one.
+- **DB:** `attempts.brief`, a read-only helper with a meta-test case, includes only jobs with an error window. `completeTurn` accepts `policyChecks`.
+- **Security review** (`security-reviewer`): 3 high, 4 medium and 9 low findings.
+  - Fixed, with tests:
+    - **H1:** chat-template markers in untrusted text.
+    - **H2:** `.pipeheal.yml` rules no longer reach the system prompt. This closes SPEC §15 L3.
+    - **H3:** a budget that couldn't be met, and an oversized conversation sent anyway.
+    - **M1:** wrappers escaped only their own exact closing tag.
+    - **M2:** policy feedback outside a wrapper; it now has its own server-only tag, with sanitized details.
+    - **M3:** an oversized violation failed the job and called the model again.
+    - **M4:** a cumulative diff counted one breach again with every edit.
+    - **L1:** the replayed model text is capped and escaped.
+    - **L2:** each submit_fix field is capped.
+    - **L3:** the branch name and commands are sanitized.
+    - **L4:** the first call's tokens were lost when the second call failed.
+    - **L6:** jobs with no evidence crowded out the failing one.
+    - **L9:** Ollama's error text reached the logs.
+  - Recorded in SPEC §15: L5 (the wall clock during a call), L7 (unreadable diffs leave no record), L8 (parse cost), the special-token check against a real Ollama, and the PR body as untrusted text.
+- **Not tested against a real model:** every test uses Ollama-shaped responses (SPEC §7.5). The first real run comes with local mode (P4.6) and CHECKPOINT 4.
+

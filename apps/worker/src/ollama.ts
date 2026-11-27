@@ -2,16 +2,23 @@
 // without streaming, and `/api/show` to check a model is pulled. Responses are validated with zod.
 // Calls run one at a time: the model shares a single GPU, and Ollama would otherwise load extra
 // copies or swap. Errors carry the status and Ollama's short message, never the prompt.
+import { neutralizeChatTokens } from "@pipeheal/agent-core";
 import { z } from "zod";
 
 export interface OllamaMessage {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  /** An assistant turn's tool calls, replayed in the conversation. */
+  tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[];
+  /** A tool message: which tool it answers. */
+  tool_name?: string;
 }
 
 export interface OllamaChatRequest {
   model: string;
   messages: OllamaMessage[];
+  /** Function definitions the model may call (tool calling). */
+  tools?: readonly object[];
   /** A JSON schema the answer must follow (Ollama's structured outputs). */
   format?: object;
   /** Reasoning models (qwen3) think first unless told not to. */
@@ -21,7 +28,14 @@ export interface OllamaChatRequest {
 
 const chatResponseSchema = z.object({
   model: z.string(),
-  message: z.object({ role: z.string(), content: z.string() }),
+  message: z.object({
+    role: z.string(),
+    content: z.string(),
+    /** Read by the caller (agent-core's readToolCalls): model output, untrusted. */
+    tool_calls: z.array(z.unknown()).optional(),
+    /** A reasoning model's thinking: never stored or shown, only counted. */
+    thinking: z.string().optional(),
+  }),
   done: z.boolean(),
   /** "stop" when the answer is complete; "length" when it hit num_predict or the context. */
   done_reason: z.string().optional(),
@@ -91,7 +105,14 @@ export function ollamaClient(options: OllamaClientOptions): OllamaClient {
   return {
     chat(request) {
       return serialized(async () => {
-        const response = await post("/api/chat", { ...request, stream: false });
+        // The chat template's markers can't come from any message but the system prompt: text
+        // from logs, files or the model's own words can't open a forged turn (P4.4 review H1).
+        const messages = request.messages.map((message) =>
+          message.role === "system"
+            ? message
+            : { ...message, content: neutralizeChatTokens(message.content) },
+        );
+        const response = await post("/api/chat", { ...request, messages, stream: false });
         if (!response.ok) throw await errorOf(response);
         const parsed = chatResponseSchema.safeParse(await response.json().catch(() => null));
         if (!parsed.success) throw new OllamaError(response.status, "unexpected response");

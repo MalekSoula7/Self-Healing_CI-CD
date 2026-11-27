@@ -353,6 +353,9 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
   "attempts.history": async () => {
     await expect(a.system.attempts.history(bAttemptId)).resolves.toEqual([]);
   },
+  "attempts.brief": async () => {
+    await expect(a.system.attempts.brief(bAttemptId)).resolves.toBeNull();
+  },
   // Keyed by the token's hash: only that token's attempt, whoever asks.
   "runnerSessions.authenticate": async () => {
     await expect(sessions.authenticate(sessionHash(), new Date())).resolves.toBeNull();
@@ -617,6 +620,7 @@ const readOnlyHelpers = [
   "runnerSessions.authenticate",
   "attempts.getStep",
   "attempts.history",
+  "attempts.brief",
 ];
 
 const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {

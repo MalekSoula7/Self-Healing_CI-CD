@@ -359,6 +359,64 @@ describe("races and state changes (P4.3 security review)", () => {
   });
 });
 
+describe("policy checks and the brief (P4.4)", () => {
+  it("stores the turn's policy checks before the model's answer", async () => {
+    const loop = await running();
+    await loop.accept(start());
+    await loop.calls(1, ["c1"]);
+    await loop.accept(results(2, ["c1"]));
+
+    const steps = await forSystem(db, (await loop.attempt()).orgId, "test");
+    await steps.attempts.completeTurn(loop.attemptId, 2, {
+      toolCalls: [{ callId: "c2", tool: "list_files", path: "." }],
+      model: MODEL,
+      policyChecks: [
+        {
+          callId: "c1",
+          violations: [{ ruleId: "tests.mode", message: "edits a test", path: "a.test.ts" }],
+        },
+      ],
+    });
+
+    const types = (await loop.history()).map((event) => event.type);
+    expect(types.slice(-3)).toEqual(["POLICY_CHECK", "MODEL_CALL", "TOOL_CALL"]);
+    const check = (await loop.history()).find((event) => event.type === "POLICY_CHECK");
+    expect(check?.payload).toEqual({
+      callId: "c1",
+      violations: [{ ruleId: "tests.mode", message: "edits a test", path: "a.test.ts" }],
+    });
+  });
+
+  it("briefs the healer: the attempt, its repository, the failure and its jobs", async () => {
+    const loop = await running();
+    const attempt = await loop.attempt();
+    const system = await forSystem(db, attempt.orgId, "test");
+
+    const brief = await system.attempts.brief(loop.attemptId);
+
+    expect(brief).toMatchObject({
+      id: loop.attemptId,
+      failingCheck: "test",
+      failure: {
+        headBranch: "main",
+        repo: { defaultBranch: "main" },
+        // Only jobs with an error window: none is triaged yet here.
+        runs: [{ jobs: [] }],
+      },
+    });
+    await expect(system.attempts.brief(randomUUID())).resolves.toBeNull();
+    // Once triaged, the job's window shows. Written directly as setup.
+    await db.failedJob.updateMany({
+      where: { failedRun: { failureId: attempt.failureId } },
+      data: { errorWindow: "FAIL cart" },
+    });
+    const triaged = await system.attempts.brief(loop.attemptId);
+    expect(triaged?.failure.runs[0]?.jobs).toEqual([
+      { name: "check", failedStep: "Test", summary: null, errorWindow: "FAIL cart" },
+    ]);
+  });
+});
+
 describe("runnerSessions.authenticate", () => {
   it("finds the attempt for its session token's hash while the session lasts", async () => {
     const loop = await running();

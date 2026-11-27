@@ -3,12 +3,12 @@
 // definitions, context, accounting). Whatever it returns is untrusted model output: tool calls get
 // server-side IDs and are re-validated with the protocol's schema before a runner ever sees them.
 import { randomBytes } from "node:crypto";
-import type { AgentEvent, SystemScope } from "@pipeheal/db";
+import type { AgentEvent, SystemScope, TurnInput } from "@pipeheal/db";
 import type { Logger } from "@pipeheal/shared/logger";
 import { LIMITS, toolCallSchema } from "@pipeheal/shared/protocol";
 import { Queue, UnrecoverableError, Worker } from "bullmq";
 import type { Redis } from "ioredis";
-import { z } from "zod";
+import { ZodError, z } from "zod";
 
 export const TURNS_QUEUE = "turns";
 
@@ -29,10 +29,17 @@ export interface ModelCallSummary {
   text?: string;
 }
 
-export type TurnResult =
-  /** Tool calls as the model wrote them, without IDs: validated here, never trusted. */
-  | { toolCalls: unknown[]; model: ModelCallSummary }
-  | { done: "submit" | "gave_up" | "stopped"; reason: string; model?: ModelCallSummary };
+/** The fast policy check of one edit the runner reported (SPEC §7.2). */
+export interface PolicyCheck {
+  callId: string;
+  violations: { ruleId: string; message: string; path: string | null }[];
+}
+
+export type TurnResult = (
+  | /** Tool calls as the model wrote them, without IDs: validated here, never trusted. */
+    { toolCalls: unknown[]; model: ModelCallSummary }
+  | { done: "submit" | "gave_up" | "stopped"; reason: string; model?: ModelCallSummary }
+) & { policyChecks?: PolicyCheck[] };
 
 export interface TurnContext {
   orgId: string;
@@ -46,12 +53,6 @@ export interface TurnContext {
 export interface TurnRunner {
   next(context: TurnContext): Promise<TurnResult>;
 }
-
-/** Until the agent loop exists (P4.4): every attempt stops with a clear reason. */
-export const unavailableTurnRunner: TurnRunner = {
-  next: () =>
-    Promise.resolve({ done: "stopped", reason: "the agent loop isn't available yet (P4.4)" }),
-};
 
 export interface TurnsDeps {
   /** The attempts helpers of an org's system scope (`forSystem(db, orgId, "turns").attempts`). */
@@ -69,6 +70,13 @@ interface QueueJob {
 }
 
 const toolCallsSchema = z.array(toolCallSchema).min(1).max(LIMITS.toolCallsPerStep);
+
+/** The turn's policy checks, when it has any, for `completeTurn` (which validates them). */
+function checksOf(result: TurnResult): { policyChecks?: PolicyCheck[] } {
+  return result.policyChecks === undefined || result.policyChecks.length === 0
+    ? {}
+    : { policyChecks: result.policyChecks };
+}
 
 /** The job ID that makes enqueuing a step's turn idempotent. */
 export function turnJobId(job: TurnJob): string {
@@ -89,8 +97,8 @@ export async function processTurnJob(job: QueueJob, deps: TurnsDeps): Promise<vo
     const history = await attempts.history(data.attemptId);
     result = await deps.runner.next({ ...data, history });
   } catch (error) {
-    // The message only: model errors can echo prompt content.
-    log.error({ error: error instanceof Error ? error.message : "non-error" }, "turn failed");
+    // The error's kind only: model errors can echo prompt content (P4.4 review L9).
+    log.error({ error: error instanceof Error ? error.name : "non-error" }, "turn failed");
     await attempts.completeTurn(data.attemptId, data.stepSeq, {
       done: "stopped",
       reason: "the model turn failed",
@@ -98,11 +106,30 @@ export async function processTurnJob(job: QueueJob, deps: TurnsDeps): Promise<vo
     return;
   }
 
+  /**
+   * Stores the turn. A result outside the stored bounds stops the loop, keeping the model's
+   * tokens, rather than fail the job and call the model again on retry (P4.4 review M3).
+   */
+  async function store(turn: TurnInput): Promise<void> {
+    try {
+      await attempts.completeTurn(data.attemptId, data.stepSeq, turn);
+    } catch (error) {
+      if (!(error instanceof ZodError)) throw error;
+      log.warn("turn refused: result outside the stored bounds");
+      await attempts.completeTurn(data.attemptId, data.stepSeq, {
+        done: "stopped",
+        reason: "the turn's result didn't fit what is stored",
+        ...(turn.model === undefined ? {} : { model: turn.model }),
+      });
+    }
+  }
+
   if ("done" in result) {
-    await attempts.completeTurn(data.attemptId, data.stepSeq, {
+    await store({
       done: result.done,
       reason: result.reason.trim() === "" ? "no reason given" : result.reason.slice(0, 4_000),
       ...(result.model === undefined ? {} : { model: result.model }),
+      ...checksOf(result),
     });
     log.info({ outcome: result.done }, "turn ended the loop");
     return;
@@ -118,17 +145,19 @@ export async function processTurnJob(job: QueueJob, deps: TurnsDeps): Promise<vo
   );
   const calls = toolCallsSchema.safeParse(numbered);
   if (!calls.success) {
-    await attempts.completeTurn(data.attemptId, data.stepSeq, {
+    await store({
       done: "stopped",
       reason: "the model asked for tool calls outside the protocol",
       model: result.model,
+      ...checksOf(result),
     });
     log.warn("turn refused: tool calls outside the protocol");
     return;
   }
-  await attempts.completeTurn(data.attemptId, data.stepSeq, {
+  await store({
     toolCalls: calls.data,
     model: result.model,
+    ...checksOf(result),
   });
   log.info({ toolCalls: calls.data.length }, "turn ready");
 }
