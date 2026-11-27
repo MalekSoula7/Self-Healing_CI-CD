@@ -8,6 +8,8 @@ import { defineConfig } from "vitest/config";
 //   separate `pipeheal_test` database, recreated on every run.
 // - perf: `*.perf.test.ts`, speed budgets that guard against quadratic regressions. Runs after the
 //   other projects (a later `groupOrder`), so parallel test files can't eat its budgets.
+// Groups run in order: unit, then integration (6 files at a time: more starved Postgres and timed
+// transactions out), then perf.
 // `pnpm test` runs all three with coverage; `pnpm test:unit` runs unit and perf.
 const ignored = ["**/node_modules/**", "**/dist/**", "**/.next/**"];
 // Secrets from the developer's shell or .env never reach tests (empty counts as unset in parseEnv).
@@ -62,6 +64,11 @@ export default defineConfig({
           setupFiles: ["./vitest.integration.setup.ts"],
           // Recreates and migrates the pipeheal_test database once per run.
           globalSetup: ["./vitest.integration.globalSetup.ts"],
+          // A few files at a time: one per core starved Postgres (in Docker) and the unit tests
+          // running alongside, and transactions timed out waiting for a connection.
+          maxWorkers: 6,
+          // Its own group, after the unit tests (vitest requires one for a different maxWorkers).
+          sequence: { groupOrder: 1 },
           env: blankSecrets,
         },
       },
@@ -75,7 +82,7 @@ export default defineConfig({
           exclude: ignored,
           setupFiles: ["./vitest.setup.ts"],
           env: blankSecrets,
-          sequence: { groupOrder: 1 },
+          sequence: { groupOrder: 2 },
         },
       },
     ],
