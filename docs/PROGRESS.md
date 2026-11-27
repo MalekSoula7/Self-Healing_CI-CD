@@ -1103,3 +1103,32 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - heal-action end to end against an msw gateway and OIDC endpoint: the session before any customer code, the 401 retry, the loop, a submission of contents only, a run that doesn't reproduce, missing inputs, a refused session, an insecure URL.
   - The bundle's freshness.
 
+## 2026-11-27 · P4.6 local mode (`pnpm heal:local`)
+
+- `pnpm heal:local --repo examples/demo-node --scenario node/<name> [--keep]`:
+  - copies the demo into a fresh git repository (no `node_modules`, `.git` or `.env*`) and breaks it with the scenario (`breakRepo`);
+  - creates a real attempt and session in the local dev database;
+  - runs heal-action's local entry in a Linux container against `pnpm dev`'s gateway, then prints the attempt's timeline.
+- **No auth bypass (SPEC §12):** `createLocalAttempt` (worker) goes through `installations.upsert`, `forSystem`, `attempts.create`/`recordDispatch` and `runnerSessions.open`, exactly as the gateway would after an OIDC exchange. The gateway authenticates the token like any other.
+- **New:** `repositories.setCommands` (admin only, audited with the argv itself, argv arrays only), with meta-test cases. Onboarding will use it too.
+- **heal-action:**
+  - `dist/local.mjs` (a second bundled entry) reads the session from stdin before anything runs.
+  - `plainHttpHosts` allows plain http to `host.docker.internal` only; the GitHub entry sets neither.
+- **Hardening from the security review** (no auth bypass, nothing reachable from production; 2 medium, 8 low, 1 informational):
+  - M2: the session goes on stdin, not in the container's environment.
+  - L1: the dev database's name is required as well as a loopback host.
+  - L3: timeline output is terminal-safe.
+  - L4: a digest-pinned image, the `node` user, `--cap-drop=ALL`, `no-new-privileges`, pid/memory/CPU limits, and a 30-minute timeout that kills the container.
+  - L5: demos only, no `.env*`, the copy removed afterwards.
+  - L6: the plain-http allowlist.
+  - L7: the argv is audited.
+  - L8: a minimal environment for the docker CLI.
+  - Recorded in SPEC §12 and §15: M1 (the container can reach services on the developer's machine; it only runs our demos), I1 and L2.
+- **Checked by hand twice** (Docker Desktop, `node:24-bookworm`, worker with `GITHUB_APP_SLUG` overridden):
+  - `pnpm heal:local --repo examples/demo-node --scenario node/logic-bug` broke the demo, opened the attempt, and ran `npm ci` in the container.
+  - It reproduced the failing test (`reproduced: true`) and posted step 1. The turn failed because `OLLAMA_URL` isn't configured yet, so the loop ended as FAILED with "the model turn failed".
+  - `--repo .` is refused.
+- **For Malek:**
+  - The `GITHUB_APP_SLUG` in `.env.example` (and probably `.env`) is the App's settings URL. The slug is its last part, `pipeheal-dev-malek`. The worker refuses anything else.
+  - With `OLLAMA_URL` set, this command is the CHECKPOINT 4 demo.
+

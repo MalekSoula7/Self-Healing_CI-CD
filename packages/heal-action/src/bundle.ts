@@ -3,9 +3,12 @@
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
-export async function bundleAction(): Promise<string> {
+/** The action's entry points: the GitHub one, and local mode's (P4.6). */
+export const ENTRIES = { "index.mjs": "./action.ts", "local.mjs": "./local.ts" } as const;
+
+export async function bundleAction(entry: keyof typeof ENTRIES = "index.mjs"): Promise<string> {
   const result = await build({
-    entryPoints: [fileURLToPath(new URL("./action.ts", import.meta.url))],
+    entryPoints: [fileURLToPath(new URL(ENTRIES[entry], import.meta.url))],
     // Module comments name paths from here, whatever directory the build runs in.
     absWorkingDir: fileURLToPath(new URL("..", import.meta.url)),
     bundle: true,

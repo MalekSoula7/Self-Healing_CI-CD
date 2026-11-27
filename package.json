@@ -13,6 +13,7 @@
     "dev": "turbo run dev",
     "dev:webhooks": "tsx --env-file-if-exists=.env scripts/dev-webhooks.ts",
     "break": "tsx scripts/break.ts",
+    "heal:local": "tsx --env-file-if-exists=.env scripts/heal-local.ts",
     "typecheck": "tsc -p tsconfig.json && turbo run typecheck",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",

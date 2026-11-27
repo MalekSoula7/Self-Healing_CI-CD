@@ -38,7 +38,9 @@ Created in Phase 0. Keep this section accurate whenever scripts change.
 - `pnpm db:generate` - regenerate the Prisma client (also runs on `pnpm install`; output in `packages/db/src/generated`, gitignored)
 - `pnpm db:seed` - idempotent demo data (org `pipeheal-demo`); refuses production and non-local databases
 - `pnpm db:studio` - Prisma Studio on the dev database
-- Not created yet: `pnpm heal:local` (Phase 4), `pnpm eval` (Phase 8)
+- `pnpm heal:local --repo examples/demo-node --scenario node/<name> [--keep]` - heals a broken copy of a demo locally: a real attempt and session in the dev database, heal-action in a hardened Linux container, against `pnpm dev`'s gateway (needs Docker and `OLLAMA_URL`). Node demo only for now
+- `pnpm --filter @pipeheal/heal-action bundle` - rebuilds the committed `dist/` (a test fails when it's stale)
+- Not created yet: `pnpm eval` (Phase 8)
 
 ## Testing conventions
 - Unit tests: `*.test.ts` next to the code. Integration tests (real Postgres/Redis): `*.int.test.ts`.

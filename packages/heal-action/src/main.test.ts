@@ -5,11 +5,12 @@ import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sessionResponseSchema } from "@pipeheal/shared/protocol";
 import { mockServer } from "@pipeheal/shared/testing";
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCommand } from "./exec";
-import { collectReports, printable, requestOidcToken, run } from "./main";
+import { collectReports, printable, readLocalSession, requestOidcToken, run } from "./main";
 import { openWorkspace } from "./workspace";
 
 const NL = String.fromCharCode(10);
@@ -260,5 +261,49 @@ describe("helpers", () => {
       "reports/a.xml",
     ]);
     expect(await collectReports(workspace, null)).toEqual([]);
+  });
+});
+
+describe("local mode (P4.6)", () => {
+  it("reads the session the CLI passes, and nothing malformed", () => {
+    const local = { attemptId: ATTEMPT, token: SESSION, details: session() };
+    const encoded = Buffer.from(JSON.stringify(local)).toString("base64");
+
+    expect(readLocalSession(encoded)).toEqual(local);
+    expect(readLocalSession(undefined)).toBeNull();
+    expect(readLocalSession("not base64 json")).toBeNull();
+    expect(
+      readLocalSession(Buffer.from(JSON.stringify({ ...local, token: "x" })).toString("base64")),
+    ).toBeNull();
+  });
+
+  it("allows a plain-http gateway only when local mode asks", async () => {
+    const state = gateway([{ status: "done", stepSeq: 1, outcome: "stopped", reason: "cap" }]);
+    const hostEnv = { ...env, "INPUT_GATEWAY-URL": "http://host.docker.internal:4000" };
+    mockServer.use(
+      http.post("http://host.docker.internal:4000/v1/step", async ({ request }) => {
+        state.steps.push(await request.json());
+        return HttpResponse.json({ stepSeq: 1 }, { status: 202 });
+      }),
+      http.get("http://host.docker.internal:4000/v1/step/:seq", () =>
+        HttpResponse.json({ status: "done", stepSeq: 1, outcome: "stopped", reason: "cap" }),
+      ),
+    );
+    const refused: string[] = [];
+
+    expect(await run({ env: hostEnv, cwd: root, log: (line) => refused.push(line) })).toBe(1);
+    expect(
+      await run({
+        env: hostEnv,
+        cwd: root,
+        log: () => undefined,
+        session: { token: SESSION, details: sessionResponseSchema.parse(session()) },
+        plainHttpHosts: ["host.docker.internal"],
+      }),
+    ).toBe(0);
+    expect(refused[0]).toContain("must be an https URL");
+    // The session came from the CLI: no OIDC request, no exchange.
+    expect(state.sessionsAsked).toBe(0);
+    expect(state.steps).toHaveLength(1);
   });
 });

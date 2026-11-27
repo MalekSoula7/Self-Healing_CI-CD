@@ -20728,7 +20728,7 @@ async function run(deps) {
   }
   const target = URL.parse(gatewayUrl);
   const loopback = target !== null && ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname);
-  if (target === null || target.protocol !== "https:" && !(loopback && target.protocol === "http:")) {
+  if (target === null || target.protocol !== "https:" && !((loopback || (deps.plainHttpHosts ?? []).includes(target.hostname)) && target.protocol === "http:")) {
     log("::error::gateway-url must be an https URL");
     return 1;
   }
@@ -20789,6 +20789,11 @@ async function run(deps) {
     return 1;
   }
 }
+var localSessionSchema = external_exports.object({
+  attemptId: external_exports.uuid(),
+  token: external_exports.string().min(32).max(256),
+  details: sessionResponseSchema
+});
 
 // src/action.ts
 process.exitCode = await run({

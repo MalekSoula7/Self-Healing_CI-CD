@@ -388,6 +388,16 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
     await expect(a.asAdmin.repositories.setEnabled(b.repo.id, true)).rejects.toThrow(NotFoundError);
     await expect(a.system.repositories.setEnabled(b.repo.id, true)).rejects.toThrow(NotFoundError);
   },
+  "repositories.setCommands": async () => {
+    const commands = { commands: { test: ["npm", "test"] }, junitGlob: null };
+    await expect(a.asAdmin.repositories.setCommands(b.repo.id, commands)).rejects.toThrow(
+      NotFoundError,
+    );
+    // An admin's: a member can't change what the runner executes.
+    await expect(a.asMember.repositories.setCommands(a.repo.id, commands)).rejects.toThrow(
+      ForbiddenError,
+    );
+  },
   "repositories.findByGithubId": async () => {
     await expect(a.system.repositories.findByGithubId(b.repo.githubRepoId)).resolves.toBeNull();
   },
@@ -624,6 +634,24 @@ const readOnlyHelpers = [
 ];
 
 const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
+  "repositories.setCommands": async () => {
+    await a.asAdmin.repositories.setCommands(a.repo.id, {
+      commands: { install: ["npm", "ci"], test: ["npm", "test"] },
+      junitGlob: "reports/*.xml",
+    });
+    return [
+      {
+        actorType: "USER",
+        actorId: a.admin.id,
+        action: "repository.commands",
+        target: `repository:${a.repo.id}`,
+        metadata: {
+          commands: { install: ["npm", "ci"], test: ["npm", "test"] },
+          junitGlob: "reports/*.xml",
+        },
+      },
+    ];
+  },
   "attempts.create": async () => {
     const attempt = await a.system.attempts.create({
       failureId: a.failure.id,

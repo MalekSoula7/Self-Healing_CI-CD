@@ -22,6 +22,7 @@ import type {
 } from "./generated/prisma/enums";
 import {
   attemptInputSchema,
+  repositoryCommandsSchema,
   auditPageSchema,
   classificationSchema,
   failedRunInputSchema,
@@ -36,6 +37,7 @@ import {
   policyFileRecordSchema,
   recentChangesRecordSchema,
   type AttemptInput,
+  type RepositoryCommandsInput,
   type AuditPage,
   type ClassificationInput,
   type FailedRunInput,
@@ -248,6 +250,31 @@ function buildOrgScope(ctx: ScopeContext) {
           await writeAudit(tx, orgId, actor, {
             action: enabled ? "repository.enabled" : "repository.disabled",
             target: auditTarget("repository", id),
+          });
+          return updated;
+        });
+      },
+
+      /**
+       * The repository's configured commands (SPEC §7.2: argv arrays, never shell strings) and
+       * its JUnit report glob (§8.6). What heal-action may run comes only from here.
+       */
+      async setCommands(repoId: string, input: RepositoryCommandsInput) {
+        requireRole(ctx, "ADMIN");
+        const id = requireId(repoId, "repository");
+        const data = repositoryCommandsSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const repo = await tx.repository.findFirst({ where: { id, orgId } });
+          if (repo === null) throw new NotFoundError("repository not found");
+          const updated = await tx.repository.update({
+            where: { id, orgId },
+            data: { commands: data.commands, junitGlob: data.junitGlob },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "repository.commands",
+            target: auditTarget("repository", id),
+            // The argv itself: it decides what runs on customer runners (P4.6 review L7).
+            metadata: { commands: data.commands, junitGlob: data.junitGlob },
           });
           return updated;
         });

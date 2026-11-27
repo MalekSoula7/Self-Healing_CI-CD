@@ -1,5 +1,6 @@
 // zod schemas for everything the data helpers accept from callers (CLAUDE.md: validate every
 // external input). Callers pass values that came from users, webhooks or the GitHub API.
+import { attemptCommandsSchema } from "@pipeheal/shared/protocol";
 import { z } from "zod";
 
 export const idSchema = z.uuid();
@@ -305,3 +306,10 @@ export const attemptInputSchema = z.strictObject({
   dispatchRunId: githubIdSchema.optional(),
 });
 export type AttemptInput = z.input<typeof attemptInputSchema>;
+
+/** A repository's configured commands (SPEC §7.2) and JUnit glob (§8.6), as an admin sets them. */
+export const repositoryCommandsSchema = z.strictObject({
+  commands: attemptCommandsSchema,
+  junitGlob: z.string().trim().min(1).max(512).nullable(),
+});
+export type RepositoryCommandsInput = z.input<typeof repositoryCommandsSchema>;

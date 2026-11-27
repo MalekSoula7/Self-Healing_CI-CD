@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { compileGlob, globMatches } from "@pipeheal/policy/glob";
 import {
   LIMITS,
+  sessionResponseSchema,
   type AttemptCommands,
   type CheckName,
   type CheckResult,
@@ -40,6 +41,11 @@ export interface RunDeps {
   log: (line: string) => void;
   /** For local mode (P4.6): an OIDC token is replaced by a session opened by the dev CLI. */
   session?: { token: string; details: SessionResponse };
+  /**
+   * Local mode only (P4.6): its container reaches the developer's gateway at
+   * host.docker.internal over plain http. A GitHub runner never sets it.
+   */
+  plainHttpHosts?: readonly string[];
 }
 
 const oidcAnswerSchema = z.object({ value: z.string().min(1) });
@@ -209,7 +215,11 @@ export async function run(deps: RunDeps): Promise<number> {
   const loopback = target !== null && ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname);
   if (
     target === null ||
-    (target.protocol !== "https:" && !(loopback && target.protocol === "http:"))
+    (target.protocol !== "https:" &&
+      !(
+        (loopback || (deps.plainHttpHosts ?? []).includes(target.hostname)) &&
+        target.protocol === "http:"
+      ))
   ) {
     log("::error::gateway-url must be an https URL");
     return 1;
@@ -272,5 +282,25 @@ export async function run(deps: RunDeps): Promise<number> {
   } catch (error) {
     log(`::error::heal-action failed: ${printable(error instanceof Error ? error.message : "")}`);
     return 1;
+  }
+}
+
+const localSessionSchema = z.object({
+  attemptId: z.uuid(),
+  token: z.string().min(32).max(256),
+  details: sessionResponseSchema,
+});
+export type LocalSession = z.infer<typeof localSessionSchema>;
+
+/** Local mode's session, as `pnpm heal:local` passes it: base64 JSON (P4.6). */
+export function readLocalSession(encoded: string | undefined): LocalSession | null {
+  if (encoded === undefined) return null;
+  try {
+    const parsed = localSessionSchema.safeParse(
+      JSON.parse(Buffer.from(encoded, "base64").toString("utf8")),
+    );
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
   }
 }
