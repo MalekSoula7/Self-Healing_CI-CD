@@ -6,6 +6,7 @@
 import {
   LIMITS,
   stepRequestSchema,
+  submissionSchema,
   toolCallSchema,
   type ToolCall,
 } from "@pipeheal/shared/protocol";
@@ -36,6 +37,18 @@ const acceptSchema = z.strictObject({
   baseline: testInventoryRecordSchema.optional(),
 });
 export type StepInput = z.input<typeof acceptSchema>;
+
+const submissionInputSchema = z.strictObject({
+  /** SHA-256 of the body as received. */
+  requestHash: hashSchema,
+  /** Final contents, never a diff (protocol limits re-applied). */
+  files: submissionSchema.shape.files,
+  /** The checks the runner ran; outputs arrive redacted by the gateway. */
+  checks: submissionSchema.shape.checks,
+  /** The tests after the fix, parsed by the gateway from the reports. */
+  afterTests: testInventoryRecordSchema,
+});
+export type SubmissionInput = z.input<typeof submissionInputSchema>;
 
 const modelCallSchema = z.strictObject({
   model: z.string().min(1).max(200),
@@ -353,6 +366,78 @@ export function attemptSteps(db: Db, orgId: string, actor: Actor) {
     },
 
     /** The runner's view of step `stepSeq`, or null when it doesn't exist. */
+    /**
+     * The runner's submission for an attempt that is AWAITING_SUBMISSION (SPEC §2 step 10, P5.1):
+     * stored once, and the attempt becomes VALIDATING. A retried upload of the same body is the
+     * same submission ("duplicate"); any other second upload is refused. Re-validated here.
+     */
+    async acceptSubmission(
+      attemptId: string,
+      input: SubmissionInput,
+    ): Promise<{ result: "accepted" | "duplicate" } | { result: "conflict"; reason: string }> {
+      const data = submissionInputSchema.parse(input);
+      const paths = data.files.map((file) => file.path);
+      if (new Set(paths).size !== paths.length) {
+        return { result: "conflict", reason: "a path appears twice" };
+      }
+      return db.$transaction(async (tx) => {
+        const attempt = await tx.healAttempt.findFirst({ where: { id: attemptId, orgId } });
+        if (attempt === null) throw new NotFoundError("attempt not found");
+        const existing = await tx.attemptSubmission.findFirst({ where: { orgId, attemptId } });
+        if (existing !== null) {
+          return existing.requestHash === data.requestHash
+            ? { result: "duplicate" as const }
+            : { result: "conflict" as const, reason: "a submission was already received" };
+        }
+        if (attempt.status !== "AWAITING_SUBMISSION") {
+          return {
+            result: "conflict" as const,
+            reason: "the attempt isn't waiting for a submission",
+          };
+        }
+        await tx.attemptSubmission.create({
+          data: {
+            orgId,
+            attemptId,
+            requestHash: data.requestHash,
+            files: data.files,
+            checks: data.checks,
+            afterTests: data.afterTests,
+          },
+        });
+        // Compare-and-set: a session contested meanwhile rolls the whole upload back.
+        const { count } = await tx.healAttempt.updateMany({
+          where: { id: attemptId, orgId, status: "AWAITING_SUBMISSION" },
+          data: { status: "VALIDATING" },
+        });
+        if (count !== 1) throw new ConflictError("the attempt changed while the upload was stored");
+        const lastStep = await tx.agentStep.findFirst({
+          where: { orgId, attemptId },
+          orderBy: { stepSeq: "desc" },
+          select: { stepSeq: true },
+        });
+        const deleted = data.files.filter((file) => "deleted" in file).length;
+        await addEvents(tx, attemptId, lastStep?.stepSeq ?? 1, [
+          {
+            type: "INFO",
+            payload: {
+              kind: "submission",
+              files: data.files.length,
+              deleted,
+              checks: data.checks.map((check) => ({ name: check.name, exitCode: check.exitCode })),
+              tests: data.afterTests.available ? data.afterTests.tests.length : null,
+            },
+          },
+        ]);
+        await writeAudit(tx, orgId, actor, {
+          action: "attempt.submitted",
+          target: auditTarget("attempt", attemptId),
+          metadata: { files: data.files.length, deleted, checks: data.checks.length },
+        });
+        return { result: "accepted" as const };
+      });
+    },
+
     async getStep(attemptId: string, stepSeq: number): Promise<StepView | null> {
       const seq = stepSeqSchema.safeParse(stepSeq);
       if (!seq.success) return null;

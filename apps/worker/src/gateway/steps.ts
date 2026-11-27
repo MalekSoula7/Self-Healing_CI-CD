@@ -64,7 +64,7 @@ const stepSeqParam = z.strictObject({
 });
 
 /** Redacted, then cut back to the protocol's limit (markers can be longer than what they hide). */
-function redactOutput(output: string): { output: string; truncated: boolean } {
+export function redactOutput(output: string): { output: string; truncated: boolean } {
   const text = redactLog(output).text;
   return text.length <= LIMITS.toolOutputChars
     ? { output: text, truncated: false }

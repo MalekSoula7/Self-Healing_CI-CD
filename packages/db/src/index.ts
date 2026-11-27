@@ -57,7 +57,14 @@ export {
   type StoredLayers,
   type SystemScope,
 } from "./scope";
-export type { StepAcceptance, StepInput, StepOutcome, StepView, TurnInput } from "./attempt-steps";
+export type {
+  StepAcceptance,
+  StepInput,
+  StepOutcome,
+  StepView,
+  SubmissionInput,
+  TurnInput,
+} from "./attempt-steps";
 export {
   DISPATCH_TIMEOUT_MS,
   SESSION_TTL_MS,

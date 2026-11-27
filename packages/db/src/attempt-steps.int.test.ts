@@ -99,6 +99,13 @@ async function running(options: { maxIterations?: number } = {}) {
       }),
     finish: (stepSeq: number, done: "submit" | "gave_up" | "stopped", reason = "because") =>
       steps.completeTurn(attempt.id, stepSeq, { done, reason, model: MODEL }),
+    submit: (files: { path: string; content: string }[], requestHash = "c".repeat(64)) =>
+      steps.acceptSubmission(attempt.id, {
+        requestHash,
+        files,
+        checks: [{ name: "test", exitCode: 0, output: "2 passed" }],
+        afterTests: { available: true, tests: [["cart::totals", ["passed"]]] },
+      }),
     step: (stepSeq: number) => steps.getStep(attempt.id, stepSeq),
     history: () => steps.history(attempt.id),
     attempt: () => db.healAttempt.findUniqueOrThrow({ where: { id: attempt.id } }),
@@ -430,5 +437,61 @@ describe("runnerSessions.authenticate", () => {
     const later = new Date((stored.sessionExpiresAt ?? new Date()).getTime() + 1);
     expect(await sessions.authenticate(hash, later)).toBeNull();
     expect(await sessions.authenticate("nope", new Date())).toBeNull();
+  });
+});
+
+describe("acceptSubmission", () => {
+  const file = { path: "src/cart.ts", content: "export const total = 2;" };
+
+  /** An attempt whose model just submitted a fix. */
+  async function awaiting() {
+    const loop = await running();
+    await loop.accept(start());
+    await loop.finish(1, "submit", "fixed the total");
+    return loop;
+  }
+
+  it("stores the submission once, and the attempt is VALIDATING", async () => {
+    const loop = await awaiting();
+
+    await expect(loop.submit([file])).resolves.toEqual({ result: "accepted" });
+
+    expect(await loop.attempt()).toMatchObject({ status: "VALIDATING" });
+    const stored = await db.attemptSubmission.findUniqueOrThrow({
+      where: { attemptId: loop.attemptId },
+    });
+    expect(stored).toMatchObject({
+      files: [file],
+      afterTests: { available: true, tests: [["cart::totals", ["passed"]]] },
+    });
+    const history = await loop.history();
+    expect(history.at(-1)?.payload).toMatchObject({ kind: "submission", files: 1, tests: 1 });
+  });
+
+  it("treats a retried upload as the same submission, and refuses a different one", async () => {
+    const loop = await awaiting();
+    await loop.submit([file]);
+
+    await expect(loop.submit([file])).resolves.toEqual({ result: "duplicate" });
+    await expect(loop.submit([file], "d".repeat(64))).resolves.toEqual({
+      result: "conflict",
+      reason: "a submission was already received",
+    });
+  });
+
+  it("refuses an attempt that isn't waiting for one, and a path sent twice", async () => {
+    const loop = await running();
+    await loop.accept(start());
+
+    await expect(loop.submit([file])).resolves.toEqual({
+      result: "conflict",
+      reason: "the attempt isn't waiting for a submission",
+    });
+    const waiting = await awaiting();
+    await expect(waiting.submit([file, file])).resolves.toEqual({
+      result: "conflict",
+      reason: "a path appears twice",
+    });
+    expect(await db.attemptSubmission.count({ where: { attemptId: loop.attemptId } })).toBe(0);
   });
 });

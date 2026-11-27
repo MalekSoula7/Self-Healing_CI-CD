@@ -8,6 +8,8 @@ import { githubOidcKeys } from "./gateway/oidc";
 import { DEFAULT_RATE_LIMIT, buildGateway, buildInternalServer } from "./gateway/server";
 import { registerSessionRoute } from "./gateway/session";
 import { registerStepRoutes } from "./gateway/steps";
+import { registerSubmissionRoute } from "./gateway/submission";
+import { createSubmissionsQueue, enqueueValidation } from "./queues/submissions";
 import { createTurnsQueue, createTurnsWorker, enqueueTurn } from "./queues/turns";
 import { healTurnRunner, loadHealInputs } from "./heal-runner";
 import { createFailuresQueue, createFailuresWorker, failureJobs } from "./queues/failures";
@@ -112,6 +114,13 @@ async function main(): Promise<void> {
     },
     enqueueTurn: (job) => enqueueTurn(turnsQueue, job),
   });
+  // Submissions (P5.1): stored, then checked by the `submissions` queue (its worker: P5.1c).
+  const submissionsQueue = createSubmissionsQueue(redis);
+  registerSubmissionRoute(gateway, {
+    sessions: runnerSessions(db, "gateway"),
+    attempts: async (orgId) => (await forSystem(db, orgId, "gateway")).attempts,
+    enqueueValidation: (job) => enqueueValidation(submissionsQueue, job),
+  });
   const internal = buildInternalServer({ logger, checks: { redis: () => pingRedis(redis) } });
 
   const shutdown = createShutdown({
@@ -126,6 +135,7 @@ async function main(): Promise<void> {
       { name: "rules worker", close: () => rulesWorker.close() },
       { name: "turns worker", close: () => turnsWorker.close() },
       { name: "turns queue", close: () => turnsQueue.close() },
+      { name: "submissions queue", close: () => submissionsQueue.close() },
       { name: "maintenance worker", close: () => maintenanceWorker.close() },
       { name: "maintenance queue", close: () => maintenanceQueue.close() },
       { name: "redis", close: () => redis.quit() },

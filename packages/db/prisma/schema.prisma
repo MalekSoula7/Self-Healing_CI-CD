@@ -139,6 +139,7 @@ model Organization {
   healAttempts   HealAttempt[]
   agentSteps     AgentStep[]
   agentEvents    AgentEvent[]
+  submissions    AttemptSubmission[]
 }
 
 enum Role {
@@ -514,6 +515,12 @@ enum AttemptStatus {
   RUNNING
   /// The model submitted a fix; the runner runs the full checks and uploads it (SPEC §7.3).
   AWAITING_SUBMISSION
+  /// The runner uploaded its submission; the server is checking it (SPEC §2 step 10, P5.1).
+  VALIDATING
+  /// The submission passed every check: ready for its pull request (P5.2).
+  VALIDATED
+  /// The submission broke a rule, failed a check or a test, or couldn't be checked.
+  REJECTED
   /// The failing check passed on the runner before any change (SPEC §7.3).
   NOT_REPRODUCIBLE
   /// The model gave up with a diagnosis.
@@ -545,6 +552,9 @@ model HealAttempt {
   /// The test inventory before any change, parsed by the server from the JUnit reports of the
   /// runner's reproduction (SPEC §8.6), or why there is none; `testInventoryRecordSchema`.
   baselineTests    Json?
+  /// What checking the submission found (P5.1): the policy's violations, the behavioral and
+  /// judge results, draft reasons; `submissionValidationSchema`.
+  validation       Json?
   /// Model turns taken (SPEC §7.3's iteration cap).
   iterations       Int             @default(0)
   /// Why the attempt ended, when it did: a stop condition or the model's own words, bounded.
@@ -553,8 +563,9 @@ model HealAttempt {
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
-  steps  AgentStep[]
-  events AgentEvent[]
+  steps      AgentStep[]
+  events     AgentEvent[]
+  submission AttemptSubmission?
 
   @@unique([failureId, attemptNo])
   @@unique([orgId, id])
@@ -591,6 +602,31 @@ model AgentStep {
 
   @@unique([attemptId, stepSeq])
   @@unique([orgId, id])
+  @@index([orgId, createdAt])
+}
+
+/// What the runner uploaded for an attempt's fix (SPEC §2 step 10, P5.1): final file contents, never a
+/// diff (the server rebuilds the diff from the target commit), the checks it ran (output
+/// redacted), and the test inventory the server parsed from its JUnit reports (never the XML).
+/// The contents are customer code: never logged, and only kept until the pull request (P5.2).
+model AttemptSubmission {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  orgId       String       @db.Uuid
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  attemptId   String       @unique @db.Uuid
+  attempt     HealAttempt  @relation(fields: [orgId, attemptId], references: [orgId, id], onDelete: Cascade)
+  /// SHA-256 of the body as received: a retried upload is the same submission.
+  requestHash String
+  /// `[{ path, content } | { path, deleted: true }]`
+  files       Json
+  /// `[{ name, exitCode, output }]`
+  checks      Json
+  /// `testInventoryRecordSchema`
+  afterTests  Json
+  createdAt   DateTime     @default(now())
+
+  @@unique([orgId, id])
+  @@unique([orgId, attemptId])
   @@index([orgId, createdAt])
 }
 

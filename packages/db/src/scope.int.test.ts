@@ -301,6 +301,14 @@ const MODEL_CALL = {
   durationMs: 2000,
 };
 
+/** A runner's submission as the gateway passes it on. */
+const submissionInput = () => ({
+  requestHash: "b".repeat(64),
+  files: [{ path: "src/cart.ts", content: "export const total = 1;" }],
+  checks: [{ name: "test" as const, exitCode: 0, output: "1 passed" }],
+  afterTests: { available: false as const, reason: "no JUnit report was found" },
+});
+
 /** A fresh session-token hash: the column is unique across the whole test database. */
 const sessionHash = () => randomUUID().replaceAll("-", "").repeat(2);
 
@@ -349,6 +357,11 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
   },
   "attempts.getStep": async () => {
     await expect(a.system.attempts.getStep(bAttemptId, 1)).resolves.toBeNull();
+  },
+  "attempts.acceptSubmission": async () => {
+    await expect(a.system.attempts.acceptSubmission(bAttemptId, submissionInput())).rejects.toThrow(
+      NotFoundError,
+    );
   },
   "attempts.history": async () => {
     await expect(a.system.attempts.history(bAttemptId)).resolves.toEqual([]);
@@ -963,6 +976,27 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
           headSha: a.failure.headSha,
           lateArrival: false,
         },
+      },
+    ];
+  },
+  "attempts.acceptSubmission": async () => {
+    const attempt = await a.system.attempts.create({
+      failureId: a.failure.id,
+      targetSha: a.failure.headSha,
+      failingCheck: "test",
+    });
+    await db.healAttempt.update({
+      where: { id: attempt.id },
+      data: { status: "AWAITING_SUBMISSION" },
+    });
+    await a.system.attempts.acceptSubmission(attempt.id, submissionInput());
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.submitted",
+        target: `attempt:${attempt.id}`,
+        metadata: { files: 1, deleted: 0, checks: 1 },
       },
     ];
   },
