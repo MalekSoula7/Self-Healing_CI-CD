@@ -969,6 +969,65 @@ describe("pull requests", () => {
     expect(writes).toEqual([]);
   });
 
+  it("labels its own PRs only, with plain label names", async () => {
+    const labels: unknown[] = [];
+    mockServer.use(
+      http.post(`${REPO}/issues/12/labels`, async ({ request }) => {
+        labels.push(await request.json());
+        return HttpResponse.json([], { status: 200 });
+      }),
+    );
+    servePullActions(pull());
+    const client = await repo();
+
+    await client.addLabels(12, ["pipeheal"]);
+    await expect(client.addLabels(12, ["<b>x</b>"])).rejects.toThrow(ZodError);
+    await expect(client.addLabels(12, [])).rejects.toThrow(ZodError);
+    servePullActions(pull({ head: { ref: "feature", sha: SHA_B, repo: ownRepo } }));
+    await expect(client.addLabels(12, ["pipeheal"])).rejects.toThrow(GuardError);
+    servePullActions(pull({ head: forkHead }));
+    await expect(client.addLabels(12, ["pipeheal"])).rejects.toThrow(GuardError);
+
+    expect(labels).toEqual([{ labels: ["pipeheal"] }]);
+  });
+
+  it("names a commit's author by their GitHub login, never a bot or a stranger", async () => {
+    const authors: Record<string, unknown> = {
+      [SHA_B]: { author: { login: "octo-dev", type: "User" } },
+      ["c".repeat(40)]: { author: null },
+      ["d".repeat(40)]: { author: { login: "dependabot[bot]", type: "Bot" } },
+    };
+    mockServer.use(
+      http.get(`${REPO}/commits/:ref`, ({ params }) =>
+        HttpResponse.json(authors[String(params.ref)] ?? {}),
+      ),
+    );
+    const client = await repo();
+
+    await expect(client.commitAuthorLogin(SHA_B)).resolves.toBe("octo-dev");
+    await expect(client.commitAuthorLogin("c".repeat(40))).resolves.toBeNull();
+    await expect(client.commitAuthorLogin("d".repeat(40))).resolves.toBeNull();
+    await expect(client.commitAuthorLogin("main")).rejects.toThrow(ZodError);
+  });
+
+  it("finds the open PR of a branch in this repository, never a fork's", async () => {
+    const asked: string[] = [];
+    mockServer.use(
+      http.get(`${REPO}/pulls`, ({ request }) => {
+        asked.push(new URL(request.url).searchParams.get("head") ?? "");
+        return HttpResponse.json([
+          pull({ number: 20, head: { ...forkHead, ref: "feature" } }),
+          pull({ number: 21, head: { ref: "feature", sha: SHA_B, repo: ownRepo } }),
+        ]);
+      }),
+    );
+    const client = await repo();
+
+    await expect(client.openPullRequestFor("feature")).resolves.toMatchObject({ number: 21 });
+    await expect(client.openPullRequestFor("other")).resolves.toBeNull();
+    expect(asked).toEqual(["octo-org:feature", "octo-org:other"]);
+  });
+
   it("has no way to merge (PipeHeal never merges)", async () => {
     const client = await repo();
     expect(Object.keys(client).filter((key) => /merge/i.test(key))).toEqual([]);
@@ -1215,6 +1274,7 @@ describe("readOnlyRepo (P1.4 review L9)", () => {
       "createPullRequest",
       "comment",
       "requestReviewers",
+      "addLabels",
       "rerunFailedJobs",
       "dispatchWorkflow",
     ]) {

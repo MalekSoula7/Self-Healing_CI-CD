@@ -56,6 +56,29 @@ GitHub does not redeliver failed webhook deliveries on its own, and every waitin
 | `PR_OPENED`, no selected workflow run started on the PR head | 30 min | `UNVERIFIED` + PR comment (the customer's CI doesn't run on this PR) |
 | `PR_OPENED`, runs started but not completed | 6 h | `UNVERIFIED` + PR comment |
 
+### 2.5 The pull request, in code (P5.2)
+
+A passing validation queues `publish` on the `submissions` queue.
+
+1. **Re-check, then claim.** Before any write, the job checks:
+   - the org and repository are still enabled;
+   - the stored files have the validated digest, so P5.2 commits exactly what was checked;
+   - the failing branch still exists, isn't a merge queue's, and still holds the healed commit (identical, or ahead of it);
+   - the attempt's branch, `pipeheal/<failure id tail>-<attempt>`, doesn't exist yet.
+
+   It then claims the attempt (VALIDATED → PUBLISHING) with that branch name. After the claim nothing is retried: a write with an unknown outcome ends the attempt FAILED.
+2. **Write.** It commits on a new branch from `targetSha` (`commitFiles`: `pipeheal/*` only, never `.github/`, never forced) and records the branch in `HealBranch` with its commit.
+   - The commit message is PipeHeal's own words.
+   - It opens the PR against the failing branch: a draft when the model's confidence is at or below `review.draftBelowConfidence`, when it gave none, or when validation named a reason.
+3. **After the PR exists,** the attempt is never marked FAILED. It records PR_OPENED, and the failure becomes PR_OPENED.
+   - A head that isn't PipeHeal's commit is logged; P5.3 verifies only the recorded commit.
+   - Best effort, failures only logged: the `pipeheal` label, a review request to the failing commit's author (`review.requestCommitAuthor`; never a bot), and a link comment on the failing branch's open PR (never a fork's).
+4. **The body** follows the template above. Every untrusted field (model text, paths, workflow, job and check names, judge rule IDs) is literal:
+   - It goes in code spans or fences that its content can't close, with control, bidi and zero-width characters dropped.
+   - Patterns a merge or squash commit would act on are broken with a word joiner: skip-CI markers, closing keywords before an issue reference, `*-by:` trailers, `GH-n`.
+   - It links only to GitHub run pages.
+5. **Never stuck.** A publish job whose retries run out before claiming ends its attempt FAILED. While an attempt is validating or publishing (up to 2 hours), its repository counts as busy for the dispatcher, so it can't get a second PR.
+
 ### 2.4 Submission validation, in code (P5.1)
 
 1. **Baseline (step 1).** The gateway parses the runner's JUnit reports itself and stores the inventory on the attempt (`baselineTests`), or why there is none. It never stores the XML.
@@ -723,14 +746,21 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 3 (resolved, D13):** org defaults are split from org guardrails (§8.1); every field has a merge rule (§8.4).
 - **Resolved (D14), was CHECKPOINT 3 from the P3.6 red team:** rules no stated rule covers, each cheap and statically checkable, to add or not: tautological assertions (`expect(true).toBe(true)`, `assert True`, tuple asserts); assertions inside `try/catch` or `except AssertionError`; unawaited `.resolves`/`.rejects`; retry settings (`jest.retryTimes`, `{ retry }`); mocking the module under test; in source, test-environment detection (`VITEST`, `"pytest" in sys.modules`), empty `catch {}`/`except: pass`, test-framework monkeypatching or pytest hooks, `as any`/`as unknown as`, warning filters; imports of packages no manifest declares. Decided in D14: the tricks above become rules, except mocking the module under test and undeclared imports (later, server side); packed lines count as several; doctests count as tests; edits under file-wide suppressions open a draft PR. Still open: checking that a lockfile only moves the bumped packages (Phase 4; the default `frozen` makes it rare).
 - **Phase 4 (from P3.6):** the server must refuse a path whose ancestor isn't a directory in the base tree (writing through a symlinked directory, or under an existing file); treat an empty JUnit baseline (the suite didn't compile) and a missing or zero-test report as "behavioral checks unavailable" or a failure; resolve protected configs' `extends` and local plugins.
+- **From P5.2 and its security review:**
+  - **Don't heal what can't take a PR.** Store `run.event` on `FailedRun` and skip tag pushes and `merge_group` runs at dispatch, so no heal is spent on them. Today `publish` refuses them, but only at the end (M1).
+  - **The §2.2 reconciler (P5.3)** needs rows for VALIDATED (re-queue `publish`) and PUBLISHING (look up the branch and the PR on GitHub: record one that exists, otherwise `failPublish`). It also needs a `claimedAt`. A PR opened whose recording failed twice stays PUBLISHING until then (M3).
+  - **P5.3 verifies the recorded commit only:** the PR's head SHA must equal `commitSha`, because someone may push to the branch (L1).
+  - **Reviewer requests (L2).** They go to the commit author GitHub matches by email, which a pusher can choose. Check collaborator permission first, or prefer the PR author for `pull_request` runs.
+  - **Repositories without drafts** (private repositories on free plans) refuse `draft: true` with 422. Detect it and say so, rather than ending with a generic reason.
+  - **A newer failure on the same branch** should supersede a pending heal (§9.1). Today the busy repository makes it wait, then dispatch after the PR (P5.5).
 - **From P5.1 and its security review:**
-  - **P5.2 must commit exactly what was validated (L1).** Store a digest of the validated set (`targetSha`, each path, the SHA-256 of each content) in `validation`, and check it before committing. `commitFiles` should refuse NUL content too (H1, defense in depth).
+  - **P5.2 must commit exactly what was validated (L1).** Done in P5.2: the digest is stored and checked before the claim. Still open: `commitFiles` should refuse NUL content too (H1, defense in depth).
   - **The PR body and the dashboard (L5).** They must render every untrusted field escaped: test IDs from runner XML in violations, check names, the judge's reasoning. Redact test IDs before storing them.
   - **The request path (L3).** It holds the parsed 64 MB body, a re-serialized copy for its hash, and synchronous parsing of up to 50 MB of XML. Hash the raw bytes instead, parse the reports in a worker thread or in the job, and lower the body limit and `LIMITS.submissionFiles` (200) to the plan maximum (50 files).
   - **Fetching originals.** It happens one file at a time in a single, shared worker. Use bounded parallelism, and per-org fairness for the judge.
   - **The judge's outage.** When every judge rule is unjudged because the model was unreachable, retry the job rather than spend an attempt (D21 fails closed).
   - **Dependency fixes.** heal-action doesn't re-run `install` after a fix, so a dependency failure (failing check `install`) is always rejected. Make `install` a final check when it is the failing one.
-  - **The dispatcher's in-flight count** ignores VALIDATING and VALIDATED attempts. Decide whether they hold the repository.
+  - **The dispatcher's in-flight count** now includes VALIDATING, VALIDATED and PUBLISHING attempts, for up to 2 hours (P5.2 review M4).
   - **`recordValidation`** sets the failure to FAILED unconditionally. Make it compare-and-set from HEALING.
   - **The validation policy** is the current effective policy. Record which version was used.
   - **A baseline with no reports.** When `junitGlob` is set but the baseline has no reports, it is only a draft. Consider refusing, or requiring at least one failing test when the failing check is `test` (M3 option).

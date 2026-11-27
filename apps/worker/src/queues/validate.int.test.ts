@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { JudgeModel } from "../judge-model";
 import { processValidationJob, type SubmissionsDeps } from "./submissions";
+import { recordUnpublishable } from "./publish";
 import { recordUncheckable } from "./validate";
 
 const db = createTestDb();
@@ -43,15 +44,21 @@ function mockGitHub(fullName: string, files: Record<string, string>) {
   const read: string[] = [];
   github.use(
     http.post("https://api.github.com/app/installations/:id/access_tokens", async ({ request }) => {
+      const text = await request.text();
+      const token = {
+        token: "ghs_testInstallationToken00000000000000",
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+      };
+      // The write client (the PR) asks for an unscoped token: no body.
+      if (text === "") return HttpResponse.json(token);
       const scope = z
         .object({
           repository_ids: z.array(z.number()),
           permissions: z.record(z.string(), z.string()),
         })
-        .parse(await request.json());
+        .parse(JSON.parse(text));
       return HttpResponse.json({
-        token: "ghs_testInstallationToken00000000000000",
-        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        ...token,
         repository_selection: "selected",
         permissions: { ...scope.permissions, metadata: "read" },
         repositories: scope.repository_ids.map((id) => ({ id })),
@@ -142,10 +149,18 @@ const noJudge: JudgeModel = {
   judge: () => Promise.reject(new Error("the judge was called")),
 };
 
+/** Publish jobs the validation queued. */
+const published: { orgId: string; attemptId: string }[] = [];
+
 const deps = (): SubmissionsDeps => ({
   db,
   githubApp: createGitHubApp({ appId: 1234, privateKey, retries: 0 }),
   judge: noJudge,
+  enqueuePublish: (target) => {
+    published.push(target);
+    return Promise.resolve();
+  },
+  model: "qwen3:14b",
   logger,
 });
 
@@ -162,6 +177,7 @@ describe("validate job (P5.1c)", () => {
     await processValidationJob(job(target), deps());
 
     expect(read).toEqual([`src/sum.ts@${"c".repeat(40)}`]);
+    expect(published).toContainEqual({ orgId: target.orgId, attemptId: target.attemptId });
     const attempt = await db.healAttempt.findUniqueOrThrow({ where: { id: target.attemptId } });
     expect(attempt).toMatchObject({
       status: "VALIDATED",
@@ -186,6 +202,7 @@ describe("validate job (P5.1c)", () => {
     const attempt = await db.healAttempt.findUniqueOrThrow({ where: { id: target.attemptId } });
     expect(attempt.status).toBe("REJECTED");
     expect(attempt.finishedAt).not.toBeNull();
+    expect(published.map((job) => job.attemptId)).not.toContain(target.attemptId);
     const violations = z
       .object({ violations: z.array(z.object({ ruleId: z.string() })) })
       .parse(attempt.validation).violations;
@@ -256,5 +273,266 @@ describe("validate job (P5.1c)", () => {
     await expect(processValidationJob({ name: "other", data: {} }, deps())).rejects.toThrow(
       /unknown submissions job/,
     );
+  });
+});
+
+/** GitHub's Git Data and pull request APIs for one repository, recording every write. */
+function mockPublish(
+  fullName: string,
+  options: {
+    refusePullRequest?: boolean;
+    /** The failing branch's tip: its commit, null when the branch is gone. */
+    baseTip?: string | null;
+    /** How the healed commit compares with the tip. */
+    comparison?: "ahead" | "behind" | "diverged";
+    branchExists?: boolean;
+  } = {},
+) {
+  const api = `https://api.github.com/repos/${fullName}`;
+  const repoRef = { id: 777, full_name: fullName };
+  const commit = "9".repeat(40);
+  const writes: { what: string; body: unknown }[] = [];
+  const pull = (ref: string) => ({
+    number: 42,
+    html_url: `https://github.com/${fullName}/pull/42`,
+    state: "open",
+    draft: true,
+    merged: false,
+    head: { ref, sha: commit, repo: repoRef },
+    base: { ref: "main", repo: repoRef },
+  });
+  let headRef = "";
+  const baseTip = options.baseTip === undefined ? "c".repeat(40) : options.baseTip;
+  github.use(
+    http.get(`${api}/git/ref/*`, ({ params }) => {
+      const ref = String(params[0]);
+      const sha =
+        ref === "heads/main" ? baseTip : options.branchExists === true ? "8".repeat(40) : null;
+      return sha === null
+        ? HttpResponse.json({ message: "Not Found" }, { status: 404 })
+        : HttpResponse.json({ ref: `refs/${ref}`, object: { sha } });
+    }),
+    http.get(`${api}/compare/:basehead`, () =>
+      HttpResponse.json({
+        status: options.comparison ?? "ahead",
+        ahead_by: 1,
+        behind_by: options.comparison === "ahead" || options.comparison === undefined ? 0 : 1,
+        total_commits: 1,
+        commits: [],
+        files: [],
+      }),
+    ),
+    http.get(`${api}/git/commits/:sha`, () =>
+      HttpResponse.json({ sha: "c".repeat(40), tree: { sha: "1".repeat(40) } }),
+    ),
+    http.get(`${api}/git/trees/:sha`, ({ params }) =>
+      HttpResponse.json(
+        params.sha === "1".repeat(40)
+          ? {
+              sha: "1".repeat(40),
+              tree: [{ path: "src", mode: "040000", type: "tree", sha: "2".repeat(40) }],
+            }
+          : {
+              sha: "2".repeat(40),
+              tree: [{ path: "sum.ts", mode: "100644", type: "blob", sha: "3".repeat(40) }],
+            },
+      ),
+    ),
+    http.post(`${api}/git/trees`, async ({ request }) => {
+      writes.push({ what: "tree", body: await request.json() });
+      return HttpResponse.json({ sha: "4".repeat(40) }, { status: 201 });
+    }),
+    http.post(`${api}/git/commits`, async ({ request }) => {
+      writes.push({ what: "commit", body: await request.json() });
+      return HttpResponse.json({ sha: commit }, { status: 201 });
+    }),
+    http.post(`${api}/git/refs`, async ({ request }) => {
+      const body = z.object({ ref: z.string() }).parse(await request.json());
+      headRef = body.ref.replace("refs/heads/", "");
+      writes.push({ what: "ref", body });
+      return HttpResponse.json({ ref: body.ref, object: { sha: commit } }, { status: 201 });
+    }),
+    http.post(`${api}/pulls`, async ({ request }) => {
+      writes.push({ what: "pull", body: await request.json() });
+      return options.refusePullRequest === true
+        ? HttpResponse.json({ message: "Validation Failed" }, { status: 422 })
+        : HttpResponse.json(pull(headRef), { status: 201 });
+    }),
+    http.get(`${api}/pulls/42`, () => HttpResponse.json(pull(headRef))),
+    http.get(`${api}/pulls`, () => HttpResponse.json([])),
+    http.post(`${api}/issues/42/labels`, async ({ request }) => {
+      writes.push({ what: "labels", body: await request.json() });
+      return HttpResponse.json([]);
+    }),
+    http.get(`${api}/commits/:ref`, () =>
+      HttpResponse.json({ author: { login: "octo-dev", type: "User" } }),
+    ),
+    http.post(`${api}/pulls/42/requested_reviewers`, async ({ request }) => {
+      writes.push({ what: "reviewers", body: await request.json() });
+      return HttpResponse.json(pull(headRef), { status: 201 });
+    }),
+  );
+  return { writes, commit };
+}
+
+const publishJob = (target: { orgId: string; attemptId: string }) => ({
+  name: "publish",
+  data: { orgId: target.orgId, attemptId: target.attemptId },
+});
+
+describe("publish job (P5.2c)", () => {
+  /** A fix validated end to end: VALIDATED, its digest stored. */
+  async function validatedFix() {
+    const target = await submitted([{ path: "src/sum.ts", content: FIXED }]);
+    mockGitHub(target.fullName, { "src/sum.ts": BUGGY });
+    await processValidationJob(job(target), deps());
+    return target;
+  }
+
+  it("commits the checked files on a pipeheal/* branch and opens the PR", async () => {
+    const target = await validatedFix();
+    const { writes, commit } = mockPublish(target.fullName);
+
+    await processValidationJob(publishJob(target), deps());
+
+    const attempt = await db.healAttempt.findUniqueOrThrow({ where: { id: target.attemptId } });
+    expect(attempt).toMatchObject({
+      status: "PR_OPENED",
+      prNumber: 42,
+      commitSha: commit,
+      draft: true,
+    });
+    expect(attempt.branch).toMatch(/^pipeheal\/[0-9a-f]{10}-1$/);
+    await expect(
+      db.healBranch.findFirstOrThrow({ where: { name: attempt.branch ?? "" } }),
+    ).resolves.toMatchObject({ lastCommitSha: commit, attemptId: target.attemptId });
+    await expect(
+      db.pipelineFailure.findUniqueOrThrow({ where: { id: target.failureId } }),
+    ).resolves.toMatchObject({ status: "PR_OPENED" });
+
+    expect(writes.map((write) => write.what)).toEqual([
+      "tree",
+      "commit",
+      "ref",
+      "pull",
+      "labels",
+      "reviewers",
+    ]);
+    expect(writes[0]?.body).toMatchObject({
+      tree: [{ path: "src/sum.ts", mode: "100644", type: "blob", content: FIXED }],
+    });
+    expect(writes[1]?.body).toMatchObject({ parents: ["c".repeat(40)] });
+    expect(writes[2]?.body).toMatchObject({ ref: `refs/heads/${attempt.branch ?? ""}` });
+    expect(writes[3]?.body).toMatchObject({ base: "main", head: attempt.branch, draft: true });
+    expect(writes[4]?.body).toEqual({ labels: ["pipeheal"] });
+    expect(writes[5]?.body).toEqual({ reviewers: ["octo-dev"] });
+  });
+
+  it("never opens a second PR when the job runs again", async () => {
+    const target = await validatedFix();
+    const { writes } = mockPublish(target.fullName);
+
+    await processValidationJob(publishJob(target), deps());
+    await processValidationJob(publishJob(target), deps());
+
+    expect(writes.filter((write) => write.what === "pull")).toHaveLength(1);
+  });
+
+  it("refuses a submission that changed after it was checked, before writing anything", async () => {
+    const target = await validatedFix();
+    const { writes } = mockPublish(target.fullName);
+    await db.attemptSubmission.update({
+      where: { attemptId: target.attemptId },
+      data: { files: [{ path: "src/sum.ts", content: "export const sum = () => 0;\n" }] },
+    });
+
+    await processValidationJob(publishJob(target), deps());
+
+    expect(writes).toEqual([]);
+    await expect(
+      db.healAttempt.findUniqueOrThrow({ where: { id: target.attemptId } }),
+    ).resolves.toMatchObject({
+      status: "FAILED",
+      endReason: "the submission isn't the one that was checked",
+    });
+  });
+
+  it("fails the attempt when GitHub refuses the PR, and never retries the writes", async () => {
+    const target = await validatedFix();
+    const { writes, commit } = mockPublish(target.fullName, { refusePullRequest: true });
+
+    await processValidationJob(publishJob(target), deps());
+    await processValidationJob(publishJob(target), deps());
+
+    const attempt = await db.healAttempt.findUniqueOrThrow({ where: { id: target.attemptId } });
+    expect(attempt).toMatchObject({
+      status: "FAILED",
+      endReason: "GitHub refused the commit or the pull request",
+      commitSha: commit,
+    });
+    expect(writes.filter((write) => write.what === "pull")).toHaveLength(1);
+    expect(writes.filter((write) => write.what === "commit")).toHaveLength(1);
+  });
+
+  it.each([
+    ["the failing branch no longer exists", { baseTip: null }],
+    [
+      "the failing branch moved away from the healed commit",
+      { baseTip: "7".repeat(40), comparison: "diverged" as const },
+    ],
+    ["the pull request's branch already exists", { branchExists: true }],
+  ])("stops before writing when %s", async (reason, options) => {
+    const target = await validatedFix();
+    const { writes } = mockPublish(target.fullName, options);
+
+    await processValidationJob(publishJob(target), deps());
+
+    expect(writes).toEqual([]);
+    await expect(
+      db.healAttempt.findUniqueOrThrow({ where: { id: target.attemptId } }),
+    ).resolves.toMatchObject({ status: "FAILED", endReason: reason });
+  });
+
+  it("opens the PR when the branch moved forward from the healed commit", async () => {
+    const target = await validatedFix();
+    mockPublish(target.fullName, { baseTip: "7".repeat(40), comparison: "ahead" });
+
+    await processValidationJob(publishJob(target), deps());
+
+    await expect(
+      db.healAttempt.findUniqueOrThrow({ where: { id: target.attemptId } }),
+    ).resolves.toMatchObject({ status: "PR_OPENED" });
+  });
+
+  it("never targets a merge queue's branch", async () => {
+    const target = await validatedFix();
+    await db.pipelineFailure.update({
+      where: { id: target.failureId },
+      data: { headBranch: "gh-readonly-queue/main/pr-1-abc" },
+    });
+    const { writes } = mockPublish(target.fullName);
+
+    await processValidationJob(publishJob(target), deps());
+
+    expect(writes).toEqual([]);
+    await expect(
+      db.healAttempt.findUniqueOrThrow({ where: { id: target.attemptId } }),
+    ).resolves.toMatchObject({
+      status: "FAILED",
+      endReason: "the failure ran in a merge queue, not on a branch",
+    });
+  });
+
+  it("ends a validated attempt whose publish job ran out of retries", async () => {
+    const target = await validatedFix();
+
+    await recordUnpublishable(db, { orgId: target.orgId, attemptId: target.attemptId });
+
+    await expect(
+      db.healAttempt.findUniqueOrThrow({ where: { id: target.attemptId } }),
+    ).resolves.toMatchObject({
+      status: "FAILED",
+      endReason: "the pull request couldn't be opened",
+    });
   });
 });

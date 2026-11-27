@@ -309,6 +309,17 @@ const submissionInput = () => ({
   afterTests: { available: false as const, reason: "no JUnit report was found" },
 });
 
+/** An attempt of A's whose submission was validated, ready for its pull request. */
+async function validated() {
+  const attempt = await a.system.attempts.create({
+    failureId: a.failure.id,
+    targetSha: a.failure.headSha,
+    failingCheck: "test",
+  });
+  await db.healAttempt.update({ where: { id: attempt.id }, data: { status: "VALIDATED" } });
+  return attempt;
+}
+
 /** What checking a submission found. */
 const validation = (passed: boolean) => ({
   passed,
@@ -373,6 +384,33 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
   },
   "attempts.submissionFor": async () => {
     await expect(a.system.attempts.submissionFor(bAttemptId)).resolves.toBeNull();
+  },
+  "attempts.publication": async () => {
+    await expect(a.system.attempts.publication(bAttemptId)).resolves.toBeNull();
+  },
+  "attempts.claimPublish": async () => {
+    await expect(a.system.attempts.claimPublish(bAttemptId, "pipeheal/x-1")).rejects.toThrow(
+      NotFoundError,
+    );
+  },
+  "attempts.recordCommit": async () => {
+    await expect(a.system.attempts.recordCommit(bAttemptId, "f".repeat(40))).rejects.toThrow(
+      NotFoundError,
+    );
+  },
+  "attempts.recordPullRequest": async () => {
+    await expect(
+      a.system.attempts.recordPullRequest(bAttemptId, {
+        number: 1,
+        url: "https://github.com/x/y/pull/1",
+        draft: false,
+      }),
+    ).rejects.toThrow(NotFoundError);
+  },
+  "attempts.failPublish": async () => {
+    await expect(a.system.attempts.failPublish(bAttemptId, "planted")).rejects.toThrow(
+      NotFoundError,
+    );
   },
   "attempts.recordValidation": async () => {
     await expect(a.system.attempts.recordValidation(bAttemptId, validation(false))).rejects.toThrow(
@@ -686,6 +724,7 @@ const readOnlyHelpers = [
   "attempts.history",
   "attempts.brief",
   "attempts.submissionFor",
+  "attempts.publication",
 ];
 
 const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
@@ -1019,6 +1058,68 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
         action: "attempt.submitted",
         target: `attempt:${attempt.id}`,
         metadata: { files: 1, deleted: 0, checks: 1 },
+      },
+    ];
+  },
+  "attempts.claimPublish": async () => {
+    const attempt = await validated();
+    await a.system.attempts.claimPublish(attempt.id, "pipeheal/abc-1");
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.publishing",
+        target: `attempt:${attempt.id}`,
+        metadata: { branch: "pipeheal/abc-1" },
+      },
+    ];
+  },
+  "attempts.recordCommit": async () => {
+    const attempt = await validated();
+    await a.system.attempts.claimPublish(attempt.id, "pipeheal/abc-1");
+    await a.system.attempts.recordCommit(attempt.id, "f".repeat(40));
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      { actorType: "SYSTEM", action: "attempt.publishing", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "branch.committed",
+        target: `attempt:${attempt.id}`,
+        metadata: { branch: "pipeheal/abc-1", commitSha: "f".repeat(40) },
+      },
+    ];
+  },
+  "attempts.recordPullRequest": async () => {
+    const attempt = await validated();
+    await a.system.attempts.claimPublish(attempt.id, "pipeheal/abc-1");
+    await a.system.attempts.recordPullRequest(attempt.id, {
+      number: 7,
+      url: "https://github.com/x/y/pull/7",
+      draft: true,
+    });
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      { actorType: "SYSTEM", action: "attempt.publishing", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.pr_opened",
+        target: `attempt:${attempt.id}`,
+        metadata: { number: 7, draft: true },
+      },
+    ];
+  },
+  "attempts.failPublish": async () => {
+    const attempt = await validated();
+    await a.system.attempts.claimPublish(attempt.id, "pipeheal/abc-1");
+    await a.system.attempts.failPublish(attempt.id, "GitHub refused the commit");
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      { actorType: "SYSTEM", action: "attempt.publishing", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.publish_failed",
+        target: `attempt:${attempt.id}`,
+        metadata: { reason: "GitHub refused the commit" },
       },
     ];
   },

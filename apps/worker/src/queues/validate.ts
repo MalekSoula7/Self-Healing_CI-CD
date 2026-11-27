@@ -30,6 +30,8 @@ export interface ValidateDeps {
   db: Db;
   githubApp: GitHubApp | null;
   judge: JudgeModel;
+  /** Queues the pull request of a submission that passed (P5.2). */
+  enqueuePublish: (job: ValidationJob) => Promise<void>;
   now?: () => number;
 }
 
@@ -135,6 +137,7 @@ export async function validateSubmission(
     result = withJudge(validation, judged.report.outcomes, judged.decision.passed);
   }
   await system.attempts.recordValidation(job.attemptId, result);
+  if (result.passed) await deps.enqueuePublish(job);
   // IDs and counts only: no file contents, no model text.
   log.info(
     {

@@ -54,6 +54,31 @@ function clean(text: string): string {
   return out;
 }
 
+/** Breaks a pattern without changing how it reads (stripped by `clean`, so added after it). */
+const WORD_JOINER = String.fromCodePoint(0x2060);
+
+/**
+ * A merge or squash commit carries the PR's title (and, squashed, its description) as plain text,
+ * where code fences mean nothing (P5.2 review M2). Untrusted text loses what such a commit would
+ * act on: skip-CI markers, issue-closing keywords, trailers (`Co-authored-by:`) and `GH-n`
+ * references.
+ */
+function defuse(text: string): string {
+  const join = WORD_JOINER;
+  return text
+    .replace(
+      /\[(skip ci|ci skip|no ci|skip actions|actions skip)\]/gi,
+      (match) => `[${join}${match.slice(1)}`,
+    )
+    .replace(/^(\s*)skip-checks:/gim, `$1skip${join}-checks:`)
+    .replace(
+      /\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(?=\s*:?\s+(?:#|gh-|https?:\/\/|[\w.-]+\/[\w.-]+#))/gi,
+      `$1${join}`,
+    )
+    .replace(/^(\s*[\w-]+-by)(?=:)/gim, `$1${join}`)
+    .replace(/\bGH-(?=\d)/gi, (match) => `${match.slice(0, 2)}${join}-`);
+}
+
 function capped(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
 }
@@ -66,14 +91,14 @@ function longestBacktickRun(text: string): number {
 
 /** Untrusted text on one line, as a code span its content can't close. */
 export function inlineCode(text: string, max = 200): string {
-  const line = capped(clean(text).replace(/\s+/g, " ").trim(), max) || "(empty)";
+  const line = capped(defuse(clean(text).replace(/\s+/g, " ").trim()), max) || "(empty)";
   const run = longestBacktickRun(line);
   return run === 0 ? `\`${line}\`` : `${"`".repeat(run + 1)} ${line} ${"`".repeat(run + 1)}`;
 }
 
 /** Untrusted text as a fenced block, with a fence longer than any backtick run inside. */
 export function codeBlock(text: string, max = 2_000): string {
-  const body = capped(clean(text).trim(), max) || "(empty)";
+  const body = capped(defuse(clean(text).trim()), max) || "(empty)";
   const fence = "`".repeat(Math.max(3, longestBacktickRun(body) + 1));
   return `${fence}text\n${body}\n${fence}`;
 }
@@ -98,7 +123,7 @@ export function prTitle(fix: FixSummary | null): string {
   if (text === "") return "fix: repair the failing CI check [PipeHeal]";
   const sentence = /^.*?[.!?](?=\s|$)/.exec(text)?.[0] ?? text;
   // Titles render references and mentions too: break them up.
-  const summary = capped(sentence, MAX_TITLE_SUMMARY)
+  const summary = capped(defuse(sentence), MAX_TITLE_SUMMARY)
     .replace(/@(?=[\w-])/g, "@\u200B")
     .replace(/#(?=\d)/g, "#\u200B");
   return `fix: ${summary} [PipeHeal]`;

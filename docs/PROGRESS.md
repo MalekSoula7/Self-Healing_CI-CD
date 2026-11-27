@@ -1230,3 +1230,25 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
 - **P4.8 review L2, fixed here:** a full run showed `claimDispatch` refused with a serialization conflict caused by unrelated test files. It now retries those conflicts itself, up to 4 tries.
 - **Gate:** typecheck, lint and `pnpm test` pass twice in a row.
 
+## 2026-11-27 · P5.2 branch, commit and pull request (a, b, c)
+
+- **What it does:** a validated fix becomes a commit on a new `pipeheal/*` branch and a pull request against the failing branch (SPEC §2.5, new).
+  - **P5.2a:** the model's `submit_fix` summary (`HealAttempt.fix`) and the digest of exactly what was validated.
+  - **P5.2b:** the PR title, body and draft rule. Untrusted text is shown literally.
+  - **P5.2c:** the `publish` job.
+    - packages/github gained `addLabels` (own `pipeheal/*` PRs only), `commitAuthorLogin` and `openPullRequestFor` (reads).
+    - The database gained the PUBLISHING and PR_OPENED statuses and a `HealBranch` table (migration `pull_requests`).
+- **Security review: no critical or high findings; the invariants hold in code** (no merge, no writes outside `pipeheal/*`, no force, no `.github/`, no forks).
+  - **Fixed:**
+    - M1: the base must still exist, not be a merge-queue branch, and still contain the healed commit.
+    - M2: skip-CI markers, closing keywords, trailers and `GH-n` are defused in the title and body, which can become a commit message.
+    - M3, in part: a publish job out of retries ends its attempt, and an opened PR is never marked FAILED.
+    - M4: an attempt being validated or published holds its repository for up to 2 hours.
+    - L1: the opened PR's head is compared with PipeHeal's commit and logged.
+    - L3: `recordCommit` is compare-and-set and org-scoped.
+    - L5: an existing branch is refused before the claim.
+  - **Recorded in SPEC §15:** skipping tag and merge-queue runs at dispatch, the reconciler for VALIDATED and PUBLISHING, P5.3 verifying the recorded commit only, reviewer requests and collaborator permission, repositories without drafts, newer failures superseding a heal.
+  - **L4** is the `.env.example` slug, still not committed.
+- **Encoding pitfall (for future sessions):** text sent through tool inputs has its backslash escapes decoded (unicode escapes, and backslash-b becomes a backspace) before it reaches files or the shell. Write backslashes with chr(92) from Python, or build characters with `String.fromCodePoint`, and scan new files for control or hidden characters.
+- **Gate:** typecheck, lint, and `pnpm test` twice.
+

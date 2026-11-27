@@ -140,6 +140,7 @@ model Organization {
   agentSteps     AgentStep[]
   agentEvents    AgentEvent[]
   submissions    AttemptSubmission[]
+  healBranches   HealBranch[]
 }
 
 enum Role {
@@ -204,6 +205,7 @@ model Repository {
   failedRuns     FailedRun[]
   policyVersions PolicyVersion[]
   ruleDrafts     CustomRuleDraft[]
+  healBranches   HealBranch[]
 
   // Webhook lookups go installation → org → (orgId, githubRepoId), never by repo ID alone.
   @@unique([orgId, githubRepoId])
@@ -519,6 +521,10 @@ enum AttemptStatus {
   VALIDATING
   /// The submission passed every check: ready for its pull request (P5.2).
   VALIDATED
+  /// The PR job claimed it: committing and opening the pull request. Never repeated (P5.2).
+  PUBLISHING
+  /// Its pull request is open; CI on it decides what's next (SPEC §9.1, P5.3).
+  PR_OPENED
   /// The submission broke a rule, failed a check or a test, or couldn't be checked.
   REJECTED
   /// The failing check passed on the runner before any change (SPEC §7.3).
@@ -558,6 +564,12 @@ model HealAttempt {
   /// The model's own account of its fix (`submit_fix`: root cause, changes, verification,
   /// confidence), bounded; untrusted text for the PR body (P5.2). `fixSummarySchema`.
   fix              Json?
+  /// The `pipeheal/*` branch, the App's commit on it, and the pull request (P5.2).
+  branch           String?
+  commitSha        String?
+  prNumber         Int?
+  prUrl            String?
+  draft            Boolean?
   /// Model turns taken (SPEC §7.3's iteration cap).
   iterations       Int             @default(0)
   /// Why the attempt ended, when it did: a stop condition or the model's own words, bounded.
@@ -604,6 +616,26 @@ model AgentStep {
   updatedAt   DateTime        @updatedAt
 
   @@unique([attemptId, stepSeq])
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
+}
+
+/// A `pipeheal/*` branch the App created, with its last commit (PLAN P5.2): PipeHeal only ever
+/// extends these, and only from exactly that commit (`commitFiles` refuses a moved branch).
+model HealBranch {
+  id            String       @id @default(uuid(7)) @db.Uuid
+  orgId         String       @db.Uuid
+  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  repoId        String       @db.Uuid
+  repo          Repository   @relation(fields: [orgId, repoId], references: [orgId, id], onDelete: Cascade)
+  name          String
+  lastCommitSha String
+  /// The attempt whose commit it holds last.
+  attemptId     String       @db.Uuid
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([repoId, name])
   @@unique([orgId, id])
   @@index([orgId, createdAt])
 }

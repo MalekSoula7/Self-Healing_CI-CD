@@ -414,6 +414,20 @@ export const fixSummarySchema = z.strictObject({
 });
 export type FixSummary = z.infer<typeof fixSummarySchema>;
 
+/** A `pipeheal/*` branch name, as packages/github's guard accepts it. */
+export const healBranchSchema = z
+  .string()
+  .regex(/^pipeheal\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/)
+  .refine((name) => !name.includes("..") && !name.endsWith(".lock"), "not a valid branch name");
+
+/** The pull request PipeHeal opened for an attempt (P5.2c). */
+export const pullRequestRecordSchema = z.strictObject({
+  number: z.int().positive(),
+  url: z.url({ protocol: /^https$/ }).max(500),
+  draft: z.boolean(),
+});
+export type PullRequestRecord = z.infer<typeof pullRequestRecordSchema>;
+
 /** A dispatch that didn't produce a healer run the attempt can be bound to. */
 export const dispatchFailureSchema = z.strictObject({
   reason: z.string().trim().min(1).max(300),

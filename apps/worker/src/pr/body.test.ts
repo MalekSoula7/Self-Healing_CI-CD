@@ -123,6 +123,28 @@ describe("prBody", () => {
     expect(body).toContain("- `src/[weird](x).ts`");
   });
 
+  it("leaves nothing a merge or squash commit would act on (skip CI, closing issues, trailers)", () => {
+    const fix = {
+      rootCause: "Fixes #12 [skip ci]. More.",
+      changes: "Co-authored-by: Someone <someone@example.com>\nskip-checks: true",
+      verification: "closes https://github.com/acme/app/issues/3 and resolves GH-123",
+      confidence: "high" as const,
+    };
+    const title = prTitle(fix);
+    const body = prBody(input({ fix }));
+
+    for (const text of [title, body]) {
+      expect(text).not.toMatch(/\[skip ci\]/i);
+      expect(text).not.toMatch(/fixes #12/i);
+      expect(text).not.toMatch(/^Co-authored-by:/im);
+      expect(text).not.toMatch(/^skip-checks:/im);
+      expect(text).not.toMatch(/closes https/i);
+      expect(text).not.toMatch(/GH-123/);
+    }
+    // Still readable: the words are all there.
+    expect(body).toContain("Someone <someone@example.com>");
+  });
+
   it("only links to GitHub's own run pages", () => {
     const body = prBody(
       input({

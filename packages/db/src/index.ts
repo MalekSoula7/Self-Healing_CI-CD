@@ -39,6 +39,7 @@ export {
   submissionValidationSchema,
   testInventoryRecordSchema,
   type FixSummary,
+  type PullRequestRecord,
   type SubmissionValidation,
   type TestInventoryRecord,
 } from "./inputs";

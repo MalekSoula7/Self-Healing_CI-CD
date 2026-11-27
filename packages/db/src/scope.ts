@@ -26,6 +26,8 @@ import {
   dispatchClaimSchema,
   dispatchFailureSchema,
   failureSettleSchema,
+  healBranchSchema,
+  pullRequestRecordSchema,
   submissionValidationSchema,
   repositoryCommandsSchema,
   auditPageSchema,
@@ -45,6 +47,7 @@ import {
   type DispatchClaimInput,
   type DispatchFailureInput,
   type FailureSettleInput,
+  type PullRequestRecord,
   type SubmissionValidation,
   type RepositoryCommandsInput,
   type AuditPage,
@@ -93,6 +96,9 @@ const ORG_SUMMARY = {
 } as const;
 
 const ROLE_RANK: Record<Role, number> = { MEMBER: 0, ADMIN: 1, OWNER: 2 };
+
+/** How long an attempt being validated or published holds its repository (P5.2 review M4). */
+const SETTLING_TIMEOUT_MS = 2 * 60 * 60_000;
 
 /** Tries of a serializable transaction that Postgres refused with a serialization failure. */
 const SERIALIZATION_TRIES = 4;
@@ -695,6 +701,12 @@ function buildSystemScope(ctx: ScopeContext) {
                       status: { in: ["DISPATCHED", "RUNNING", "AWAITING_SUBMISSION"] },
                       sessionExpiresAt: { gt: new Date(now) },
                     },
+                    // Being checked or published: a second fix for the repository would open a
+                    // second PR (P5.2 review M4). Bounded, so a stuck one can't block for good.
+                    {
+                      status: { in: ["VALIDATING", "VALIDATED", "PUBLISHING"] },
+                      updatedAt: { gt: new Date(now - SETTLING_TIMEOUT_MS) },
+                    },
                   ],
                 },
               });
@@ -825,6 +837,188 @@ function buildSystemScope(ctx: ScopeContext) {
             },
           });
           return tx.healAttempt.findFirstOrThrow({ where: { id, orgId } });
+        });
+      },
+
+      /**
+       * What opening an attempt's pull request needs (P5.2c): the validation and the model's
+       * summary, the failure and its failed jobs, the repository, and the stored submission.
+       * Null when the attempt isn't this org's.
+       */
+      async publication(attemptId: string) {
+        const id = parseId(attemptId);
+        if (id === null) return null;
+        return db.healAttempt.findFirst({
+          where: { id, orgId },
+          select: {
+            id: true,
+            status: true,
+            attemptNo: true,
+            targetSha: true,
+            failingCheck: true,
+            iterations: true,
+            validation: true,
+            fix: true,
+            branch: true,
+            commitSha: true,
+            baselineTests: true,
+            org: { select: { installationId: true, status: true } },
+            failure: {
+              select: {
+                id: true,
+                headSha: true,
+                headBranch: true,
+                category: true,
+                repo: {
+                  select: {
+                    id: true,
+                    githubRepoId: true,
+                    fullName: true,
+                    enabled: true,
+                    removedFromInstallationAt: true,
+                  },
+                },
+                runs: {
+                  orderBy: { createdAt: "asc" },
+                  select: {
+                    workflowName: true,
+                    htmlUrl: true,
+                    conclusion: true,
+                    jobs: { select: { name: true, failedStep: true } },
+                  },
+                },
+              },
+            },
+            submission: { select: { files: true, afterTests: true } },
+          },
+        });
+      },
+
+      /**
+       * Claims a VALIDATED attempt for its pull request (P5.2c), naming its `pipeheal/*` branch.
+       * Compare-and-set: one job only ever writes, and a retried job finds it PUBLISHING and
+       * stops, rather than commit or open a PR twice. Returns whether this call claimed it.
+       */
+      async claimPublish(attemptId: string, branch: string) {
+        const id = requireId(attemptId, "attempt");
+        const name = healBranchSchema.parse(branch);
+        return db.$transaction(async (tx) => {
+          const attempt = await tx.healAttempt.findFirst({ where: { id, orgId } });
+          if (attempt === null) throw new NotFoundError("attempt not found");
+          const { count } = await tx.healAttempt.updateMany({
+            where: { id, orgId, status: "VALIDATED" },
+            data: { status: "PUBLISHING", branch: name },
+          });
+          if (count === 0) return false;
+          await writeAudit(tx, orgId, actor, {
+            action: "attempt.publishing",
+            target: auditTarget("attempt", id),
+            metadata: { branch: name },
+          });
+          return true;
+        });
+      },
+
+      /**
+       * Records the App's commit on the attempt's branch, and the branch as one of PipeHeal's own
+       * with that commit as its last (PLAN P5.2). Only while PUBLISHING.
+       */
+      async recordCommit(attemptId: string, commitSha: string) {
+        const id = requireId(attemptId, "attempt");
+        const sha = z
+          .string()
+          .regex(/^[0-9a-f]{40}$/)
+          .parse(commitSha);
+        return db.$transaction(async (tx) => {
+          const attempt = await tx.healAttempt.findFirst({
+            where: { id, orgId },
+            include: { failure: { select: { repoId: true } } },
+          });
+          if (attempt === null) throw new NotFoundError("attempt not found");
+          if (attempt.status !== "PUBLISHING" || attempt.branch === null) {
+            throw new ConflictError("the attempt isn't publishing");
+          }
+          // Compare-and-set, scoped to the org (P5.2 review L3).
+          const { count } = await tx.healAttempt.updateMany({
+            where: { id, orgId, status: "PUBLISHING" },
+            data: { commitSha: sha },
+          });
+          if (count !== 1) throw new ConflictError("the attempt isn't publishing");
+          const repoId = attempt.failure.repoId;
+          const existing = await tx.healBranch.findFirst({
+            where: { orgId, repoId, name: attempt.branch },
+          });
+          if (existing === null) {
+            await tx.healBranch.create({
+              data: { orgId, repoId, name: attempt.branch, lastCommitSha: sha, attemptId: id },
+            });
+          } else {
+            await tx.healBranch.update({
+              where: { id: existing.id },
+              data: { lastCommitSha: sha, attemptId: id },
+            });
+          }
+          await writeAudit(tx, orgId, actor, {
+            action: "branch.committed",
+            target: auditTarget("attempt", id),
+            metadata: { branch: attempt.branch, commitSha: sha },
+          });
+        });
+      },
+
+      /** Records the attempt's open pull request: PR_OPENED, and so is its failure (P5.2c). */
+      async recordPullRequest(attemptId: string, input: PullRequestRecord) {
+        const id = requireId(attemptId, "attempt");
+        const data = pullRequestRecordSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const attempt = await tx.healAttempt.findFirst({ where: { id, orgId } });
+          if (attempt === null) throw new NotFoundError("attempt not found");
+          const { count } = await tx.healAttempt.updateMany({
+            where: { id, orgId, status: "PUBLISHING" },
+            data: {
+              status: "PR_OPENED",
+              prNumber: data.number,
+              prUrl: data.url,
+              draft: data.draft,
+            },
+          });
+          if (count !== 1) throw new ConflictError("the attempt isn't publishing");
+          await tx.pipelineFailure.update({
+            where: { id: attempt.failureId },
+            data: { status: "PR_OPENED" },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "attempt.pr_opened",
+            target: auditTarget("attempt", id),
+            metadata: { number: data.number, draft: data.draft },
+          });
+        });
+      },
+
+      /**
+       * Ends an attempt whose pull request couldn't be opened (P5.2c). Only while PUBLISHING;
+       * never retried, since the write's outcome may be unknown.
+       */
+      async failPublish(attemptId: string, reason: string) {
+        const id = requireId(attemptId, "attempt");
+        const why = z.string().trim().min(1).max(300).parse(reason);
+        return db.$transaction(async (tx) => {
+          const attempt = await tx.healAttempt.findFirst({ where: { id, orgId } });
+          if (attempt === null) throw new NotFoundError("attempt not found");
+          const { count } = await tx.healAttempt.updateMany({
+            where: { id, orgId, status: "PUBLISHING" },
+            data: { status: "FAILED", endReason: why, finishedAt: new Date() },
+          });
+          if (count === 0) return;
+          await tx.pipelineFailure.update({
+            where: { id: attempt.failureId },
+            data: { status: "FAILED" },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "attempt.publish_failed",
+            target: auditTarget("attempt", id),
+            metadata: { reason: why },
+          });
         });
       },
 

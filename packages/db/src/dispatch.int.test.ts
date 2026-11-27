@@ -135,6 +135,20 @@ describe("attempts.claimDispatch", () => {
     await expect(claim((await fail()).id)).resolves.toMatchObject({ outcome: "created" });
   });
 
+  it("holds the repository while a fix is validated or published, for a bounded time", async () => {
+    const { fail, claim } = await tenant();
+    const first = await claim((await fail()).id);
+    if (first.outcome !== "created") throw new Error("test setup: no attempt");
+    await db.healAttempt.update({
+      where: { id: first.attempt.id },
+      data: { status: "VALIDATING" },
+    });
+
+    await expect(claim((await fail()).id)).resolves.toEqual({ outcome: "busy" });
+    await db.$executeRaw`UPDATE "HealAttempt" SET "updatedAt" = now() - interval '3 hours' WHERE id = ${first.attempt.id}::uuid`;
+    await expect(claim((await fail()).id)).resolves.toMatchObject({ outcome: "created" });
+  });
+
   it("stops at the failure's attempt cap", async () => {
     const { system, fail, claim } = await tenant();
     const failure = await fail();

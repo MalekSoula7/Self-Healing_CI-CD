@@ -671,6 +671,60 @@ export function repoClient(octokit: Octokit, fullName: string) {
       return { id: comment.id, htmlUrl: comment.html_url };
     },
 
+    /**
+     * Adds labels to one of PipeHeal's own PRs (SPEC §9: `pipeheal`). GitHub creates a label the
+     * repository doesn't have yet.
+     */
+    async addLabels(number: number, labels: string[]): Promise<void> {
+      const names = z
+        .array(z.string().regex(/^[A-Za-z0-9 ._:-]{1,50}$/))
+        .min(1)
+        .max(5)
+        .parse(labels);
+      const pull = await ownPullRequest(number);
+      if (!isHealBranch(pull.headRef)) {
+        throw new GuardError("PipeHeal only labels its own pull requests");
+      }
+      await octokit.request("POST /repos/{owner}/{repo}/issues/{issue_number}/labels", {
+        ...where,
+        issue_number: number,
+        labels: names,
+      });
+    },
+
+    /**
+     * The GitHub login of a commit's author (SPEC §9: their review is requested), or null when
+     * the author has no GitHub account or is a bot. Read only.
+     */
+    async commitAuthorLogin(commitSha: string): Promise<string | null> {
+      const ref = sha.parse(commitSha);
+      const { data } = await octokit.request("GET /repos/{owner}/{repo}/commits/{ref}", {
+        ...where,
+        ref,
+      });
+      const parsed = z
+        .object({ author: z.object({ login, type: z.string().optional() }).nullable() })
+        .safeParse(data);
+      if (!parsed.success || parsed.data.author === null) return null;
+      return parsed.data.author.type === "Bot" ? null : parsed.data.author.login;
+    },
+
+    /**
+     * The open pull request whose head is `branch` in this repository, if there is one (SPEC §9:
+     * it gets a comment linking PipeHeal's PR). PRs from forks are never returned. Read only.
+     */
+    async openPullRequestFor(branch: string): Promise<PullRequest | null> {
+      assertBranchName(branch);
+      const { data } = await octokit.request("GET /repos/{owner}/{repo}/pulls", {
+        ...where,
+        state: "open",
+        head: `${owner}:${branch}`,
+        per_page: 10,
+      });
+      const pulls = z.array(pullRequestSchema).parse(data).map(toPullRequest);
+      return pulls.find((pull) => !pull.fromFork && pull.headRef === branch) ?? null;
+    },
+
     /** Requests reviewers on one of PipeHeal's own PRs. */
     async requestReviewers(number: number, reviewers: string[]): Promise<void> {
       const logins = z.array(login).min(1).parse(reviewers);

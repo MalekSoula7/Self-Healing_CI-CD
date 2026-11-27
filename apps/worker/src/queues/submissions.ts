@@ -1,10 +1,12 @@
-// The `submissions` queue (SPEC §4, P5.1): one `validate` job per attempt checks the runner's
-// submission on the server (the diff rebuilt from the target commit, static + behavioral + judge).
-// The gateway queues it once the upload is stored; the job ID makes a repeat a no-op.
+// The `submissions` queue (SPEC §4, P5.1-P5.2): one `validate` job per attempt checks the runner's
+// submission on the server (the diff rebuilt from the target commit, static + behavioral + judge),
+// then a passing one queues `publish`, which opens the pull request. The gateway queues `validate`
+// once the upload is stored; job IDs make repeats no-ops.
 import type { Logger } from "@pipeheal/shared/logger";
 import { Queue, UnrecoverableError, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { z } from "zod";
+import { publishAttempt, recordUnpublishable, type PublishDeps } from "./publish";
 import { recordUncheckable, validateSubmission, type ValidateDeps } from "./validate";
 
 export const SUBMISSIONS_QUEUE = "submissions";
@@ -43,19 +45,33 @@ export async function enqueueValidation(
   });
 }
 
-export interface SubmissionsDeps extends ValidateDeps {
+export interface SubmissionsDeps extends ValidateDeps, PublishDeps {
   logger: Logger;
+}
+
+/** Queues an attempt's pull request once its submission passed. The job ID makes it once. */
+export async function enqueuePublish(queue: SubmissionsQueue, job: ValidationJob): Promise<void> {
+  const data = validationJobSchema.parse(job);
+  await queue.add("publish", data, {
+    jobId: `publish-${data.attemptId}`,
+    attempts: 3,
+    backoff: { type: "exponential", delay: 5_000 },
+    removeOnComplete: 1_000,
+    removeOnFail: 1_000,
+  });
 }
 
 export async function processValidationJob(
   job: { id?: string | undefined; name: string; data: unknown },
   deps: SubmissionsDeps,
 ): Promise<void> {
-  if (job.name !== "validate") {
+  if (job.name !== "validate" && job.name !== "publish") {
     throw new UnrecoverableError(`unknown submissions job "${job.name}"`);
   }
   const data = validationJobSchema.parse(job.data);
-  await validateSubmission(deps, data, deps.logger.child({ attemptId: data.attemptId }));
+  const log = deps.logger.child({ attemptId: data.attemptId });
+  if (job.name === "publish") await publishAttempt(deps, data, log);
+  else await validateSubmission(deps, data, log);
 }
 
 export function createSubmissionsWorker(connection: Redis, deps: SubmissionsDeps, prefix?: string) {
@@ -69,10 +85,11 @@ export function createSubmissionsWorker(connection: Redis, deps: SubmissionsDeps
     // The error's class only: GitHub errors can name repository paths (review L7).
     deps.logger.error({ jobId: job?.id, error: error.name }, "submissions job failed");
     if (job === undefined || job.attemptsMade < (job.opts.attempts ?? 1)) return;
-    // Retries spent: the attempt ends REJECTED instead of staying VALIDATING (review M1).
     const data = validationJobSchema.safeParse(job.data);
     if (!data.success) return;
-    recordUncheckable(deps.db, data.data).catch((failure: unknown) => {
+    // Retries spent: the attempt ends rather than wait VALIDATING or VALIDATED forever.
+    const end = job.name === "publish" ? recordUnpublishable : recordUncheckable;
+    end(deps.db, data.data).catch((failure: unknown) => {
       deps.logger.error(
         { jobId: job.id, error: failure instanceof Error ? failure.name : "unknown" },
         "couldn't record an unchecked submission",

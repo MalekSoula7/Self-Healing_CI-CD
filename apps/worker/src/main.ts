@@ -13,6 +13,7 @@ import { judgeModel } from "./judge-model";
 import {
   createSubmissionsQueue,
   createSubmissionsWorker,
+  enqueuePublish,
   enqueueValidation,
 } from "./queues/submissions";
 import { createTurnsQueue, createTurnsWorker, enqueueTurn } from "./queues/turns";
@@ -125,6 +126,8 @@ async function main(): Promise<void> {
     db,
     githubApp,
     judge: judgeModel({ client: ollama, model: env.HEAL_MODEL, logger }),
+    enqueuePublish: (job) => enqueuePublish(submissionsQueue, job),
+    model: env.HEAL_MODEL,
     logger,
   });
   registerSubmissionRoute(gateway, {
