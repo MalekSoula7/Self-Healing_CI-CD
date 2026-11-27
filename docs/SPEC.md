@@ -481,6 +481,28 @@ In code (P3.9):
 - Accepting appends the rule to the layer as the next `CR-n` and saves a new policy version. A compiled layer only tightens (§8.4), so a wrong proposal can never loosen the policy.
 - Removing a rule is an edit of the layer's YAML.
 
+The judge, in code (P4.7; agent-core `judge/judge.ts`, worker `judge-model.ts`):
+- `judgeSubmission` is the single entry point. P5.1 calls it after the static and behavioral checks.
+- **One model call per judge rule.** One rule's text can't sway another's verdict. The diff comes first, so Ollama reuses the shared prefix across calls.
+- **The server's own diff.** The judge reads `renderJudgeDiff` of packages/policy's `Change`s, never the runner's diff.
+- **Untrusted inputs.** The diff and the rule are wrapped in `<diff>`/`<rule>`, and the wrappers, prompt tags and chat-template tokens inside them are broken up. A rule from `.pipeheal.yml` is labelled as written by anyone who can push.
+- **Rule IDs.** A rule ID must have the policy schema's form (`CR-n`).
+- **The answer.** The model answers `{reasoning, violated}` with structured output: `think: false`, temperature 0, then 0.3 on its one retry, at the healer's 16k context (D17). Which rule a verdict belongs to comes from our code, matched on layer and ID, never from the model. The reasoning is kept to one line, with control characters and chat markers neutralized.
+- **Bounds:**
+  - at most 20 judge rules per submission, most trusted layers first, and at most 5 from `.pipeheal.yml`;
+  - the diff is judged whole or not at all, with a pessimistic token estimate of at most 12,000, measured after neutralization;
+  - a deadline;
+  - an answer whose prompt may have overflowed the context (Ollama's own count) is refused.
+- **Fails closed (D21, proposed).** These rules count as unjudged:
+  - a rule past the cap;
+  - a rule whose diff is too large;
+  - one where the model couldn't be reached or gave no valid answer;
+  - one cut off by the deadline or by an error;
+  - one with no single verdict.
+
+  An unjudged rule rejects the submission like a violation (`judgeDecision(expected, outcomes)`).
+- Every call is recorded with its rule, layer and token counts. Logs carry IDs and counts only.
+
 ### 8.8 Where checks run
 On every edit (fast static subset, advisory to the model) → on submission (everything, authoritative, server-side on recomputed diff) → PR CI (independent).
 
@@ -636,6 +658,12 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 3 (resolved, D13):** org defaults are split from org guardrails (§8.1); every field has a merge rule (§8.4).
 - **Resolved (D14), was CHECKPOINT 3 from the P3.6 red team:** rules no stated rule covers, each cheap and statically checkable, to add or not: tautological assertions (`expect(true).toBe(true)`, `assert True`, tuple asserts); assertions inside `try/catch` or `except AssertionError`; unawaited `.resolves`/`.rejects`; retry settings (`jest.retryTimes`, `{ retry }`); mocking the module under test; in source, test-environment detection (`VITEST`, `"pytest" in sys.modules`), empty `catch {}`/`except: pass`, test-framework monkeypatching or pytest hooks, `as any`/`as unknown as`, warning filters; imports of packages no manifest declares. Decided in D14: the tricks above become rules, except mocking the module under test and undeclared imports (later, server side); packed lines count as several; doctests count as tests; edits under file-wide suppressions open a draft PR. Still open: checking that a lockfile only moves the bumped packages (Phase 4; the default `frozen` makes it rare).
 - **Phase 4 (from P3.6):** the server must refuse a path whose ancestor isn't a directory in the base tree (writing through a symlinked directory, or under an existing file); treat an empty JUnit baseline (the suite didn't compile) and a missing or zero-test report as "behavioral checks unavailable" or a failure; resolve protected configs' `extends` and local plugins.
+- **From P4.7 and its security review:**
+  - **Showing the judge's reasoning (M4).** It is model text shaped by the diff. Before it goes into a PR body (P5.2) or the dashboard, escape Markdown and HTML, break up `@` and `#` references, drop links, and remove bidi and zero-width characters. Show it in a quoted "model's reasoning" block, and as plain text only in the UI.
+  - **Feeding a judge violation back to the healer (P5.1).** Send only `[CR-n] (layer) violated per AI judge`. Never put the reasoning inside `<policy_feedback>`, the channel the healer trusts.
+  - **The judge's budget (M3).** Its calls and tokens count toward the attempt's caps, and its deadline comes from the attempt's wall clock. Consider a shorter per-call timeout than the client's 180 s.
+  - **Wrapper IDs (L3).** An unguessable per-submission ID on the `<diff>`/`<rule>` wrappers would stop plain-text framing forged inside a diff. It is per submission, so Ollama's prefix cache still works.
+  - **What the judge can't read.** Binary, symlink and submodule changes appear as one line each. Static policy has to cover them.
 - **From P4.6 and its security review:**
   - Local mode runs the node demo only: the Python demo needs an image with Node 24 (for heal-action) and Python. Build or pick one, pinned by digest.
   - `createLocalAttempt` lives in `apps/worker` (for its database test), so the production worker's code includes it, unreachable from any route. Move it to a dev-only entry if that matters (review I1).
@@ -705,6 +733,7 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 | D11 | 2026-11-25 | Self-hosted open-weight models on Ollama replace the Anthropic API, for triage and healing, in development and production (§3, §4, §7.5, §12, §13). Default `qwen3:14b` for both. Supersedes D6. | Chosen by Malek: the application's host has a GPU (RTX 3060 12 GB), so no per-token cost and no third-party model provider. Trade-offs: one GPU serializes model calls, and a 14B model heals less than a frontier model (measured by the Phase 8 evals). |
 | D12 | 2026-11-25 | The per-attempt cost cap becomes a model-token cap: `limits.maxModelTokensPerAttempt`, default 300,000, plan maximum 2,000,000 (§8.2 INV-CAPS, §8.3) | Chosen by Malek. With self-hosted models (D11) a dollar cap never triggers; tokens are what an attempt spends on the GPU, and Ollama reports them per call. The wall-clock cap stays. |
 | D13 | 2026-11-25 | Org defaults and the repo dashboard override (an admin may loosen); `.pipeheal.yml`, `code` custom rules and org guardrails only tighten (§8.1, §8.4) | Chosen by Malek over "most restrictive wins everywhere", where the org defaults were a floor no repository could go below. Guardrails keep a ceiling; the repo file, which anyone who can push may edit, still can't loosen anything. |
+| D21 | 2026-11-27 | **Proposed, not decided:** the soft-rule judge fails closed. A judge rule it couldn't judge rejects the submission like a violation: past the rule cap, a diff too large to read whole, no valid answer, the model unreachable, or the deadline (§8.7) | SPEC §8.7 says what a violation does, not what happens when the judge can't decide. Failing open would let an attacker skip team rules by padding the diff or flooding `.pipeheal.yml`. The cost is that a flaky model or a large fix blocks the PR. Malek's call. |
 | D20 | 2026-11-27 | **Proposed, not decided:** the healer job runs in a GitHub environment (`environment: pipeheal`), which the gateway requires as an OIDC claim; setup steps don't cache (§15) | P4.5 security review H1: code under test can mint default-branch OIDC tokens and write the default-branch cache from inside the healer job. Changes what customers set up, so it's Malek's call. |
 | D19 | 2026-11-27 | Until a dedicated action repo is published, healer workflows load heal-action from the monorepo at a pinned SHA: `uses: MalekSoula7/Self-Healing_CI-CD/packages/heal-action@<sha>`, with the bundled `dist/` committed (P4.5) | Chosen by Malek. No new repository needed yet; onboarding's generated YAML switches to `pipeheal/heal-action@v1` once it is published. |
 | D18 | 2026-11-27 | "Within budget" for the dispatcher (P4.8) means attempt caps: the policy's `maxAttemptsPerFailure`, at most 20 heal attempts per org per day (default, configurable later), and one running attempt per repository. `monthlyBudgetUsd` stays unused until paid models exist | Chosen by Malek. Models are self-hosted (D11), so there is no per-token cost to budget; the GPU's time is the scarce resource. |

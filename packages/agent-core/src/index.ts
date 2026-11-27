@@ -7,3 +7,4 @@ export * from "./classify";
 export * from "./changes";
 export * from "./rules/compile";
 export * from "./heal";
+export * from "./judge/judge";

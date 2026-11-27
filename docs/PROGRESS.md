@@ -1132,3 +1132,36 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - The `GITHUB_APP_SLUG` in `.env.example` (and probably `.env`) is the App's settings URL. The slug is its last part, `pipeheal-dev-malek`. The worker refuses anything else.
   - With `OLLAMA_URL` set, this command is the CHECKPOINT 4 demo.
 
+## 2026-11-27 · P4.7 soft-rule judge
+
+- **What it does:** before any PR, `HEAL_MODEL` checks the server-built diff against each custom rule marked "Checked by AI judge" (SPEC §8.7 step 3).
+- **agent-core `judge/judge.ts`** (pure, tests first):
+  - `renderJudgeDiff` (whole or not at all, with a pessimistic token estimate);
+  - `buildJudgePrompt` (one rule per call, diff first; wrappers, tags and chat tokens neutralized);
+  - `judgeAnswerSchema`, which takes `{reasoning, violated}` only;
+  - `judgeRulesOf` (most trusted layers first, at most 20 rules, at most 5 from `.pipeheal.yml`);
+  - `verdictOf`;
+  - `judgeDecision(expected, outcomes)`, which fails any rule without exactly one verdict.
+- **`neutralizeUntrusted`** takes extra tags.
+- **worker `judge-model.ts`:**
+  - `judgeModel`: structured output, one retry, a deadline, refusing answers to prompts that may have overflowed the context, every call recorded with its layer.
+  - `judgeSubmission`, the single entry point for P5.1. It folds skipped rules, a too-large diff and errors into unjudged outcomes.
+- **Security review: 1 high, 4 medium, 4 low.**
+  - Fixed:
+    - H1: a character limit let tokens overflow the context, which Ollama cuts silently. Now a token estimate after neutralization, plus Ollama's count as a backstop.
+    - M1: fail-closed no longer depends on the caller.
+    - M2: rule order and the `.pipeheal.yml` sub-cap.
+    - M3: a deadline, failed calls recorded, a warmer retry.
+    - L1: the rule ID format is checked.
+    - L2: the layer is in each call record.
+  - Recorded in SPEC §15 for P5.1 and P5.2:
+    - M4: escaping the reasoning for PRs and the UI, and never putting it in `<policy_feedback>`;
+    - the judge's budget within the attempt;
+    - L3: per-submission wrapper IDs.
+  - L4 is the `.env.example` slug, already reported and left uncommitted.
+- **Not wired yet:** P5.1's submission check calls `judgeSubmission`.
+- **Gate:** typecheck, lint, and `pnpm test` all pass.
+  - One earlier full run had 3 failures in untouched integration tests (`steps.int`, `failures.int`), which were slow under load while the review ran.
+  - Run alone, those two files passed 57/57, and the next full run passed 2,233/2,233.
+- **For Malek:** D21 (the judge fails closed) is proposed, not decided.
+

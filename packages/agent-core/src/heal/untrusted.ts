@@ -44,9 +44,14 @@ export function neutralizeChatTokens(text: string): string {
     .replace(TEMPLATE_TAG, `<${ZWSP}$1$2`);
 }
 
-/** Untrusted data inside a prompt: chat markers and every prompt tag broken up. */
-export function neutralizeUntrusted(text: string): string {
-  return neutralizeChatTokens(text).replace(ANY_TAG, `<${ZWSP}$1$2`);
+/**
+ * Untrusted data inside a prompt: chat markers and every prompt tag broken up, plus the tags of
+ * the prompt it goes into (`extraTags`, e.g. the judge's `diff` and `rule`).
+ */
+export function neutralizeUntrusted(text: string, extraTags: readonly string[] = []): string {
+  const tags =
+    extraTags.length === 0 ? ANY_TAG : tagPattern([...TEMPLATE_TAGS, ...PROMPT_TAGS, ...extraTags]);
+  return neutralizeChatTokens(text).replace(tags, `<${ZWSP}$1$2`);
 }
 
 /** A short untrusted value on one line (names, branches, commands): no control characters. */
