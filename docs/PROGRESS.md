@@ -1008,3 +1008,20 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
     - one POST in flight, locks returned on every path, a client disconnecting mid-lookup over a real socket;
     - the per-session rate limit, and redacted output cut back rather than refused.
 
+## 2026-11-27 · P4.3b repository-scoped, read-only tokens for model-facing reads
+
+- **`readOnlyRepo(installationId, repo)`** (`packages/github`):
+  - Its installation token covers only that repository, with `contents: read` and `actions: read` (metadata is implied).
+  - The client offers only reads: in its type, at runtime, and in the token itself.
+  - The token is fetched again on every request (auth-app caches it per scope), so a client held for a while never sends an expired token.
+  - GitHub's answer is checked: `selected` repositories, the one repository ID, read access only. IDs must be safe integers.
+- **Moved to it:** triage (job logs), recent changes (comparisons, files), the `.pipeheal.yml` read, and `workflow_run` processing, whose job, step and workflow names reach the triage prompt.
+- **Still on the broad client:** the flaky check (it re-runs jobs) and the installation's repository and workflow sync (webhooks).
+- **Removed repositories:** the three queues return before asking for a token for a repository the installation no longer covers.
+- **Security review** (`security-reviewer`): no critical or high findings.
+  - Fixed: M1 (a cached token handed out with minutes left and never refreshed), L1 (`workflow_run` reads), L2 (the scope GitHub granted wasn't checked), L3 (unchecked number conversions) and L4 (removed repositories failing on every retry).
+  - Recorded in SPEC §15: M2 (a renamed repository fails closed but silently) and L5 (a guard so future model-facing reads use `readOnlyRepo`).
+- **Tests:**
+  - GitHub client: the scoped token request and its reuse; reads only; refusing a token for every repository, with write access, or with another permission; unsafe IDs.
+  - Worker: triage asks for exactly the scoped, read-only token. The token mocks answer scoped requests the way GitHub does.
+

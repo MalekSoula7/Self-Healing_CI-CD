@@ -14,7 +14,7 @@ import {
   HEALER_WORKFLOW_PATH,
   TRUSTED_RUN_EVENTS,
   isHealBranch,
-  type RepoClient,
+  type ReadOnlyRepoClient,
   type WorkflowRunEvent,
 } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
@@ -46,7 +46,7 @@ async function watchedWorkflow(
  */
 async function closeWindowIfComplete(
   system: SystemScope,
-  repoClient: RepoClient,
+  repoClient: ReadOnlyRepoClient,
   repo: Repository,
   failure: PipelineFailure,
   startTriage: () => Promise<void>,
@@ -128,7 +128,8 @@ export async function processWorkflowRunEvent(
     log.warn("GitHub App isn't configured; skipping workflow_run");
     return;
   }
-  const repoClient = (await githubApp.installation(event.installation.id)).repo(repo.fullName);
+  // Read-only, this repository only: job and workflow names reach the triage prompt.
+  const repoClient = await githubApp.readOnlyRepo(event.installation.id, repo);
   const workflow = await watchedWorkflow(system, repo, run.workflowId, () =>
     syncRepoWorkflows(system, repoClient, repo, log),
   );

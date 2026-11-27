@@ -1,14 +1,14 @@
 // Discovers a repository's workflows (SPEC §11): when it joins the installation (P1.6), and when a
 // run arrives from a workflow we don't know yet (P2.1: workflows added after the repo was synced).
 import type { Repository, SystemScope } from "@pipeheal/db";
-import type { RepoClient, Workflow } from "@pipeheal/github";
+import type { ReadOnlyRepoClient, Workflow } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
 import { isCiLooking, parseWorkflowYaml, type WorkflowFacts } from "./workflow-yaml";
 
 /** Upserts the repository's workflows, with the CI-looking pre-selection for new ones. */
 export async function syncRepoWorkflows(
   system: SystemScope,
-  repoClient: RepoClient,
+  repoClient: ReadOnlyRepoClient,
   repo: Pick<Repository, "id" | "defaultBranch">,
   log: Logger,
 ): Promise<void> {
@@ -41,7 +41,7 @@ export async function syncRepoWorkflows(
  * keeps whatever facts it already had, rather than overwriting them with empty defaults.
  */
 async function workflowFacts(
-  repoClient: RepoClient,
+  repoClient: ReadOnlyRepoClient,
   defaultBranch: string,
   workflows: readonly Workflow[],
   log: Logger,

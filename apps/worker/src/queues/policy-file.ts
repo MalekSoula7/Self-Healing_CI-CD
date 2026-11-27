@@ -6,7 +6,7 @@
 // The App doesn't receive push events, so the file is re-read when the worker visits the repo
 // (workflow sync, each failure) and the default branch has moved since the last read.
 import { forSystem, type Db, type Repository } from "@pipeheal/db";
-import type { GitHubApp, RepoClient } from "@pipeheal/github";
+import type { GitHubApp, ReadOnlyRepoClient } from "@pipeheal/github";
 import { MAX_POLICY_YAML_BYTES, parsePolicyYaml, type PolicyLayer } from "@pipeheal/policy";
 import type { Logger } from "@pipeheal/shared/logger";
 import type { FailureTarget } from "./triage";
@@ -36,7 +36,7 @@ type RepoRow = Pick<Repository, "id" | "orgId" | "defaultBranch" | "policyFileCo
  * last one read. GitHub errors propagate (the job retries); file problems are stored.
  */
 export async function refreshPolicyFile(
-  repoClient: RepoClient,
+  repoClient: ReadOnlyRepoClient,
   repo: RepoRow,
   db: Db,
   log: Logger,
@@ -82,7 +82,8 @@ export async function refreshFailurePolicyFile(
   const failure = await system.failures.get(target.failureId);
   if (failure === null) return;
   const repo = await system.repositories.get(failure.repoId);
-  if (repo === null) return;
-  const client = (await deps.githubApp.installation(target.installationId)).repo(repo.fullName);
+  // A repository the installation no longer covers can't get a token: nothing to read.
+  if (repo?.removedFromInstallationAt !== null) return;
+  const client = await deps.githubApp.readOnlyRepo(target.installationId, repo);
   await refreshPolicyFile(client, repo, deps.db, log);
 }

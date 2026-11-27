@@ -1,5 +1,6 @@
 // Needs Postgres and Redis: `docker compose up -d`. GitHub (and its log storage) is msw, started
 // here: integration tests have no shared msw server. Real BullMQ, on a unique key prefix.
+import { z } from "zod";
 import { generateKeyPairSync, randomInt, randomUUID } from "node:crypto";
 import { forSystem, installations } from "@pipeheal/db";
 import { createTestDb } from "@pipeheal/db/testing";
@@ -135,23 +136,45 @@ async function openFailure(options: { headBranch?: string | null } = {}) {
     system,
     repoId: repo.id,
     repoFullName: repo.fullName,
+    githubRepoId: repo.githubRepoId,
     githubJobId,
     failedRunId: run.id,
   };
 }
 
-function mockToken() {
+/** Answers installation token requests; returns their bodies (what scope each asked for). */
+function mockToken(): unknown[] {
+  const bodies: unknown[] = [];
   github.use(
-    http.post("https://api.github.com/app/installations/:id/access_tokens", () =>
-      HttpResponse.json(
+    http.post("https://api.github.com/app/installations/:id/access_tokens", async ({ request }) => {
+      // An unscoped token request (the flaky check re-runs jobs) has no body.
+      const text = await request.text();
+      const body: unknown = text === "" ? {} : JSON.parse(text);
+      bodies.push(body);
+      const scope = z
+        .object({
+          repository_ids: z.array(z.number()),
+          permissions: z.record(z.string(), z.string()),
+        })
+        .safeParse(body);
+      return HttpResponse.json(
         {
           token: "ghs_testInstallationToken00000000000000",
           expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          // GitHub's answer to a scoped request: the scope it granted.
+          ...(scope.success
+            ? {
+                repository_selection: "selected",
+                permissions: { ...scope.data.permissions, metadata: "read" },
+                repositories: scope.data.repository_ids.map((id) => ({ id })),
+              }
+            : {}),
         },
         { status: 201 },
-      ),
-    ),
+      );
+    }),
   );
+  return bodies;
 }
 
 /** GitHub's log endpoint redirecting to its log storage, which serves `body`. */
@@ -271,8 +294,8 @@ describe("triage job (SPEC §6.2 steps 1-3)", () => {
   }
 
   it("stores each failed job's log, cleaned and redacted, as its error window", async () => {
-    const { target, repoFullName, githubJobId, failedRunId } = await openFailure();
-    mockToken();
+    const { target, repoFullName, githubJobId, failedRunId, githubRepoId } = await openFailure();
+    const tokenRequests = mockToken();
     mockLog(repoFullName, githubJobId, LOG);
 
     await processFailuresJob(triageJob(target), deps().deps);
@@ -303,6 +326,13 @@ describe("triage job (SPEC §6.2 steps 1-3)", () => {
       asText(await db.failedJob.findMany({ where: { failedRunId } })) +
       asText(await db.auditLog.findMany({ where: { orgId: target.orgId } }));
     expect(everything).not.toContain(PLANTED_TOKEN);
+    // The log feeds a model: it was read with a token for this repository only, read-only.
+    expect(tokenRequests).toEqual([
+      {
+        repository_ids: [Number(githubRepoId)],
+        permissions: { contents: "read", actions: "read" },
+      },
+    ]);
   });
 
   it("classifies the job with heuristics, then the failure from its jobs (SPEC §6.2 step 6)", async () => {

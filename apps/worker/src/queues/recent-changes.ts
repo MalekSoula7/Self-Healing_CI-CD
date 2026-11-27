@@ -10,7 +10,7 @@ import {
   GuardError,
   type Comparison,
   type GitHubApp,
-  type RepoClient,
+  type ReadOnlyRepoClient,
 } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
 import type { FailureTarget } from "./triage";
@@ -37,7 +37,7 @@ interface Found {
  * force-pushed away) isn't one.
  */
 async function compareFrom(
-  repo: RepoClient,
+  repo: ReadOnlyRepoClient,
   baseSha: string,
   headSha: string,
 ): Promise<Comparison | null> {
@@ -55,7 +55,7 @@ async function compareFrom(
 
 /** The workflow's last green run on `branch` that comes before the failing commit. */
 async function lastGreenOn(
-  repo: RepoClient,
+  repo: ReadOnlyRepoClient,
   workflowId: bigint,
   branch: string,
   headSha: string,
@@ -84,7 +84,7 @@ async function lastGreenOn(
 
 /** Finds the base and the comparison for one failure. Null when there's nothing to compare. */
 async function findBase(
-  repo: RepoClient,
+  repo: ReadOnlyRepoClient,
   failure: { headSha: string; headBranch: string | null; workflowIds: bigint[] },
   defaultBranch: string,
 ): Promise<Found | null> {
@@ -130,12 +130,13 @@ export async function resolveRecentChanges(
   // Gone, or already resolved.
   if (failure?.recentChanges !== null) return;
   const repo = await system.repositories.get(failure.repoId);
-  if (repo === null) return;
+  // A repository the installation no longer covers can't get a token: nothing to read.
+  if (repo?.removedFromInstallationAt !== null) return;
   if (deps.githubApp === null) {
     log.warn("GitHub App isn't configured; skipping recent changes");
     return;
   }
-  const client = (await deps.githubApp.installation(target.installationId)).repo(repo.fullName);
+  const client = await deps.githubApp.readOnlyRepo(target.installationId, repo);
 
   const failing = failure.runs.filter((run) => run.conclusion !== "success");
   const runs = failing.length > 0 ? failing : failure.runs;

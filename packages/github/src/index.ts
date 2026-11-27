@@ -5,6 +5,8 @@ export {
   type GitHubApp,
   type GitHubAppConfig,
   type InstallationClient,
+  READ_ONLY_PERMISSIONS,
+  type ReadOnlyRepoClient,
 } from "./app";
 export {
   GitHubApiError,

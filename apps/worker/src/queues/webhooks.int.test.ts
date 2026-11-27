@@ -1,5 +1,6 @@
 // Needs Postgres: `docker compose up -d` (runs against the `pipeheal_test` database). GitHub is
 // msw, started here: integration tests have no shared msw server.
+import { z } from "zod";
 import { generateKeyPairSync, randomInt, randomUUID } from "node:crypto";
 import { createTestDb } from "@pipeheal/db/testing";
 import { createGitHubApp, GitHubApiError } from "@pipeheal/github";
@@ -42,14 +43,32 @@ function present<T>(value: T | null | undefined, what: string): T {
   return value;
 }
 
+/** GitHub minting installation tokens; a scoped request gets the scope it asked for. */
 function mockInstallationToken() {
   github.use(
-    http.post("https://api.github.com/app/installations/:id/access_tokens", () =>
-      HttpResponse.json(
-        { token: INSTALLATION_TOKEN, expires_at: new Date(Date.now() + 3_600_000).toISOString() },
+    http.post("https://api.github.com/app/installations/:id/access_tokens", async ({ request }) => {
+      const text = await request.text();
+      const scope = z
+        .object({
+          repository_ids: z.array(z.number()),
+          permissions: z.record(z.string(), z.string()),
+        })
+        .safeParse(text === "" ? {} : JSON.parse(text));
+      return HttpResponse.json(
+        {
+          token: INSTALLATION_TOKEN,
+          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          ...(scope.success
+            ? {
+                repository_selection: "selected",
+                permissions: { ...scope.data.permissions, metadata: "read" },
+                repositories: scope.data.repository_ids.map((id) => ({ id })),
+              }
+            : {}),
+        },
         { status: 201 },
-      ),
-    ),
+      );
+    }),
   );
 }
 
@@ -733,8 +752,10 @@ describe("workflow_run (SPEC §2 step 4, §2.1)", () => {
         },
       }),
     );
-    // From here on, only the GitHub calls a test mocks itself are allowed.
+    // From here on, only the GitHub calls a test mocks itself are allowed, plus token minting:
+    // run processing reads with a token scoped to the repository (P4.3b), cached separately.
     github.resetHandlers();
+    mockInstallationToken();
     const org = await db.organization.findUniqueOrThrow({ where: { installationId } });
     const system = await forSystem(db, org.id, "test");
     const stored = present(

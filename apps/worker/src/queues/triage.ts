@@ -11,7 +11,12 @@ import {
   type Classification,
 } from "@pipeheal/agent-core";
 import { forSystem, type Db } from "@pipeheal/db";
-import { GitHubApiError, type GitHubApp, type JobLog, type RepoClient } from "@pipeheal/github";
+import {
+  GitHubApiError,
+  type GitHubApp,
+  type JobLog,
+  type ReadOnlyRepoClient,
+} from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
 import { ZodError } from "zod";
 import type { TriageModel } from "../triage-model";
@@ -51,7 +56,10 @@ function storedClassification(job: {
 }
 
 /** The job's log, or null when GitHub no longer has it (logs expire; a job can be deleted). */
-async function fetchLog(repoClient: RepoClient, githubJobId: bigint): Promise<JobLog | null> {
+async function fetchLog(
+  repoClient: ReadOnlyRepoClient,
+  githubJobId: bigint,
+): Promise<JobLog | null> {
   try {
     return await repoClient.downloadJobLog(githubJobId);
   } catch (error) {
@@ -74,12 +82,13 @@ export async function triageFailure(
   const pending = failure.runs.flatMap((run) => run.jobs.filter((job) => job.errorWindow === null));
   if (pending.length === 0) return;
   const repo = await system.repositories.get(failure.repoId);
-  if (repo === null) return;
+  // A repository the installation no longer covers can't get a token: nothing to read.
+  if (repo?.removedFromInstallationAt !== null) return;
   if (deps.githubApp === null) {
     log.warn("GitHub App isn't configured; skipping triage");
     return;
   }
-  const repoClient = (await deps.githubApp.installation(target.installationId)).repo(repo.fullName);
+  const repoClient = await deps.githubApp.readOnlyRepo(target.installationId, repo);
 
   const runOf = new Map(failure.runs.flatMap((run) => run.jobs.map((job) => [job.id, run])));
   for (const job of pending) {

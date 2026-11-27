@@ -1157,3 +1157,87 @@ describe("rate limits", () => {
     expect(error.retryAt).toBeNull();
   });
 });
+
+describe("readOnlyRepo (P1.4 review L9)", () => {
+  const SCOPED_TOKEN = "ghs_scopedReadOnlyTokenForTests00000000";
+  const TARGET = { githubRepoId: BigInt(REPO_ID), fullName: "octo-org/app" };
+
+  /** GitHub minting a token; `answer` overrides what it says it granted. */
+  function mockScopedToken(answer: Record<string, unknown> = {}) {
+    const bodies: unknown[] = [];
+    mockServer.use(
+      http.post(`${API}/app/installations/:installationId/access_tokens`, async ({ request }) => {
+        bodies.push(await request.json());
+        return HttpResponse.json(
+          {
+            token: SCOPED_TOKEN,
+            expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+            permissions: { contents: "read", actions: "read", metadata: "read" },
+            repository_selection: "selected",
+            repositories: [{ id: REPO_ID }],
+            ...answer,
+          },
+          { status: 201 },
+        );
+      }),
+    );
+    return bodies;
+  }
+
+  it("asks for a token scoped to the one repository, read-only, and uses it", async () => {
+    const bodies = mockScopedToken();
+    mockServer.use(
+      http.get(
+        `${REPO}/actions/runs/99/attempts/2/jobs`,
+        recording({ total_count: 1, jobs: [job(2, "failure")] }),
+      ),
+    );
+
+    const client = await createApp().readOnlyRepo(42n, TARGET);
+    // A read built on another read (`this.listJobs`) still works on the read-only client.
+    const failed = await client.listFailedJobs(99n, 2);
+    await client.listFailedJobs(99n, 2);
+
+    // One mint, cached per scope; every request still asks auth for the current token.
+    expect(bodies).toEqual([
+      { repository_ids: [REPO_ID], permissions: { contents: "read", actions: "read" } },
+    ]);
+    expect(apiAuthorizations).toEqual([`token ${SCOPED_TOKEN}`, `token ${SCOPED_TOKEN}`]);
+    expect(failed.map((j) => j.id)).toEqual([2n]);
+  });
+
+  it("offers reads only", async () => {
+    mockScopedToken();
+    const client = await createApp().readOnlyRepo(42n, TARGET);
+
+    for (const write of [
+      "commitFiles",
+      "createPullRequest",
+      "comment",
+      "requestReviewers",
+      "rerunFailedJobs",
+      "dispatchWorkflow",
+    ]) {
+      expect(write in client).toBe(false);
+    }
+  });
+
+  it.each([
+    ["a token for every repository", { repository_selection: "all" }],
+    ["write access", { permissions: { contents: "write", actions: "read" } }],
+    ["another permission", { permissions: { contents: "read", issues: "read" } }],
+  ])("refuses a token GitHub didn't scope as asked: %s", async (_, answer) => {
+    mockScopedToken(answer);
+
+    await expect(createApp().readOnlyRepo(42n, TARGET)).rejects.toThrow(GuardError);
+  });
+
+  it("refuses IDs that wouldn't survive the conversion to a number", async () => {
+    await expect(createApp().readOnlyRepo(2n ** 60n, TARGET)).rejects.toThrow(
+      "invalid installation ID",
+    );
+    await expect(createApp().readOnlyRepo(42n, { ...TARGET, githubRepoId: 0n })).rejects.toThrow(
+      "invalid repository ID",
+    );
+  });
+});
