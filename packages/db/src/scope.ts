@@ -26,6 +26,7 @@ import {
   dispatchClaimSchema,
   dispatchFailureSchema,
   failureSettleSchema,
+  submissionValidationSchema,
   repositoryCommandsSchema,
   auditPageSchema,
   classificationSchema,
@@ -44,6 +45,7 @@ import {
   type DispatchClaimInput,
   type DispatchFailureInput,
   type FailureSettleInput,
+  type SubmissionValidation,
   type RepositoryCommandsInput,
   type AuditPage,
   type ClassificationInput,
@@ -91,6 +93,30 @@ const ORG_SUMMARY = {
 } as const;
 
 const ROLE_RANK: Record<Role, number> = { MEMBER: 0, ADMIN: 1, OWNER: 2 };
+
+/** Tries of a serializable transaction that Postgres refused with a serialization failure. */
+const SERIALIZATION_TRIES = 4;
+
+/**
+ * Runs a serializable transaction again when Postgres refuses it (Prisma's P2034). Postgres's
+ * serializable mode can refuse unrelated transactions that merely ran at the same time (P4.8
+ * review L2): a retry sees the winner's writes and decides again (e.g. "busy"). After the last
+ * try the error is thrown, and the job's own retries take over.
+ */
+async function retrySerialization<T>(work: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await work();
+    } catch (error) {
+      const conflict =
+        error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
+      if (!conflict || attempt >= SERIALIZATION_TRIES) throw error;
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 20 * attempt + Math.floor(Math.random() * 30));
+      });
+    }
+  }
+}
 
 export function hasRole(role: Role, minimum: Role): boolean {
   return ROLE_RANK[role] >= ROLE_RANK[minimum];
@@ -626,93 +652,180 @@ function buildSystemScope(ctx: ScopeContext) {
        */
       async claimDispatch(input: DispatchClaimInput) {
         const data = dispatchClaimSchema.parse(input);
-        return db.$transaction(
-          async (tx) => {
-            const failure = await tx.pipelineFailure.findFirst({
-              where: { id: data.failureId, orgId },
-            });
-            if (failure === null) throw new NotFoundError("failure not found");
-            if (failure.status !== "TRIAGED") {
-              return { outcome: "not_ready" as const, status: failure.status };
-            }
-            // Re-checked here, with the claim (P4.8 review L1 and the flaky-rerun race): the org
-            // active, the repository enabled and installed, no re-run of ours still pending.
-            const org = await tx.organization.findFirst({ where: { id: orgId } });
-            const repo = await tx.repository.findFirst({ where: { id: failure.repoId, orgId } });
-            const reruns = await tx.failedRun.findMany({
-              where: { orgId, failureId: failure.id, rerunByUs: true },
-            });
-            if (
-              org?.status !== "ACTIVE" ||
-              repo?.enabled !== true ||
-              repo.removedFromInstallationAt !== null ||
-              reruns.some((run) => run.rerunFromAttempt === run.runAttempt)
-            ) {
-              return { outcome: "not_ready" as const, status: failure.status };
-            }
-            // In flight: dispatched and still within the dispatch timeout, or with a session that
-            // hasn't expired. A dispatch that crashed or a session that ran out can't hold the
-            // repository forever before the §2.2 reconciler fails them (P4.8 review M2).
-            const now = Date.now();
-            const inFlight = await tx.healAttempt.count({
-              where: {
-                orgId,
-                failure: { repoId: failure.repoId },
-                OR: [
-                  {
-                    status: "DISPATCHED",
-                    sessionOpenedAt: null,
-                    dispatchedAt: { gt: new Date(now - DISPATCH_TIMEOUT_MS) },
-                  },
-                  {
-                    status: { in: ["DISPATCHED", "RUNNING", "AWAITING_SUBMISSION"] },
-                    sessionExpiresAt: { gt: new Date(now) },
-                  },
-                ],
-              },
-            });
-            if (inFlight > 0) return { outcome: "busy" as const };
-            const previous = await tx.healAttempt.count({
-              where: { orgId, failureId: failure.id },
-            });
-            if (previous >= data.maxAttemptsPerFailure) {
-              return { outcome: "capped" as const, reason: "the failure's attempt cap is reached" };
-            }
-            const today = await tx.healAttempt.count({
-              where: { orgId, createdAt: { gte: new Date(Date.now() - 24 * 60 * 60_000) } },
-            });
-            if (today >= data.maxAttemptsPerDay) {
-              return {
-                outcome: "capped" as const,
-                reason: "the organization's daily attempt cap is reached",
-              };
-            }
-            const attempt = await tx.healAttempt.create({
-              data: {
-                orgId,
-                failureId: failure.id,
-                attemptNo: previous + 1,
-                targetSha: failure.headSha,
-                failingCheck: data.failingCheck,
-              },
-            });
-            await tx.pipelineFailure.update({
-              where: { id: failure.id },
-              data: { status: "HEALING" },
-            });
-            await writeAudit(tx, orgId, actor, {
-              action: "attempt.dispatched",
-              target: auditTarget("attempt", attempt.id),
-              metadata: {
-                failureId: failure.id,
-                attemptNo: attempt.attemptNo,
-                failingCheck: attempt.failingCheck,
-              },
-            });
-            return { outcome: "created" as const, attempt };
-          },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        return retrySerialization(() =>
+          db.$transaction(
+            async (tx) => {
+              const failure = await tx.pipelineFailure.findFirst({
+                where: { id: data.failureId, orgId },
+              });
+              if (failure === null) throw new NotFoundError("failure not found");
+              if (failure.status !== "TRIAGED") {
+                return { outcome: "not_ready" as const, status: failure.status };
+              }
+              // Re-checked here, with the claim (P4.8 review L1 and the flaky-rerun race): the org
+              // active, the repository enabled and installed, no re-run of ours still pending.
+              const org = await tx.organization.findFirst({ where: { id: orgId } });
+              const repo = await tx.repository.findFirst({ where: { id: failure.repoId, orgId } });
+              const reruns = await tx.failedRun.findMany({
+                where: { orgId, failureId: failure.id, rerunByUs: true },
+              });
+              if (
+                org?.status !== "ACTIVE" ||
+                repo?.enabled !== true ||
+                repo.removedFromInstallationAt !== null ||
+                reruns.some((run) => run.rerunFromAttempt === run.runAttempt)
+              ) {
+                return { outcome: "not_ready" as const, status: failure.status };
+              }
+              // In flight: dispatched and still within the dispatch timeout, or with a session that
+              // hasn't expired. A dispatch that crashed or a session that ran out can't hold the
+              // repository forever before the §2.2 reconciler fails them (P4.8 review M2).
+              const now = Date.now();
+              const inFlight = await tx.healAttempt.count({
+                where: {
+                  orgId,
+                  failure: { repoId: failure.repoId },
+                  OR: [
+                    {
+                      status: "DISPATCHED",
+                      sessionOpenedAt: null,
+                      dispatchedAt: { gt: new Date(now - DISPATCH_TIMEOUT_MS) },
+                    },
+                    {
+                      status: { in: ["DISPATCHED", "RUNNING", "AWAITING_SUBMISSION"] },
+                      sessionExpiresAt: { gt: new Date(now) },
+                    },
+                  ],
+                },
+              });
+              if (inFlight > 0) return { outcome: "busy" as const };
+              const previous = await tx.healAttempt.count({
+                where: { orgId, failureId: failure.id },
+              });
+              if (previous >= data.maxAttemptsPerFailure) {
+                return {
+                  outcome: "capped" as const,
+                  reason: "the failure's attempt cap is reached",
+                };
+              }
+              const today = await tx.healAttempt.count({
+                where: { orgId, createdAt: { gte: new Date(Date.now() - 24 * 60 * 60_000) } },
+              });
+              if (today >= data.maxAttemptsPerDay) {
+                return {
+                  outcome: "capped" as const,
+                  reason: "the organization's daily attempt cap is reached",
+                };
+              }
+              const attempt = await tx.healAttempt.create({
+                data: {
+                  orgId,
+                  failureId: failure.id,
+                  attemptNo: previous + 1,
+                  targetSha: failure.headSha,
+                  failingCheck: data.failingCheck,
+                },
+              });
+              await tx.pipelineFailure.update({
+                where: { id: failure.id },
+                data: { status: "HEALING" },
+              });
+              await writeAudit(tx, orgId, actor, {
+                action: "attempt.dispatched",
+                target: auditTarget("attempt", attempt.id),
+                metadata: {
+                  failureId: failure.id,
+                  attemptNo: attempt.attemptNo,
+                  failingCheck: attempt.failingCheck,
+                },
+              });
+              return { outcome: "created" as const, attempt };
+            },
+            { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          ),
         );
+      },
+
+      /**
+       * What validating an attempt's submission needs (P5.1c): the target commit, the baseline
+       * tests, the repository and its installation, and the stored submission. Null when the
+       * attempt isn't this org's or has no submission.
+       */
+      async submissionFor(attemptId: string) {
+        const id = parseId(attemptId);
+        if (id === null) return null;
+        const attempt = await db.healAttempt.findFirst({
+          where: { id, orgId },
+          select: {
+            id: true,
+            status: true,
+            targetSha: true,
+            failingCheck: true,
+            baselineTests: true,
+            org: { select: { installationId: true, status: true } },
+            failure: {
+              select: {
+                id: true,
+                repo: {
+                  select: {
+                    id: true,
+                    githubRepoId: true,
+                    fullName: true,
+                    junitGlob: true,
+                    commands: true,
+                    enabled: true,
+                    removedFromInstallationAt: true,
+                  },
+                },
+              },
+            },
+            submission: { select: { files: true, checks: true, afterTests: true } },
+          },
+        });
+        return attempt?.submission == null ? null : { ...attempt, submission: attempt.submission };
+      },
+
+      /**
+       * Records what checking an attempt's submission found (P5.1c): VALIDATED, ready for its pull
+       * request, or REJECTED, which ends the attempt and fails its failure (the retry with
+       * feedback is P5.5). Only while VALIDATING; compare-and-set.
+       */
+      async recordValidation(attemptId: string, input: SubmissionValidation) {
+        const id = requireId(attemptId, "attempt");
+        const validation = submissionValidationSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const attempt = await tx.healAttempt.findFirst({ where: { id, orgId } });
+          if (attempt === null) throw new NotFoundError("attempt not found");
+          if (attempt.status !== "VALIDATING") return attempt;
+          const now = new Date();
+          const reason = validation.passed
+            ? null
+            : (validation.reasons[0] ??
+              `the policy refused it (${validation.violations[0]?.ruleId ?? "judge"})`);
+          const { count } = await tx.healAttempt.updateMany({
+            where: { id, orgId, status: "VALIDATING" },
+            data: validation.passed
+              ? { status: "VALIDATED", validation }
+              : { status: "REJECTED", validation, endReason: reason, finishedAt: now },
+          });
+          if (count !== 1) throw new ConflictError("the attempt changed while it was checked");
+          if (!validation.passed) {
+            await tx.pipelineFailure.update({
+              where: { id: attempt.failureId },
+              data: { status: "FAILED" },
+            });
+          }
+          await writeAudit(tx, orgId, actor, {
+            action: "attempt.validated",
+            target: auditTarget("attempt", id),
+            metadata: {
+              passed: validation.passed,
+              violations: validation.violations.length,
+              changedFiles: validation.changedFiles,
+            },
+          });
+          return tx.healAttempt.findFirstOrThrow({ where: { id, orgId } });
+        });
       },
 
       /**

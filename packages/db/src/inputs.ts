@@ -353,6 +353,46 @@ export const testInventoryRecordSchema = z.discriminatedUnion("available", [
 ]);
 export type TestInventoryRecord = z.infer<typeof testInventoryRecordSchema>;
 
+/**
+ * What checking a submission found (P5.1c), as stored on the attempt and shown in the PR body and
+ * the timeline: why it was refused, the policy's violations on the server-built diff, whether the
+ * behavioral checks could run, the checks the runner reported, the AI judge's verdicts, and why
+ * the PR would open as a draft. Text is bounded here; the judge's reasoning is already one line.
+ */
+export const submissionValidationSchema = z.strictObject({
+  passed: z.boolean(),
+  reasons: z.array(z.string().trim().min(1).max(300)).max(20),
+  violations: z
+    .array(
+      z.strictObject({
+        ruleId: z.string().min(1).max(100),
+        message: z.string().min(1).max(1_000),
+        path: z.string().max(4_096).nullable(),
+      }),
+    )
+    .max(100),
+  behavior: z.strictObject({
+    available: z.boolean(),
+    reason: z.string().max(300).nullable(),
+  }),
+  checks: z
+    .array(z.strictObject({ name: z.string().min(1).max(20), exitCode: z.int().nullable() }))
+    .max(10),
+  judge: z
+    .array(
+      z.strictObject({
+        ruleId: z.string().min(1).max(20),
+        layer: z.string().min(1).max(200),
+        outcome: z.enum(["passed", "violated", "unjudged"]),
+        detail: z.string().max(600),
+      }),
+    )
+    .max(60),
+  draftReasons: z.array(z.string().min(1).max(500)).max(20),
+  changedFiles: z.int().nonnegative(),
+});
+export type SubmissionValidation = z.infer<typeof submissionValidationSchema>;
+
 /** A dispatch that didn't produce a healer run the attempt can be bound to. */
 export const dispatchFailureSchema = z.strictObject({
   reason: z.string().trim().min(1).max(300),

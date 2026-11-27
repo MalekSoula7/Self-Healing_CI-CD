@@ -52,6 +52,18 @@ const repoPath = z
 /** A path argument where "." names the repository root. */
 const repoPathOrRoot = z.union([z.literal("."), repoPath]);
 const text = (max: number = LIMITS.textChars) => z.string().max(max);
+
+/** A lone UTF-16 surrogate: GitHub would store U+FFFD instead of what was checked. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/**
+ * A file's full content, written to the repository: text only. A NUL makes git treat the file as
+ * binary ("Binary file not shown" to its reviewer), so it would slip past INV-FILE-TYPES (P5.1
+ * review H1); malformed UTF-16 would be committed as something other than what was checked.
+ */
+const fileContent = text(LIMITS.fileBytes)
+  .refine((content) => !content.includes("\0"), "must not contain NUL characters")
+  .refine((content) => !LONE_SURROGATE.test(content), "must be well-formed text");
 const id = z
   .string()
   .min(1)
@@ -144,7 +156,7 @@ export const toolCallSchema = z.discriminatedUnion("tool", [
     callId: id,
     tool: z.literal("write_file"),
     path: repoPath,
-    content: text(LIMITS.fileBytes),
+    content: fileContent,
   }),
   z.strictObject({
     callId: id,
@@ -254,7 +266,7 @@ export type StepPollResponse = z.infer<typeof stepPollResponseSchema>;
 
 /** Final contents, never a diff: the server rebuilds the diff from the target commit. */
 const submittedFileSchema = z.union([
-  z.strictObject({ path: repoPath, content: text(LIMITS.fileBytes) }),
+  z.strictObject({ path: repoPath, content: fileContent }),
   z.strictObject({ path: repoPath, deleted: z.literal(true) }),
 ]);
 

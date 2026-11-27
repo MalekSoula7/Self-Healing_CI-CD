@@ -56,6 +56,40 @@ GitHub does not redeliver failed webhook deliveries on its own, and every waitin
 | `PR_OPENED`, no selected workflow run started on the PR head | 30 min | `UNVERIFIED` + PR comment (the customer's CI doesn't run on this PR) |
 | `PR_OPENED`, runs started but not completed | 6 h | `UNVERIFIED` + PR comment |
 
+### 2.4 Submission validation, in code (P5.1)
+
+1. **Baseline (step 1).** The gateway parses the runner's JUnit reports itself and stores the inventory on the attempt (`baselineTests`), or why there is none. It never stores the XML.
+2. **Upload (`POST /v1/submission`).** Before any body is read:
+   - the session is authenticated;
+   - the attempt must be AWAITING_SUBMISSION, or VALIDATING for a retried upload;
+   - at most 2 bodies are read at once (1 per org), with a per-session rate limit.
+
+   Then:
+   - The body is re-validated. File contents must be text: no NUL characters, well-formed UTF-16.
+   - Check output is redacted, and the reports are parsed into the after-fix inventory.
+   - Final contents (never a diff) go to `AttemptSubmission`, and the attempt becomes VALIDATING.
+   - The same body again is answered like the first; any other body is refused.
+3. **Validation (the `submissions` worker, one job at a time).** It first refuses, without fetching anything:
+   - an org or repository that is no longer active;
+   - stored data that doesn't parse;
+   - more files than `maxFilesChanged`.
+
+   Then:
+   - It fetches each path at `targetSha` with a repository-scoped read-only token, and rebuilds every `Change` from those originals and the uploaded contents. The runner's diff is never used.
+   - Refused:
+     - content git would read as binary;
+     - deleting a file that doesn't exist;
+     - paths that differ only in case, or a file under a submitted file.
+   - It runs `checkChanges`.
+   - It compares the tests with the baseline.
+     - A baseline that is missing or has no tests makes the behavioral checks unavailable: `tests.mode` is forced to source_only, and the PR becomes a draft.
+     - After-fix tests it can't read are refused when there is a baseline.
+   - Every configured check (build, lint, typecheck, test), and the failing check, must have been run and must have passed.
+   - The AI judge (§8.7) runs only when all of that passed, on a redacted diff.
+4. **Result.**
+   - The attempt ends VALIDATED (P5.2 opens the PR) or REJECTED (the failure becomes FAILED), with the result stored in `HealAttempt.validation`.
+   - A job whose retries are spent ends the attempt REJECTED ("couldn't be checked") rather than leaving it VALIDATING.
+
 ### 2.3 Dispatch, in code (P4.8)
 
 `dispatch` is a job on the `failures` queue (not a queue of its own). Every flaky check queues it, under the same key.
@@ -689,6 +723,17 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 3 (resolved, D13):** org defaults are split from org guardrails (§8.1); every field has a merge rule (§8.4).
 - **Resolved (D14), was CHECKPOINT 3 from the P3.6 red team:** rules no stated rule covers, each cheap and statically checkable, to add or not: tautological assertions (`expect(true).toBe(true)`, `assert True`, tuple asserts); assertions inside `try/catch` or `except AssertionError`; unawaited `.resolves`/`.rejects`; retry settings (`jest.retryTimes`, `{ retry }`); mocking the module under test; in source, test-environment detection (`VITEST`, `"pytest" in sys.modules`), empty `catch {}`/`except: pass`, test-framework monkeypatching or pytest hooks, `as any`/`as unknown as`, warning filters; imports of packages no manifest declares. Decided in D14: the tricks above become rules, except mocking the module under test and undeclared imports (later, server side); packed lines count as several; doctests count as tests; edits under file-wide suppressions open a draft PR. Still open: checking that a lockfile only moves the bumped packages (Phase 4; the default `frozen` makes it rare).
 - **Phase 4 (from P3.6):** the server must refuse a path whose ancestor isn't a directory in the base tree (writing through a symlinked directory, or under an existing file); treat an empty JUnit baseline (the suite didn't compile) and a missing or zero-test report as "behavioral checks unavailable" or a failure; resolve protected configs' `extends` and local plugins.
+- **From P5.1 and its security review:**
+  - **P5.2 must commit exactly what was validated (L1).** Store a digest of the validated set (`targetSha`, each path, the SHA-256 of each content) in `validation`, and check it before committing. `commitFiles` should refuse NUL content too (H1, defense in depth).
+  - **The PR body and the dashboard (L5).** They must render every untrusted field escaped: test IDs from runner XML in violations, check names, the judge's reasoning. Redact test IDs before storing them.
+  - **The request path (L3).** It holds the parsed 64 MB body, a re-serialized copy for its hash, and synchronous parsing of up to 50 MB of XML. Hash the raw bytes instead, parse the reports in a worker thread or in the job, and lower the body limit and `LIMITS.submissionFiles` (200) to the plan maximum (50 files).
+  - **Fetching originals.** It happens one file at a time in a single, shared worker. Use bounded parallelism, and per-org fairness for the judge.
+  - **The judge's outage.** When every judge rule is unjudged because the model was unreachable, retry the job rather than spend an attempt (D21 fails closed).
+  - **Dependency fixes.** heal-action doesn't re-run `install` after a fix, so a dependency failure (failing check `install`) is always rejected. Make `install` a final check when it is the failing one.
+  - **The dispatcher's in-flight count** ignores VALIDATING and VALIDATED attempts. Decide whether they hold the repository.
+  - **`recordValidation`** sets the failure to FAILED unconditionally. Make it compare-and-set from HEALING.
+  - **The validation policy** is the current effective policy. Record which version was used.
+  - **A baseline with no reports.** When `junitGlob` is set but the baseline has no reports, it is only a draft. Consider refusing, or requiring at least one failing test when the failing check is `test` (M3 option).
 - **From P4.8 and the end-of-Phase-4 security review:**
   - **D20 is now urgent (H1).** With `HEAL_DISPATCH=true`, every failing in-scope push runs branch code inside a default-branch job with no human involved. Decide D20 before turning it on for anything but a sandbox repository.
   - **Stale `defaultBranch` (M4).** After a rename, the dispatch and the OIDC `ref` check use the stored `defaultBranch`, so the old branch's `pipeheal.yml` could be dispatched and accepted. Fix it in one of two ways:
@@ -697,7 +742,7 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
   - **Fail an orphaned attempt on retry.** A dispatch-job retry that finds the failure HEALING with a DISPATCHED attempt that has no run and no session should call `failDispatch`. Today the in-flight count stops counting it after 15 minutes, and the attempt stays until the §2.2 reconciler (P5.3).
   - **Failure status after an attempt ends.** The failure stays HEALING when its attempt ends GAVE_UP, NOT_REPRODUCIBLE or FAILED in the loop. The §9.1 retry and the dashboard need it updated (P5).
   - **The heal brief and scope.** It lists every job of the failure, including runs that passed on a re-run. Filter it to the still-failing jobs.
-  - **Serialization retries (L2).** `claimDispatch`'s serialization failures rely on the job's 5 retries. Retry them inside the helper, or use advisory locks.
+  - **Serialization retries (L2).** Done in P5.1: `claimDispatch` retries Postgres's serialization failures itself, up to 4 tries. They had refused unrelated claims under load.
   - **Policy-file freshness (L4, from Phase 3 L5).** The dispatcher doesn't wait for this failure's `policy-file` job, or record `policyFileCommitSha` on the attempt.
   - **The dispatch token (L5).** It has the installation's full rights. Mint one for this repository with `actions: write` only.
   - **The installation ID (L6).** It comes from job data. Use the org's stored installation ID.

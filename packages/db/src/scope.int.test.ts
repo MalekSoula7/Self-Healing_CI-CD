@@ -309,6 +309,18 @@ const submissionInput = () => ({
   afterTests: { available: false as const, reason: "no JUnit report was found" },
 });
 
+/** What checking a submission found. */
+const validation = (passed: boolean) => ({
+  passed,
+  reasons: passed ? [] : ["the test check failed"],
+  violations: [],
+  behavior: { available: true, reason: null },
+  checks: [{ name: "test", exitCode: passed ? 0 : 1 }],
+  judge: [],
+  draftReasons: [],
+  changedFiles: 1,
+});
+
 /** A fresh session-token hash: the column is unique across the whole test database. */
 const sessionHash = () => randomUUID().replaceAll("-", "").repeat(2);
 
@@ -357,6 +369,14 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
   },
   "attempts.getStep": async () => {
     await expect(a.system.attempts.getStep(bAttemptId, 1)).resolves.toBeNull();
+  },
+  "attempts.submissionFor": async () => {
+    await expect(a.system.attempts.submissionFor(bAttemptId)).resolves.toBeNull();
+  },
+  "attempts.recordValidation": async () => {
+    await expect(a.system.attempts.recordValidation(bAttemptId, validation(false))).rejects.toThrow(
+      NotFoundError,
+    );
   },
   "attempts.acceptSubmission": async () => {
     await expect(a.system.attempts.acceptSubmission(bAttemptId, submissionInput())).rejects.toThrow(
@@ -664,6 +684,7 @@ const readOnlyHelpers = [
   "attempts.getStep",
   "attempts.history",
   "attempts.brief",
+  "attempts.submissionFor",
 ];
 
 const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
@@ -997,6 +1018,24 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
         action: "attempt.submitted",
         target: `attempt:${attempt.id}`,
         metadata: { files: 1, deleted: 0, checks: 1 },
+      },
+    ];
+  },
+  "attempts.recordValidation": async () => {
+    const attempt = await a.system.attempts.create({
+      failureId: a.failure.id,
+      targetSha: a.failure.headSha,
+      failingCheck: "test",
+    });
+    await db.healAttempt.update({ where: { id: attempt.id }, data: { status: "VALIDATING" } });
+    await a.system.attempts.recordValidation(attempt.id, validation(false));
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.validated",
+        target: `attempt:${attempt.id}`,
+        metadata: { passed: false, violations: 0, changedFiles: 1 },
       },
     ];
   },

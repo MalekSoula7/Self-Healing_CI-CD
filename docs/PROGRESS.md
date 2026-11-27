@@ -1200,3 +1200,33 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - Set `OLLAMA_URL` for the local mode demo.
   - Workflow scope globs match the workflow's file path, not its name. Tell me if you meant the name.
 
+## 2026-11-27 · P5.1 submission validation (a, b, c)
+
+- **What it does:** the server checks the runner's fix itself, from the target commit's files, before any PR (SPEC §2.4, new).
+  - **P5.1a:** the baseline test inventory is parsed at step 1.
+  - **P5.1b:** `POST /v1/submission` and `AttemptSubmission`.
+  - **P5.1c:** the `submissions` worker: originals fetched with a read-only token, diff rebuilt, static + behavioral + checks + judge, then VALIDATED or REJECTED.
+  - **Migrations:** `attempt_baseline_tests`, `attempt_submissions`.
+- **Protocol:** file content (`write_file`, submissions) must be text, with no NUL and well-formed UTF-16. heal-action's `dist/` was rebuilt.
+- **Test runner:**
+  - The flaky full runs were Postgres out of connections with about 16 integration files at once.
+  - Fix: each test file's pool is capped at 4, and integration files run 6 at a time after the unit tests (vitest needs its own group for that).
+  - No check or timeout was loosened. Full runs are clean: 110 files.
+  - After a restart, Docker Desktop has to be running, or vitest reports "no test files".
+- **Security review: 1 high, 5 medium, 7 low.**
+  - **Fixed:**
+    - H1: NUL content passed as text, getting a binary file past INV-FILE-TYPES. Refused by the protocol and classified as binary in the check.
+    - M1: VALIDATING could stick. A missing App now throws, unreadable stored data is rejected, and spent retries end the attempt REJECTED.
+    - M2: configured checks left out counted as passed.
+    - M3: a baseline with no tests counted as available.
+    - M4: the judge's diff is redacted.
+    - M5: the file cap is checked before fetching.
+    - L1 (part): a delete of a missing file, case collisions, and a file under a file are refused.
+    - L2: an inactive org or repository is refused without calling GitHub.
+    - L4: an oversized merged inventory becomes unavailable instead of a permanent 400.
+    - L7: the error class only is logged.
+  - **Recorded in SPEC §15:** L1 (the digest P5.2 must check), L3, L5, the informational items, and that dependency fixes are always rejected until heal-action re-runs `install`.
+  - **L6** is the `.env.example` slug, still not committed.
+- **P4.8 review L2, fixed here:** a full run showed `claimDispatch` refused with a serialization conflict caused by unrelated test files. It now retries those conflicts itself, up to 4 tries.
+- **Gate:** typecheck, lint and `pnpm test` pass twice in a row.
+

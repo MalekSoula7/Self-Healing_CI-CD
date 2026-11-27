@@ -35,7 +35,9 @@ export {
   MAX_POLICY_FILE_ERRORS,
   policyFileRecordSchema,
   recentChangesRecordSchema,
+  submissionValidationSchema,
   testInventoryRecordSchema,
+  type SubmissionValidation,
   type TestInventoryRecord,
 } from "./inputs";
 export {

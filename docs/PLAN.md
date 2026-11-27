@@ -108,7 +108,7 @@ Acceptance: local mode fixes at least 4 of the 6 fixable demo scenarios; both tr
 
 ## Phase 5: PRs & verification loop (MVP complete)
 
-- [ ] **P5.1** Gateway `POST /v1/submission` (heal-action already uploads to it, P4.5), then submission validation: fetch originals at `target_sha` from GitHub, recompute the diff, run static + behavioral + judge. Never use the runner's diff as truth.
+- [x] **P5.1** Gateway `POST /v1/submission` (heal-action already uploads to it, P4.5), then submission validation: fetch originals at `target_sha` from GitHub, recompute the diff, run static + behavioral + judge. Never use the runner's diff as truth.
 - [ ] **P5.2** Branch, commit and PR via Git Data API; PR body template (SPEC §9); label; reviewer request; draft rule; link comment on the originating PR. Record each `pipeheal/*` branch the App creates, with its last commit SHA, and only ever extend those (`commitFiles` already refuses a branch whose tip isn't the given parent).
 - [ ] **P5.3** Verification: map `workflow_run` on `pipeheal/*` to its attempt by the head SHA of the App's own commit, never by branch name alone, and ignore fork runs; `VERIFIED`, retry-with-feedback, or `NEEDS_HUMAN` + comment; `UNVERIFIED` timeouts and the delivery reconciler (SPEC §2.2).
 - [ ] **P5.4** Outcome tracking from `pull_request` closed events.

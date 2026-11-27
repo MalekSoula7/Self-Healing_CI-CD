@@ -19916,6 +19916,8 @@ var BODY_LIMITS = {
 var repoPath = external_exports.string().max(4096).refine((path) => repoPathProblem(path) === null, "not a repository-relative POSIX path");
 var repoPathOrRoot = external_exports.union([external_exports.literal("."), repoPath]);
 var text = (max = LIMITS.textChars) => external_exports.string().max(max);
+var LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+var fileContent = text(LIMITS.fileBytes).refine((content) => !content.includes("\0"), "must not contain NUL characters").refine((content) => !LONE_SURROGATE.test(content), "must be well-formed text");
 var id = external_exports.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/);
 var checkNameSchema = external_exports.enum([
   "install",
@@ -19983,7 +19985,7 @@ var toolCallSchema = external_exports.discriminatedUnion("tool", [
     callId: id,
     tool: external_exports.literal("write_file"),
     path: repoPath,
-    content: text(LIMITS.fileBytes)
+    content: fileContent
   }),
   external_exports.strictObject({
     callId: id,
@@ -20074,7 +20076,7 @@ var stepPollResponseSchema = external_exports.discriminatedUnion("status", [
   })
 ]);
 var submittedFileSchema = external_exports.union([
-  external_exports.strictObject({ path: repoPath, content: text(LIMITS.fileBytes) }),
+  external_exports.strictObject({ path: repoPath, content: fileContent }),
   external_exports.strictObject({ path: repoPath, deleted: external_exports.literal(true) })
 ]);
 var submissionSchema = external_exports.strictObject({

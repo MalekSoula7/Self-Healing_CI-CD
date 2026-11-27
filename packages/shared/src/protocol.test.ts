@@ -57,6 +57,7 @@ describe("tool calls (SPEC §7.2)", () => {
     { tool: "search_code", pattern: "total(", glob: "src/**" },
     { tool: "apply_edit", path: "src/cart.ts", oldStr: "a", newStr: "b" },
     { tool: "write_file", path: "src/new.ts", content: "export {};\n" },
+    { tool: "write_file", path: "src/emoji.ts", content: 'export const smile = "😀";\n' },
     { tool: "run_check", name: "test_file", target: "src/cart.test.ts" },
     {
       tool: "submit_fix",
@@ -81,6 +82,10 @@ describe("tool calls (SPEC §7.2)", () => {
       { tool: "write_file", path: "a.ts", content: "x".repeat(LIMITS.fileBytes + 1) },
     ],
     ["a missing call ID", { callId: undefined, tool: "list_files", path: "." }],
+    // Text only: git would show a NUL file as binary, unreviewed (P5.1 review H1).
+    ["a file with a NUL", { tool: "write_file", path: "a.ts", content: "x\0y" }],
+    ["a lone surrogate", { tool: "write_file", path: "a.ts", content: "x\uD800y" }],
+    ["a reversed surrogate pair", { tool: "write_file", path: "a.ts", content: "\uDC00\uD800" }],
   ])("refuses %s", (_, call) => {
     expect(toolCallSchema.safeParse({ callId: "c1", ...call }).success).toBe(false);
   });

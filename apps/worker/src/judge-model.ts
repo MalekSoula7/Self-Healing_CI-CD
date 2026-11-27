@@ -12,6 +12,7 @@ import {
   judgeAnswerSchema,
   judgeDecision,
   judgeRulesOf,
+  redactLog,
   renderJudgeDiff,
   unjudged,
   verdictOf,
@@ -186,7 +187,10 @@ export async function judgeSubmission(
       report = { ...report, outcomes: rules.map((rule) => fail(rule, diff.reason)) };
     } else {
       try {
-        report = await judge.judge(rules, diff.text, { deadline: input.deadline });
+        // Redacted like every other model input (SPEC §12): a changed file's context lines can
+        // hold credentials, and the judge's reasoning is stored and shown (P5.1 review M4).
+        const redacted = redactLog(diff.text).text;
+        report = await judge.judge(rules, redacted, { deadline: input.deadline });
       } catch (error) {
         logger.error({ err: error, rules: rules.length }, "the judge failed");
         report = { ...report, outcomes: rules.map((rule) => fail(rule, "the judge failed")) };

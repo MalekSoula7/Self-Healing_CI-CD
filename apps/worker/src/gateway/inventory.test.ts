@@ -34,6 +34,18 @@ describe("inventoryRecord", () => {
   });
 });
 
+describe("inventoryRecord's cap", () => {
+  it("has no inventory past the stored cap, though each report fits", () => {
+    const three = report('<testcase name="a"/><testcase name="b"/><testcase name="c"/>');
+
+    expect(inventoryRecord([three, three], 5)).toEqual({
+      available: false,
+      reason: "the reports hold too many tests",
+    });
+    expect(inventoryRecord([three], 5)).toMatchObject({ available: true });
+  });
+});
+
 describe("inventoryOf", () => {
   it("gives back an inventory the behavioral check can compare", () => {
     const baseline = inventoryOf(
