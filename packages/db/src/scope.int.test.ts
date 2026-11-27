@@ -524,6 +524,26 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
   "failures.claimRerun": async () => {
     await expect(a.system.failures.claimRerun(b.failedRunId)).rejects.toThrow(NotFoundError);
   },
+  "failures.settle": async () => {
+    await expect(
+      a.system.failures.settle(b.failure.id, { status: "SKIPPED", reason: "planted" }),
+    ).rejects.toThrow(NotFoundError);
+  },
+  "attempts.claimDispatch": async () => {
+    await expect(
+      a.system.attempts.claimDispatch({
+        failureId: b.failure.id,
+        failingCheck: "test",
+        maxAttemptsPerFailure: 2,
+        maxAttemptsPerDay: 20,
+      }),
+    ).rejects.toThrow(NotFoundError);
+  },
+  "attempts.failDispatch": async () => {
+    await expect(
+      a.system.attempts.failDispatch(bAttemptId, { reason: "planted", failureStatus: "FAILED" }),
+    ).rejects.toThrow(NotFoundError);
+  },
   "failures.recordModelCall": async () => {
     await expect(a.system.failures.recordModelCall(b.failure.id, modelCall())).rejects.toThrow(
       NotFoundError,
@@ -943,6 +963,76 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
           headSha: a.failure.headSha,
           lateArrival: false,
         },
+      },
+    ];
+  },
+  "failures.settle": async () => {
+    await a.system.failures.recordTriage(a.failure.id, {
+      category: "infra",
+      confidence: 0.9,
+      summary: "Runner lost.",
+    });
+    await a.system.failures.settle(a.failure.id, {
+      status: "SKIPPED",
+      reason: "category infra is diagnosed only",
+    });
+    return [
+      { actorType: "SYSTEM", action: "failure.triaged", target: `failure:${a.failure.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "failure.settled",
+        target: `failure:${a.failure.id}`,
+        metadata: { status: "SKIPPED", reason: "category infra is diagnosed only" },
+      },
+    ];
+  },
+  "attempts.claimDispatch": async () => {
+    await a.asAdmin.repositories.setEnabled(a.repo.id, true);
+    await a.system.failures.recordTriage(a.failure.id, {
+      category: "test",
+      confidence: 0.9,
+      summary: "A test failed.",
+    });
+    const claim = await a.system.attempts.claimDispatch({
+      failureId: a.failure.id,
+      failingCheck: "test",
+      maxAttemptsPerFailure: 2,
+      maxAttemptsPerDay: 20,
+    });
+    if (claim.outcome !== "created") throw new Error(`claim: ${claim.outcome}`);
+    return [
+      {
+        actorType: "USER",
+        actorId: a.admin.id,
+        action: "repository.enabled",
+        target: `repository:${a.repo.id}`,
+      },
+      { actorType: "SYSTEM", action: "failure.triaged", target: `failure:${a.failure.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.dispatched",
+        target: `attempt:${claim.attempt.id}`,
+        metadata: { failureId: a.failure.id, attemptNo: 1, failingCheck: "test" },
+      },
+    ];
+  },
+  "attempts.failDispatch": async () => {
+    const attempt = await a.system.attempts.create({
+      failureId: a.failure.id,
+      targetSha: a.failure.headSha,
+      failingCheck: "test",
+    });
+    await a.system.attempts.failDispatch(attempt.id, {
+      reason: "the healer workflow is missing",
+      failureStatus: "NEEDS_SETUP",
+    });
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.dispatch_failed",
+        target: `attempt:${attempt.id}`,
+        metadata: { reason: "the healer workflow is missing", failureStatus: "NEEDS_SETUP" },
       },
     ];
   },

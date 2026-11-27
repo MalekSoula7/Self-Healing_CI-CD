@@ -1165,3 +1165,38 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - Run alone, those two files passed 57/57, and the next full run passed 2,233/2,233.
 - **For Malek:** D21 (the judge fails closed) is proposed, not decided.
 
+## 2026-11-27 · P4.8 dispatcher (end of Phase 4)
+
+- **What it does:** a triaged failure that is healable, in scope, set up and within its caps gets a `HealAttempt`. The healer is then dispatched on the default branch with `return_run_details`, and the run is recorded (SPEC §2.3, new).
+- **db:**
+  - `attempts.claimDispatch` (serializable): caps and state, checked with the creation.
+  - `attempts.failDispatch`.
+  - `failures.settle`.
+  - All three have meta-test cases, and `dispatch.int.test.ts` covers caps, busy, races, stale attempts and pending re-runs.
+- **worker:**
+  - `dispatch-decision.ts`, pure, with unit tests.
+  - `queues/dispatch.ts`, a `dispatch` job on the `failures` queue, queued after each flaky check. A busy repository waits up to 6 hours.
+  - `HEAL_DISPATCH`, an env switch, default false.
+- **Security review (P4.8 and the end of Phase 4): 1 high, 4 medium, 7 low.**
+  - **H1:** the dispatcher made D20's risk automatic. It is now behind `HEAL_DISPATCH` (off by default), and D20 has to be decided first.
+  - **Fixed:**
+    - M1: the installation client is created inside the dispatch's error handling.
+    - M2: expired attempts no longer count as in flight.
+    - M3: every failing workflow must be in scope.
+    - L1: org and repository state are checked inside the claim.
+    - L3: a rate-limited dispatch pauses the installation.
+    - The flaky-rerun race: the claim checks for pending re-runs.
+  - **Recorded in SPEC §15:** M4 (a stale `defaultBranch`), L2, L4, L5, L6, the informational items, and `healerStatus` being unused.
+  - **L7** is the `.env.example` slug, left uncommitted.
+- **End of Phase 4.** The review found that the invariants hold: no merge, push or `.github/` writes, no fork runs, and attempts bounded.
+  - Open gaps: P5.1 submission validation; the §2.2 reconciler (P5.3) for DISPATCHED, RUNNING and AWAITING_SUBMISSION timeouts; D20.
+  - Acceptance (local mode fixes at least 4 of the 6 demo scenarios; the traps end in a code fix or give_up) needs a model: `OLLAMA_URL` set, then `pnpm heal:local`. Not run yet.
+- **Gate:** typecheck, lint and `pnpm test` all pass.
+  - One full run had a load timeout in an untouched webhooks test while the review ran. That file passed 34/34 alone.
+  - Another full run ran one test file fewer (105 of 106), which pulled agent-core's branch coverage under 95%. The next run was complete and clean: 106 files, 2,289 tests, coverage met. Watch for a test file silently dropped under load.
+- **For Malek (CHECKPOINT 4):**
+  - Decide D20 and D21.
+  - Fix `GITHUB_APP_SLUG` (the slug only, `pipeheal-dev-malek`).
+  - Set `OLLAMA_URL` for the local mode demo.
+  - Workflow scope globs match the workflow's file path, not its name. Tell me if you meant the name.
+

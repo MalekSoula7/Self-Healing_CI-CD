@@ -160,6 +160,7 @@ function testDeps(): WebhookProcessorDeps {
       enqueueRecentChanges: () => Promise.resolve(),
       enqueueFlakyCheck: () => Promise.resolve(),
       enqueuePolicyFile: () => Promise.resolve(),
+      enqueueDispatch: () => Promise.resolve(),
     },
     pacing: {
       record: () => undefined,
@@ -709,6 +710,7 @@ describe("workflow_run (SPEC §2 step 4, §2.1)", () => {
         enqueueRecentChanges: () => Promise.resolve(),
         enqueueFlakyCheck: () => Promise.resolve(),
         enqueuePolicyFile: () => Promise.resolve(),
+        enqueueDispatch: () => Promise.resolve(),
       },
     };
     return { deps, scheduled, triaged };

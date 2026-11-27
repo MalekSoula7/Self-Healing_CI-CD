@@ -71,6 +71,7 @@ function deps(overrides: Partial<FailuresDeps> = {}) {
   const recentChanges: FailureTarget[] = [];
   const flakyChecks: { target: FailureTarget; key: string | undefined }[] = [];
   const policyFiles: FailureTarget[] = [];
+  const dispatches: { target: FailureTarget; key?: string; delayMs?: number }[] = [];
   const jobs: FailureJobs = {
     scheduleWindowClose: () => Promise.resolve(),
     enqueueTriage: (target, key) => {
@@ -89,6 +90,10 @@ function deps(overrides: Partial<FailuresDeps> = {}) {
       policyFiles.push(target);
       return Promise.resolve();
     },
+    enqueueDispatch: (target, key, delayMs) => {
+      dispatches.push({ target, key, delayMs });
+      return Promise.resolve();
+    },
   };
   const all: FailuresDeps = {
     db,
@@ -97,9 +102,10 @@ function deps(overrides: Partial<FailuresDeps> = {}) {
     pacing: openPacing,
     jobs,
     triageModel: null,
+    dispatchEnabled: true,
     ...overrides,
   };
-  return { deps: all, triaged, recentChanges, flakyChecks, policyFiles };
+  return { deps: all, triaged, recentChanges, flakyChecks, policyFiles, dispatches };
 }
 
 /** An org with a repo and a failure with one failed job; its window still open. */
@@ -1278,5 +1284,235 @@ describe("policy-file job (P3.7)", () => {
       policyFileErrors: null,
       policyFileCommitSha: TIP,
     });
+  });
+});
+
+describe("dispatch job (P4.8)", () => {
+  function dispatchJob(target: FailureTarget, id?: string) {
+    return {
+      id,
+      name: "dispatch",
+      data: { ...target, installationId: String(target.installationId) },
+    };
+  }
+
+  /** A triaged failure in an enabled repository with commands and a healer workflow. */
+  async function readyFailure(options: { category?: "test" | "infra"; healer?: boolean } = {}) {
+    const opened = await openFailure();
+    await opened.system.repositories.setEnabled(opened.repoId, true);
+    await opened.system.repositories.setCommands(opened.repoId, {
+      commands: { install: ["npm", "ci"], test: ["npm", "test"] },
+      junitGlob: null,
+    });
+    const healer = {
+      githubWorkflowId: 2n,
+      path: ".github/workflows/pipeheal.yml",
+      name: "PipeHeal",
+      triggers: ["workflow_dispatch"],
+    };
+    await opened.system.workflows.syncInstalled(opened.repoId, [
+      { githubWorkflowId: 1n, path: ".github/workflows/ci.yml", name: "CI", selected: true },
+      ...(options.healer === false ? [] : [healer]),
+    ]);
+    await opened.system.failures.recordTriage(opened.target.failureId, {
+      category: options.category ?? "test",
+      confidence: 0.9,
+      summary: "1 failing test",
+    });
+    return opened;
+  }
+
+  /** GitHub's workflow dispatch endpoint for the healer: records each request's body. */
+  function mockDispatch(fullName: string, respond: () => Response) {
+    const bodies: unknown[] = [];
+    github.use(
+      http.post(
+        `https://api.github.com/repos/${fullName}/actions/workflows/pipeheal.yml/dispatches`,
+        async ({ request }) => {
+          bodies.push(await request.json());
+          return respond();
+        },
+      ),
+    );
+    return bodies;
+  }
+
+  const attemptsOf = (failureId: string) =>
+    db.healAttempt.findMany({ where: { failureId }, orderBy: { attemptNo: "asc" } });
+
+  it("creates the attempt, dispatches the healer on the default branch, records its run", async () => {
+    const ready = await readyFailure();
+    mockToken();
+    const bodies = mockDispatch(ready.repoFullName, () =>
+      HttpResponse.json({ workflow_run_id: 777, run_url: "x", html_url: "y" }),
+    );
+
+    await processFailuresJob(dispatchJob(ready.target), deps().deps);
+
+    const [attempt] = await attemptsOf(ready.target.failureId);
+    expect(attempt).toMatchObject({
+      status: "DISPATCHED",
+      failingCheck: "test",
+      dispatchRunId: 777n,
+    });
+    expect(bodies).toEqual([
+      {
+        ref: "main",
+        inputs: { job_id: attempt?.id, target_sha: "a".repeat(40) },
+        return_run_details: true,
+      },
+    ]);
+    expect((await ready.system.failures.get(ready.target.failureId))?.status).toBe("HEALING");
+  });
+
+  it("starts no healer run while HEAL_DISPATCH is off, and still records the diagnosis", async () => {
+    const ready = await readyFailure();
+    const setup = await readyFailure({ healer: false });
+    const off = deps({ dispatchEnabled: false }).deps;
+
+    await processFailuresJob(dispatchJob(ready.target), off);
+    await processFailuresJob(dispatchJob(setup.target), off);
+
+    expect(await attemptsOf(ready.target.failureId)).toEqual([]);
+    expect((await ready.system.failures.get(ready.target.failureId))?.status).toBe("TRIAGED");
+    expect((await setup.system.failures.get(setup.target.failureId))?.status).toBe("NEEDS_SETUP");
+  });
+
+  it("pauses the installation when the dispatch is rate limited", async () => {
+    const ready = await readyFailure();
+    mockToken();
+    mockDispatch(ready.repoFullName, () =>
+      HttpResponse.json(
+        { message: "API rate limit exceeded" },
+        {
+          status: 403,
+          headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "9999999999" },
+        },
+      ),
+    );
+
+    await expect(processFailuresJob(dispatchJob(ready.target), deps().deps)).rejects.toThrow();
+    const [attempt] = await attemptsOf(ready.target.failureId);
+    expect(attempt).toMatchObject({ status: "FAILED" });
+  });
+
+  it("leaves a failure that isn't healable at its diagnosis, without calling GitHub", async () => {
+    const ready = await readyFailure({ category: "infra" });
+
+    await processFailuresJob(dispatchJob(ready.target), deps().deps);
+
+    expect(await ready.system.failures.get(ready.target.failureId)).toMatchObject({
+      status: "SKIPPED",
+      skipReason: "category infra is diagnosed only",
+    });
+    expect(await attemptsOf(ready.target.failureId)).toEqual([]);
+  });
+
+  it("sends a repository without the healer workflow to setup", async () => {
+    const ready = await readyFailure({ healer: false });
+
+    await processFailuresJob(dispatchJob(ready.target), deps().deps);
+
+    expect((await ready.system.failures.get(ready.target.failureId))?.status).toBe("NEEDS_SETUP");
+  });
+
+  it("waits while a flaky re-run of ours hasn't reported", async () => {
+    const ready = await readyFailure();
+    await ready.system.failures.claimRerun(ready.failedRunId);
+
+    await processFailuresJob(dispatchJob(ready.target), deps().deps);
+
+    expect(await attemptsOf(ready.target.failureId)).toEqual([]);
+    expect((await ready.system.failures.get(ready.target.failureId))?.status).toBe("TRIAGED");
+  });
+
+  it("fails the attempt and asks for setup when GitHub can't find the healer", async () => {
+    const ready = await readyFailure();
+    mockToken();
+    mockDispatch(ready.repoFullName, () =>
+      HttpResponse.json({ message: "Not Found" }, { status: 404 }),
+    );
+
+    await processFailuresJob(dispatchJob(ready.target), deps().deps);
+
+    const [attempt] = await attemptsOf(ready.target.failureId);
+    expect(attempt).toMatchObject({ status: "FAILED", dispatchRunId: null });
+    expect((await ready.system.failures.get(ready.target.failureId))?.status).toBe("NEEDS_SETUP");
+  });
+
+  it("fails the attempt when GitHub returns no run, and never dispatches twice", async () => {
+    const ready = await readyFailure();
+    mockToken();
+    const bodies = mockDispatch(ready.repoFullName, () => new HttpResponse(null, { status: 204 }));
+    const { deps: d } = deps();
+
+    await processFailuresJob(dispatchJob(ready.target), d);
+    await processFailuresJob(dispatchJob(ready.target), d);
+
+    expect(bodies).toHaveLength(1);
+    const [attempt] = await attemptsOf(ready.target.failureId);
+    expect(attempt).toMatchObject({
+      status: "FAILED",
+      endReason: "GitHub didn't return the healer run",
+    });
+    expect((await ready.system.failures.get(ready.target.failureId))?.status).toBe("FAILED");
+  });
+
+  it("looks again later while the repository has an attempt in flight, then gives up", async () => {
+    const busy = await readyFailure();
+    await busy.system.attempts.claimDispatch({
+      failureId: busy.target.failureId,
+      failingCheck: "test",
+      maxAttemptsPerFailure: 2,
+      maxAttemptsPerDay: 20,
+    });
+    const { failure } = await busy.system.failures.recordFailedRun(busy.repoId, {
+      headSha: "b".repeat(40),
+      headBranch: "main",
+      runId: githubId(),
+      runAttempt: 1,
+      workflowId: 1n,
+      workflowName: "CI",
+      workflowPath: ".github/workflows/ci.yml",
+      conclusion: "failure",
+      htmlUrl: null,
+      jobs: [{ githubJobId: githubId(), name: "check", failedStep: "Test", htmlUrl: null }],
+    });
+    await busy.system.failures.recordTriage(failure.id, {
+      category: "test",
+      confidence: 0.9,
+      summary: "1 failing test",
+    });
+    const target = { ...busy.target, failureId: failure.id };
+    const { deps: d, dispatches } = deps();
+
+    await processFailuresJob(dispatchJob(target, `dispatch-${failure.id}-run1`), d);
+    await processFailuresJob(dispatchJob(target, `dispatch-${failure.id}-run1-wait-4`), d);
+    await processFailuresJob(dispatchJob(target, `dispatch-${failure.id}-wait-36`), d);
+
+    expect(dispatches).toEqual([
+      { target, key: "run1-wait-1", delayMs: 600_000 },
+      { target, key: "run1-wait-5", delayMs: 600_000 },
+    ]);
+    expect(await busy.system.failures.get(failure.id)).toMatchObject({
+      status: "SKIPPED",
+      skipReason: "another attempt kept the repository busy for 6 hours",
+    });
+  });
+
+  it("is queued after every flaky check, with the check's key", async () => {
+    const ready = await readyFailure({ category: "infra" });
+    // Settled: the flaky check itself does nothing, and still queues the dispatch job.
+    await ready.system.failures.settle(ready.target.failureId, { status: "SKIPPED", reason: "x" });
+    const { deps: d, dispatches } = deps();
+    const data = { ...ready.target, installationId: String(ready.target.installationId) };
+
+    await processFailuresJob({ name: "flaky-check", data }, d);
+    await processFailuresJob(
+      { id: `flaky-check-${ready.target.failureId}-9-2`, name: "flaky-check", data },
+      d,
+    );
+
+    expect(dispatches.map((call) => call.key)).toEqual([undefined, "9-2"]);
   });
 });

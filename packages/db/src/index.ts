@@ -6,6 +6,9 @@ export { createDb, type Db } from "./client";
 export { ConflictError, ForbiddenError, NotFoundError } from "./errors";
 export type {
   AttemptInput,
+  DispatchClaimInput,
+  DispatchFailureInput,
+  FailureSettleInput,
   RepositoryCommandsInput,
   AuditPage,
   FailedJobInput,

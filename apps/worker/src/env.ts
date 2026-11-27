@@ -27,6 +27,9 @@ const models = {
   TRIAGE_MODEL: modelTag.default("qwen3:14b"),
   // Healing, and compiling custom rules (SPEC §8.7).
   HEAL_MODEL: modelTag.default("qwen3:14b"),
+  // The dispatcher (P4.8) starts healer runs on customers' repositories by itself. Off unless set
+  // to "true": until D20 is decided, only sandbox repositories should get them (P4.8 review H1).
+  HEAL_DISPATCH: z.stringbool().default(false),
 };
 
 /** An IP address or CIDR, as Fastify's `trustProxy` takes them. */

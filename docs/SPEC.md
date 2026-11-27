@@ -56,6 +56,37 @@ GitHub does not redeliver failed webhook deliveries on its own, and every waitin
 | `PR_OPENED`, no selected workflow run started on the PR head | 30 min | `UNVERIFIED` + PR comment (the customer's CI doesn't run on this PR) |
 | `PR_OPENED`, runs started but not completed | 6 h | `UNVERIFIED` + PR comment |
 
+### 2.3 Dispatch, in code (P4.8)
+
+`dispatch` is a job on the `failures` queue (not a queue of its own). Every flaky check queues it, under the same key.
+
+1. **Waits** while a re-run of ours hasn't reported back. The re-run's result triggers triage, the flaky check and the dispatch again.
+2. **Decides** (`dispatch-decision.ts`, pure). The failure is SKIPPED when:
+   - its category isn't in `scope.categories`;
+   - its branch has no name, is a `pipeheal/*` branch, or is out of `scope.branches`;
+   - any of its still-failing workflows is out of `scope.workflows`. Globs match the workflow's file path, and one failing workflow out of scope is enough.
+
+   It is NEEDS_SETUP when:
+   - `.github/workflows/pipeheal.yml` isn't among the synced workflows;
+   - its triggers are known and lack `workflow_dispatch`;
+   - the repository has no command for the failing check.
+
+   The failing check comes from the category: lint, typecheck, test and build map to themselves, compile to typecheck (or build when there is no typecheck command), and dependency to install.
+3. **`HEAL_DISPATCH`** (worker env, default false) must be `true` for any healer run to start. The diagnosis above is recorded either way. Off until D20 is decided (P4.8 review H1).
+4. **Claims** (`attempts.claimDispatch`, one serializable transaction). The failure must still be TRIAGED, the org ACTIVE, the repository enabled and installed, and no re-run of ours pending. The caps (D18) come next:
+   - no attempt in flight for the repository: dispatched within the 15-minute dispatch timeout, or with a session that hasn't expired. A crashed dispatch or an expired session can't hold a repository for good;
+   - the failure under `maxAttemptsPerFailure`;
+   - the org under 20 attempts in 24 hours.
+
+   Then it creates the attempt and the failure becomes HEALING.
+   - A busy repository makes the job look again every 10 minutes, for at most 6 hours, then the failure is SKIPPED.
+   - A cap reached means SKIPPED, for good.
+5. **Dispatches** `workflow_dispatch` of the healer on the stored default branch, with `job_id` and `target_sha` and `return_run_details`, and never retries it.
+   - GitHub's 404 or 422 fails the attempt, and the failure goes to NEEDS_SETUP.
+   - Any other error, or no run ID in the answer, fails the attempt and the failure.
+   - A rate-limited dispatch fails the attempt and pauses the installation.
+   - Otherwise it records the run with `recordDispatch`; only that run can open the session (D16).
+
 ---
 
 ## 3. Architecture
@@ -658,6 +689,23 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 3 (resolved, D13):** org defaults are split from org guardrails (§8.1); every field has a merge rule (§8.4).
 - **Resolved (D14), was CHECKPOINT 3 from the P3.6 red team:** rules no stated rule covers, each cheap and statically checkable, to add or not: tautological assertions (`expect(true).toBe(true)`, `assert True`, tuple asserts); assertions inside `try/catch` or `except AssertionError`; unawaited `.resolves`/`.rejects`; retry settings (`jest.retryTimes`, `{ retry }`); mocking the module under test; in source, test-environment detection (`VITEST`, `"pytest" in sys.modules`), empty `catch {}`/`except: pass`, test-framework monkeypatching or pytest hooks, `as any`/`as unknown as`, warning filters; imports of packages no manifest declares. Decided in D14: the tricks above become rules, except mocking the module under test and undeclared imports (later, server side); packed lines count as several; doctests count as tests; edits under file-wide suppressions open a draft PR. Still open: checking that a lockfile only moves the bumped packages (Phase 4; the default `frozen` makes it rare).
 - **Phase 4 (from P3.6):** the server must refuse a path whose ancestor isn't a directory in the base tree (writing through a symlinked directory, or under an existing file); treat an empty JUnit baseline (the suite didn't compile) and a missing or zero-test report as "behavioral checks unavailable" or a failure; resolve protected configs' `extends` and local plugins.
+- **From P4.8 and the end-of-Phase-4 security review:**
+  - **D20 is now urgent (H1).** With `HEAL_DISPATCH=true`, every failing in-scope push runs branch code inside a default-branch job with no human involved. Decide D20 before turning it on for anything but a sandbox repository.
+  - **Stale `defaultBranch` (M4).** After a rename, the dispatch and the OIDC `ref` check use the stored `defaultBranch`, so the old branch's `pipeheal.yml` could be dispatched and accepted. Fix it in one of two ways:
+    - update `defaultBranch` from every `workflow_run` payload (together with `fullName`, P4.3b M2);
+    - or read the repository right before the dispatch.
+  - **Fail an orphaned attempt on retry.** A dispatch-job retry that finds the failure HEALING with a DISPATCHED attempt that has no run and no session should call `failDispatch`. Today the in-flight count stops counting it after 15 minutes, and the attempt stays until the §2.2 reconciler (P5.3).
+  - **Failure status after an attempt ends.** The failure stays HEALING when its attempt ends GAVE_UP, NOT_REPRODUCIBLE or FAILED in the loop. The §9.1 retry and the dashboard need it updated (P5).
+  - **The heal brief and scope.** It lists every job of the failure, including runs that passed on a re-run. Filter it to the still-failing jobs.
+  - **Serialization retries (L2).** `claimDispatch`'s serialization failures rely on the job's 5 retries. Retry them inside the helper, or use advisory locks.
+  - **Policy-file freshness (L4, from Phase 3 L5).** The dispatcher doesn't wait for this failure's `policy-file` job, or record `policyFileCommitSha` on the attempt.
+  - **The dispatch token (L5).** It has the installation's full rights. Mint one for this repository with `actions: write` only.
+  - **The installation ID (L6).** It comes from job data. Use the org's stored installation ID.
+  - **`attempts.create`** skips every cap. Only local mode uses it; mark it dev-only or route it through `claimDispatch`.
+  - **A failure over the daily cap** is SKIPPED for good, not retried the next day (a product choice).
+  - **An inactive org or a disabled repository** leaves the failure TRIAGED, with no reason shown, and re-enabling doesn't dispatch.
+  - **`Repository.healerStatus`** is never maintained. The dispatcher reads the synced workflow list and GitHub's answer instead. Set it or drop it.
+  - **`HEALER_WORKFLOW_PATH`** is defined twice (`apps/worker/src/gateway/oidc.ts`, `packages/github/src/guards.ts`).
 - **From P4.7 and its security review:**
   - **Showing the judge's reasoning (M4).** It is model text shaped by the diff. Before it goes into a PR body (P5.2) or the dashboard, escape Markdown and HTML, break up `@` and `#` references, drop links, and remove bidi and zero-width characters. Show it in a quoted "model's reasoning" block, and as plain text only in the UI.
   - **Feeding a judge violation back to the healer (P5.1).** Send only `[CR-n] (layer) violated per AI judge`. Never put the reasoning inside `<policy_feedback>`, the channel the healer trusts.

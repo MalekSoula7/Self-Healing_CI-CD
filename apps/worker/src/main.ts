@@ -56,6 +56,7 @@ async function main(): Promise<void> {
     pacing,
     jobs,
     triageModel: triage,
+    dispatchEnabled: env.HEAL_DISPATCH,
   });
   // Custom rules (P3.9): compiled one at a time with HEAL_MODEL; admins confirm the result.
   const rulesWorker = createRulesWorker(redis, {

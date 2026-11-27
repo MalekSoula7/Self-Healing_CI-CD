@@ -2,8 +2,9 @@
 // `close-window` closes the collection window when its time is up, then queues `triage`, which
 // fetches, cleans and redacts the failed jobs' logs and classifies them, then queues
 // `recent-changes` (what changed since the last green commit) and `flaky-check` (re-run the failed
-// jobs once). Closing the window also queues `policy-file` (re-read `.pipeheal.yml`, P3.7). All of
-// these but `close-window` call GitHub, so their jobs are paced per installation like webhook jobs.
+// jobs once), which queues `dispatch` (create the attempt and dispatch the healer, P4.8). Closing
+// the window also queues `policy-file` (re-read `.pipeheal.yml`, P3.7). All of these but
+// `close-window` call GitHub, so their jobs are paced per installation like webhook jobs.
 import { NotFoundError, forSystem, type Db } from "@pipeheal/db";
 import type { GitHubApp } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
@@ -16,6 +17,7 @@ import {
   pauseIfRateLimited,
   type InstallationPacing,
 } from "../pacing";
+import { dispatchFailure, type DispatchDeps } from "./dispatch";
 import { checkFlaky, type FlakyCheckDeps } from "./flaky-check";
 import { refreshFailurePolicyFile } from "./policy-file";
 import { resolveRecentChanges } from "./recent-changes";
@@ -28,13 +30,15 @@ const targetSchema = z
   .strictObject({ orgId: z.uuid(), failureId: z.uuid(), installationId: z.string().regex(/^\d+$/) })
   .transform(({ installationId, ...ids }) => ({ ...ids, installationId: BigInt(installationId) }));
 type FailureJobData = z.input<typeof targetSchema>;
-type FailureJobName = "close-window" | "triage" | "recent-changes" | "flaky-check" | "policy-file";
+type FailureJobName =
+  "close-window" | "triage" | "recent-changes" | "flaky-check" | "policy-file" | "dispatch";
 const JOB_NAMES = new Set<string>([
   "close-window",
   "triage",
   "recent-changes",
   "flaky-check",
   "policy-file",
+  "dispatch",
 ]);
 
 export type FailuresQueue = Queue<FailureJobData, void, FailureJobName>;
@@ -57,9 +61,18 @@ export interface FailureJobs {
   enqueueFlakyCheck: (target: FailureTarget, key?: string) => Promise<void>;
   /** Re-reads the repository's `.pipeheal.yml` (P3.7). Idempotent: one job per failure. */
   enqueuePolicyFile: (target: FailureTarget) => Promise<void>;
+  /**
+   * Dispatches the healer if the failure is healable (P4.8). Idempotent per `key`, like the flaky
+   * check that queues it; `delayMs` when a busy repository makes it look again later.
+   */
+  enqueueDispatch: (target: FailureTarget, key?: string, delayMs?: number) => Promise<void>;
 }
 
-export interface FailuresDeps extends TriageDeps, FlakyCheckDeps {
+/** A busy repository (an attempt in flight) is looked at again every 10 minutes, for 6 hours. */
+export const BUSY_RETRY_MS = 10 * 60_000;
+export const MAX_BUSY_WAITS = 36;
+
+export interface FailuresDeps extends TriageDeps, FlakyCheckDeps, DispatchDeps {
   db: Db;
   githubApp: GitHubApp | null;
   logger: Logger;
@@ -96,6 +109,12 @@ export async function processFailuresJob(job: QueueJob, deps: FailuresDeps): Pro
       }
       if (job.name === "flaky-check") {
         await checkFlaky(deps, target, log);
+        await deps.jobs.enqueueDispatch(target, jobKey("flaky-check", job.id, target.failureId));
+        return;
+      }
+      if (job.name === "dispatch") {
+        const outcome = await dispatchFailure(deps, target, log);
+        if (outcome === "busy") await waitForRepository(deps, target, job.id, log);
         return;
       }
       if (job.name === "policy-file") {
@@ -118,8 +137,39 @@ export async function processFailuresJob(job: QueueJob, deps: FailuresDeps): Pro
 
 /** A late run's triage job ID ends with its key (`triage-<failure>-<run>-<attempt>`). */
 function triageKey(jobId: string | undefined, failureId: string): string | undefined {
-  const prefix = `triage-${failureId}-`;
+  return jobKey("triage", jobId, failureId);
+}
+
+/** The key a job's ID ends with (`<name>-<failure>-<key>`), if it has one. */
+function jobKey(name: string, jobId: string | undefined, failureId: string): string | undefined {
+  const prefix = `${name}-${failureId}-`;
   return jobId?.startsWith(prefix) === true ? jobId.slice(prefix.length) : undefined;
+}
+
+/** Looks again later while the repository is busy, and gives up after MAX_BUSY_WAITS. */
+async function waitForRepository(
+  deps: FailuresDeps,
+  target: FailureTarget,
+  jobId: string | undefined,
+  log: Logger,
+): Promise<void> {
+  const key = jobKey("dispatch", jobId, target.failureId);
+  const match = key === undefined ? null : /^(.*?)-?wait-(\d+)$/.exec(key);
+  // The key without its wait count: the flaky check's key, or none.
+  const base = match === null ? key : match[1] === "" ? undefined : match[1];
+  const waits = match === null ? 0 : Number(match[2]);
+  if (waits >= MAX_BUSY_WAITS) {
+    const system = await forSystem(deps.db, target.orgId, "dispatcher");
+    await system.failures.settle(target.failureId, {
+      status: "SKIPPED",
+      reason: "another attempt kept the repository busy for 6 hours",
+    });
+    log.info("dispatch gave up waiting for the repository");
+    return;
+  }
+  const next = `${base === undefined ? "" : `${base}-`}wait-${String(waits + 1)}`;
+  await deps.jobs.enqueueDispatch(target, next, BUSY_RETRY_MS);
+  log.info({ waits: waits + 1 }, "repository busy: dispatch looks again later");
 }
 
 export function createFailuresQueue(
@@ -164,6 +214,12 @@ export function failureJobs(queue: FailuresQueue): FailureJobs {
     async enqueueFlakyCheck(target, key) {
       await queue.add("flaky-check", jobData(target), {
         jobId: `flaky-check-${target.failureId}${key === undefined ? "" : `-${key}`}`,
+      });
+    },
+    async enqueueDispatch(target, key, delayMs) {
+      await queue.add("dispatch", jobData(target), {
+        jobId: `dispatch-${target.failureId}${key === undefined ? "" : `-${key}`}`,
+        ...(delayMs === undefined ? {} : { delay: delayMs }),
       });
     },
     async enqueuePolicyFile(target) {

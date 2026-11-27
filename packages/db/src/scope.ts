@@ -8,6 +8,7 @@
 import { policyLayerSchema, type PolicyLayer } from "@pipeheal/policy";
 import { z } from "zod";
 import { attemptSteps } from "./attempt-steps";
+import { DISPATCH_TIMEOUT_MS } from "./runner-sessions";
 import { auditChanges, auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
 import { ConflictError, ForbiddenError, NotFoundError } from "./errors";
@@ -22,6 +23,9 @@ import type {
 } from "./generated/prisma/enums";
 import {
   attemptInputSchema,
+  dispatchClaimSchema,
+  dispatchFailureSchema,
+  failureSettleSchema,
   repositoryCommandsSchema,
   auditPageSchema,
   classificationSchema,
@@ -37,6 +41,9 @@ import {
   policyFileRecordSchema,
   recentChangesRecordSchema,
   type AttemptInput,
+  type DispatchClaimInput,
+  type DispatchFailureInput,
+  type FailureSettleInput,
   type RepositoryCommandsInput,
   type AuditPage,
   type ClassificationInput,
@@ -610,6 +617,138 @@ function buildSystemScope(ctx: ScopeContext) {
       },
 
       /**
+       * The dispatcher's claim on a triaged failure (SPEC §2 steps 6-7, P4.8, D18). In one
+       * serializable transaction: the failure must still be TRIAGED, the repository must have no
+       * attempt in flight, the failure must be under `maxAttemptsPerFailure` and the org under
+       * `maxAttemptsPerDay` over the last 24 hours. Then it creates the attempt and the failure
+       * becomes HEALING. Two dispatchers racing for one repository or one org's last slot can't
+       * both win: the loser's transaction fails and its job retries into "busy" or "capped".
+       */
+      async claimDispatch(input: DispatchClaimInput) {
+        const data = dispatchClaimSchema.parse(input);
+        return db.$transaction(
+          async (tx) => {
+            const failure = await tx.pipelineFailure.findFirst({
+              where: { id: data.failureId, orgId },
+            });
+            if (failure === null) throw new NotFoundError("failure not found");
+            if (failure.status !== "TRIAGED") {
+              return { outcome: "not_ready" as const, status: failure.status };
+            }
+            // Re-checked here, with the claim (P4.8 review L1 and the flaky-rerun race): the org
+            // active, the repository enabled and installed, no re-run of ours still pending.
+            const org = await tx.organization.findFirst({ where: { id: orgId } });
+            const repo = await tx.repository.findFirst({ where: { id: failure.repoId, orgId } });
+            const reruns = await tx.failedRun.findMany({
+              where: { orgId, failureId: failure.id, rerunByUs: true },
+            });
+            if (
+              org?.status !== "ACTIVE" ||
+              repo?.enabled !== true ||
+              repo.removedFromInstallationAt !== null ||
+              reruns.some((run) => run.rerunFromAttempt === run.runAttempt)
+            ) {
+              return { outcome: "not_ready" as const, status: failure.status };
+            }
+            // In flight: dispatched and still within the dispatch timeout, or with a session that
+            // hasn't expired. A dispatch that crashed or a session that ran out can't hold the
+            // repository forever before the §2.2 reconciler fails them (P4.8 review M2).
+            const now = Date.now();
+            const inFlight = await tx.healAttempt.count({
+              where: {
+                orgId,
+                failure: { repoId: failure.repoId },
+                OR: [
+                  {
+                    status: "DISPATCHED",
+                    sessionOpenedAt: null,
+                    dispatchedAt: { gt: new Date(now - DISPATCH_TIMEOUT_MS) },
+                  },
+                  {
+                    status: { in: ["DISPATCHED", "RUNNING", "AWAITING_SUBMISSION"] },
+                    sessionExpiresAt: { gt: new Date(now) },
+                  },
+                ],
+              },
+            });
+            if (inFlight > 0) return { outcome: "busy" as const };
+            const previous = await tx.healAttempt.count({
+              where: { orgId, failureId: failure.id },
+            });
+            if (previous >= data.maxAttemptsPerFailure) {
+              return { outcome: "capped" as const, reason: "the failure's attempt cap is reached" };
+            }
+            const today = await tx.healAttempt.count({
+              where: { orgId, createdAt: { gte: new Date(Date.now() - 24 * 60 * 60_000) } },
+            });
+            if (today >= data.maxAttemptsPerDay) {
+              return {
+                outcome: "capped" as const,
+                reason: "the organization's daily attempt cap is reached",
+              };
+            }
+            const attempt = await tx.healAttempt.create({
+              data: {
+                orgId,
+                failureId: failure.id,
+                attemptNo: previous + 1,
+                targetSha: failure.headSha,
+                failingCheck: data.failingCheck,
+              },
+            });
+            await tx.pipelineFailure.update({
+              where: { id: failure.id },
+              data: { status: "HEALING" },
+            });
+            await writeAudit(tx, orgId, actor, {
+              action: "attempt.dispatched",
+              target: auditTarget("attempt", attempt.id),
+              metadata: {
+                failureId: failure.id,
+                attemptNo: attempt.attemptNo,
+                failingCheck: attempt.failingCheck,
+              },
+            });
+            return { outcome: "created" as const, attempt };
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      },
+
+      /**
+       * Ends an attempt whose dispatch produced no healer run it can be bound to (P4.8): GitHub
+       * refused it, returned no run ID, or the dispatcher can't tell what happened. Only while
+       * DISPATCHED with no session; the failure becomes FAILED, or NEEDS_SETUP when the healer
+       * workflow is missing.
+       */
+      async failDispatch(attemptId: string, input: DispatchFailureInput) {
+        const id = requireId(attemptId, "attempt");
+        const data = dispatchFailureSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const attempt = await tx.healAttempt.findFirst({ where: { id, orgId } });
+          if (attempt === null) throw new NotFoundError("attempt not found");
+          if (attempt.status !== "DISPATCHED" || attempt.sessionOpenedAt !== null) return attempt;
+          const updated = await tx.healAttempt.update({
+            where: { id },
+            data: { status: "FAILED", endReason: data.reason, finishedAt: new Date() },
+          });
+          await tx.pipelineFailure.update({
+            where: { id: attempt.failureId },
+            data: {
+              status: data.failureStatus,
+              ...(data.failureStatus === "NEEDS_SETUP" ? { skipReason: data.reason } : {}),
+            },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "attempt.dispatch_failed",
+            target: auditTarget("attempt", id),
+            metadata: { reason: data.reason, failureStatus: data.failureStatus },
+          });
+          return updated;
+        });
+      },
+
+      /**
        * Records the healer run GitHub created for an attempt's dispatch (`return_run_details`).
        * Until it is recorded no runner can open the attempt's session (SPEC §5.4, D16): the run ID
        * is what binds a runner's token to this attempt rather than another one in the same repo.
@@ -1145,6 +1284,31 @@ function buildSystemScope(ctx: ScopeContext) {
             metadata: { runId: String(run.runId), runAttempt: run.runAttempt },
           });
           return { ...run, rerunByUs: true, rerunFromAttempt: run.runAttempt };
+        });
+      },
+
+      /**
+       * The dispatcher leaves a triaged failure at its diagnosis (SPEC §2 step 6, P4.8): SKIPPED
+       * (out of scope, not healable, over a cap) or NEEDS_SETUP (no healer workflow, no command
+       * for the failing check), with the reason the dashboard shows. Only from TRIAGED.
+       */
+      async settle(failureId: string, input: FailureSettleInput) {
+        const id = requireId(failureId, "failure");
+        const data = failureSettleSchema.parse(input);
+        return db.$transaction(async (tx) => {
+          const failure = await tx.pipelineFailure.findFirst({ where: { id, orgId } });
+          if (failure === null) throw new NotFoundError("failure not found");
+          if (failure.status !== "TRIAGED") return failure;
+          const updated = await tx.pipelineFailure.update({
+            where: { id },
+            data: { status: data.status, skipReason: data.reason },
+          });
+          await writeAudit(tx, orgId, actor, {
+            action: "failure.settled",
+            target: auditTarget("failure", id),
+            metadata: { status: data.status, reason: data.reason },
+          });
+          return updated;
         });
       },
 

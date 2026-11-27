@@ -40,7 +40,14 @@ describe("worker env", () => {
       OLLAMA_URL: "http://localhost:11434",
       TRIAGE_MODEL: "qwen3:14b",
       HEAL_MODEL: "qwen3:14b",
+      HEAL_DISPATCH: false,
     });
+  });
+
+  it("turns the dispatcher on only when HEAL_DISPATCH says true", () => {
+    expect(loadWorkerEnv({ HEAL_DISPATCH: "true" }).HEAL_DISPATCH).toBe(true);
+    expect(loadWorkerEnv({ HEAL_DISPATCH: "false" }).HEAL_DISPATCH).toBe(false);
+    expect(() => loadWorkerEnv({ HEAL_DISPATCH: "maybe" })).toThrow(EnvValidationError);
   });
 
   it("decodes the GitHub App credentials when both are set", () => {

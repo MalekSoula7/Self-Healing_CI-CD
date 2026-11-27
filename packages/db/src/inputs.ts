@@ -307,6 +307,35 @@ export const attemptInputSchema = z.strictObject({
 });
 export type AttemptInput = z.input<typeof attemptInputSchema>;
 
+/**
+ * The dispatcher's claim on a triaged failure (P4.8, D18): the check to reproduce and the caps
+ * checked in the same transaction that creates the attempt.
+ */
+export const dispatchClaimSchema = z.strictObject({
+  failureId: z.uuid(),
+  failingCheck: reproducibleCheckSchema,
+  /** The effective policy's `limits.maxAttemptsPerFailure`. */
+  maxAttemptsPerFailure: z.int().min(1).max(10),
+  /** Attempts the organization may start in any 24 hours. */
+  maxAttemptsPerDay: z.int().min(1).max(10_000),
+});
+export type DispatchClaimInput = z.input<typeof dispatchClaimSchema>;
+
+/** Why the dispatcher left a triaged failure alone for good: diagnosis only, or setup needed. */
+export const failureSettleSchema = z.strictObject({
+  status: z.enum(["SKIPPED", "NEEDS_SETUP"]),
+  reason: z.string().trim().min(1).max(300),
+});
+export type FailureSettleInput = z.input<typeof failureSettleSchema>;
+
+/** A dispatch that didn't produce a healer run the attempt can be bound to. */
+export const dispatchFailureSchema = z.strictObject({
+  reason: z.string().trim().min(1).max(300),
+  /** NEEDS_SETUP when the healer workflow is missing or can't be dispatched. */
+  failureStatus: z.enum(["FAILED", "NEEDS_SETUP"]),
+});
+export type DispatchFailureInput = z.input<typeof dispatchFailureSchema>;
+
 /** A repository's configured commands (SPEC §7.2) and JUnit glob (§8.6), as an admin sets them. */
 export const repositoryCommandsSchema = z.strictObject({
   commands: attemptCommandsSchema,
