@@ -11,7 +11,14 @@ declare module "vitest" {
   }
 }
 
+/**
+ * Connections per test file. Vitest runs about one integration file per CPU core at once, and
+ * Postgres allows 100 connections: pg's default pool of 10 each ran out on a 16-core machine
+ * ("Unable to start a transaction in the given time").
+ */
+export const TEST_DB_CONNECTIONS = 4;
+
 /** A client on the test database. Integration tests only; call `$disconnect()` in afterAll. */
 export function createTestDb(): Db {
-  return createDb(inject("databaseUrl"));
+  return createDb(inject("databaseUrl"), { maxConnections: TEST_DB_CONNECTIONS });
 }

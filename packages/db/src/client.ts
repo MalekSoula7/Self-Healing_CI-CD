@@ -8,10 +8,16 @@ export type Db = PrismaClient;
  * Creates a Prisma client on a pg connection pool. Create one per process and reuse it.
  * The URL is validated here, but never echoed: it carries the database password.
  */
-export function createDb(databaseUrl: string): Db {
+export function createDb(databaseUrl: string, options: { maxConnections?: number } = {}): Db {
   const parsed = databaseUrlSchema.safeParse(databaseUrl);
   if (!parsed.success) {
     throw new Error("Invalid database URL: must be a postgres:// or postgresql:// URL.");
   }
-  return new PrismaClient({ adapter: new PrismaPg({ connectionString: parsed.data }) });
+  return new PrismaClient({
+    adapter: new PrismaPg({
+      connectionString: parsed.data,
+      // pg's default (10) unless set: tests cap it, since many test files run at once.
+      ...(options.maxConnections === undefined ? {} : { max: options.maxConnections }),
+    }),
+  });
 }
