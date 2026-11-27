@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# The action is used straight from the repository (D19): its bundle is committed.
+!packages/heal-action/dist/
 .next/
 .turbo/
 coverage/

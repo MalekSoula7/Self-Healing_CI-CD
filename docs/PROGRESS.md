@@ -1063,3 +1063,43 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
   - Recorded in SPEC §15: L5 (the wall clock during a call), L7 (unreadable diffs leave no record), L8 (parse cost), the special-token check against a real Ollama, and the PR body as untrusted text.
 - **Not tested against a real model:** every test uses Ollama-shaped responses (SPEC §7.5). The first real run comes with local mode (P4.6) and CHECKPOINT 4.
 
+## 2026-11-27 · P4.5 heal-action
+
+- **`packages/heal-action`:**
+  - `main.ts` runs, in order:
+    - the OIDC token for audience `pipeheal`, then the session (retried on 401 only, while the run is being recorded, D16), before any customer code;
+    - install, then reproduce the failing check (a failing install is itself the evidence);
+    - the baseline JUnit reports by glob, then the tool loop (long-polled);
+    - on submit: the final checks, then the edited files' contents.
+  - Both tokens are masked in the job log, and log lines carrying model or repository text can't form workflow commands.
+  - `gateway.ts`: https only (loopback for local mode), no redirects. Steps, polls and uploads are retried with backoff; the session exchange is not, since a retry could be a second exchange.
+  - `tools.ts` / `workspace.ts` / `exec.ts`:
+    - Paths are checked as written and again once resolved: no `..`, no `.git` in any folded spelling, no link out of the checkout or into `.git`.
+    - Writes go through no symlink, into no hard link and no special file. Reads check sizes first.
+    - Commands are argv only (no shell), with the scrubbed environment (case-insensitive: OIDC request variables, runtime tokens, GitHub tokens, file-command channels, inputs) and a timeout that kills the whole process tree. Exit codes are mapped into the protocol's range.
+    - Git runs without fsmonitor, hooks, system config or textconv.
+  - `action.yml` (node24), with inputs `job-id` and `gateway-url`. Bundled by esbuild (pinned 0.28.2, already in the lockfile) to a committed `dist/index.mjs` (D19, 800 KB); `bundle.test.ts` fails when it's stale. `@pipeheal/policy/glob` is a new subpath so the bundle leaves out the YAML and TOML parsers.
+- **Not built here:** the server's `POST /v1/submission` comes with P5.1 (noted in PLAN). Until then a submit ends with a clear error in the job log.
+- **Security review** (`security-reviewer`): no critical findings; 1 high, 4 medium and 9 low.
+  - **H1 → D20 (proposed, for Malek):** code under test can read heal-action's own environment and mint default-branch OIDC tokens or write the default-branch cache. The action can't prevent it; the fix runs the healer job in a GitHub environment that the gateway requires. Recorded in SPEC §15 and §16.
+  - Fixed, with tests:
+    - **M1:** process trees are killed, and pipes held by survivors don't hang the action.
+    - **M2:** links into `.git`/`.github` are refused.
+    - **M3:** no transient retry of the session exchange.
+    - **M4:** only the edited files are submitted, as plain regular files.
+    - **L1:** reads check folded `.git` names.
+    - **L2:** hard links, special files and sizes.
+    - **L3:** hardened git.
+    - **L4:** the start of a diff is kept, and a cut file list is handled.
+    - **L5:** the environment scrub.
+    - **L6:** https only, no redirects.
+    - **L7:** exit codes.
+    - **L8:** token masks.
+    - **L9:** a glob-only import.
+  - Recorded in SPEC §15: P5.1 rebuilding submissions from the server's edit log, the required CI check and CODEOWNERS for the bundle, and protecting `.gitattributes`/`.gitignore`.
+- **Tests:**
+  - The executor in a real temporary git checkout, with a junction out, a link into `.git` and a hard link out.
+  - `runCommand`: a process tree that outlives its parent, timeouts, head or tail output, exit codes.
+  - heal-action end to end against an msw gateway and OIDC endpoint: the session before any customer code, the 401 retry, the loop, a submission of contents only, a run that doesn't reproduce, missing inputs, a refused session, an insecure URL.
+  - The bundle's freshness.
+

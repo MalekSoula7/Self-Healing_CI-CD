@@ -1,0 +1,15 @@
+# PipeHeal's healer (SPEC §5.3). The gateway runs the model; this action runs its tools in the job.
+# Until a dedicated action repository is published, workflows use it from the monorepo at a pinned
+# SHA (D19): `uses: MalekSoula7/Self-Healing_CI-CD/packages/heal-action@<sha>`.
+name: PipeHeal heal
+description: Runs PipeHeal's healing agent's tools in this job, for the attempt the App dispatched.
+inputs:
+  job-id:
+    description: The PipeHeal job (attempt) ID, from the workflow_dispatch input.
+    required: true
+  gateway-url:
+    description: The PipeHeal gateway's URL.
+    required: true
+runs:
+  using: node24
+  main: dist/index.mjs

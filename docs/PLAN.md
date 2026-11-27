@@ -95,7 +95,7 @@ Acceptance: coverage ≥ 95% on `packages/policy`; all red-team fixtures rejecte
 - [x] **P4.3** Gateway `POST /v1/step`: accept tool results, run the next model turn, return tool calls; persist `AgentEvent`s; enforce caps; idempotent on `stepSeq`. (The model turn is behind `TurnRunner`; P4.4 supplies it.)
 - [x] **P4.3b** Reads that feed the model use installation tokens scoped to the one repository and read-only permissions (`repositoryIds` + `permissions`, P1.4 review).
 - [x] **P4.4** `packages/agent-core`: prompt builder (SPEC §7.4, versioned), tool definitions, context assembler, loop controller with all stop conditions, token and time accounting. On Ollama (D11): tool calling with `HEAL_MODEL`, the context window (`num_ctx`) sized for the 12 GB GPU, model calls serialized.
-- [ ] **P4.5** `packages/heal-action`: JavaScript action bundled to `dist/`. OIDC exchange, install, reproduce, baseline JUnit, tool executor (path-traversal protection, output truncation, commands only from config, args as arrays), final checks, submission upload.
+- [x] **P4.5** `packages/heal-action`: JavaScript action bundled to `dist/`. OIDC exchange, install, reproduce, baseline JUnit, tool executor (path-traversal protection, output truncation, commands only from config, args as arrays), final checks, submission upload.
 - [ ] **P4.6** Local mode: `pnpm heal:local --repo examples/demo-node --scenario <name>` runs the same executor inside a Linux Docker container against a local copy of the repo and a local gateway. A dev CLI creates a real attempt and session token; there is no auth bypass (SPEC §12). This is the main dev loop for agent work.
 - [ ] **P4.7** Soft-rule judge (SPEC §8.7 step 3).
 - [ ] **P4.8** Dispatcher: healable + in scope + within budget → create `HealAttempt` → `workflow_dispatch` on the default branch. Missing workflow → `NEEDS_SETUP`. Wait while a flaky re-run is pending (`FailedRun.rerunByUs` and `runAttempt` still equal to `rerunFromAttempt`); the §2.2 reconciler gives up on a re-run that never reports.
@@ -108,7 +108,7 @@ Acceptance: local mode fixes at least 4 of the 6 fixable demo scenarios; both tr
 
 ## Phase 5: PRs & verification loop (MVP complete)
 
-- [ ] **P5.1** Submission validation: fetch originals at `target_sha` from GitHub, recompute the diff, run static + behavioral + judge. Never use the runner's diff as truth.
+- [ ] **P5.1** Gateway `POST /v1/submission` (heal-action already uploads to it, P4.5), then submission validation: fetch originals at `target_sha` from GitHub, recompute the diff, run static + behavioral + judge. Never use the runner's diff as truth.
 - [ ] **P5.2** Branch, commit and PR via Git Data API; PR body template (SPEC §9); label; reviewer request; draft rule; link comment on the originating PR. Record each `pipeheal/*` branch the App creates, with its last commit SHA, and only ever extend those (`commitFiles` already refuses a branch whose tip isn't the given parent).
 - [ ] **P5.3** Verification: map `workflow_run` on `pipeheal/*` to its attempt by the head SHA of the App's own commit, never by branch name alone, and ignore fork runs; `VERIFIED`, retry-with-feedback, or `NEEDS_HUMAN` + comment; `UNVERIFIED` timeouts and the delivery reconciler (SPEC §2.2).
 - [ ] **P5.4** Outcome tracking from `pull_request` closed events.

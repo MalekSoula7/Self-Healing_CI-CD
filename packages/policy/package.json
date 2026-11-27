@@ -5,7 +5,8 @@
   "description": "The rules engine. Pure functions, no I/O, no network.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./glob": "./src/glob.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

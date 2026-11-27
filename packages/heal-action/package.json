@@ -8,10 +8,18 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bundle": "tsx scripts/bundle.ts"
+  },
+  "dependencies": {
+    "@pipeheal/policy": "workspace:*",
+    "@pipeheal/shared": "workspace:*",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "esbuild": "0.28.2",
+    "tsx": "^4.23.15",
     "typescript": "catalog:"
   }
 }
