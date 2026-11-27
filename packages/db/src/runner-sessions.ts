@@ -76,6 +76,36 @@ export function runnerSessions(db: Db, component: string) {
 
   return {
     /**
+     * The attempt a session token belongs to, while the session lasts (status aside: a runner
+     * still reads how its loop ended). Null for an unknown, revoked or expired token.
+     */
+    async authenticate(tokenHash: string, now: Date) {
+      const hash = z
+        .string()
+        .regex(/^[0-9a-f]{64}$/)
+        .safeParse(tokenHash);
+      if (!hash.success) return null;
+      const attempt = await db.healAttempt.findUnique({
+        where: { sessionTokenHash: hash.data },
+        select: {
+          id: true,
+          orgId: true,
+          status: true,
+          sessionExpiresAt: true,
+          failure: { select: { repoId: true } },
+        },
+      });
+      if (attempt?.sessionExpiresAt == null || attempt.sessionExpiresAt <= now) return null;
+      return {
+        attemptId: attempt.id,
+        orgId: attempt.orgId,
+        status: attempt.status,
+        repoId: attempt.failure.repoId,
+        sessionExpiresAt: attempt.sessionExpiresAt,
+      };
+    },
+
+    /**
      * The attempt, its repository and its org's status, or null when the attempt doesn't exist
      * or belongs to another repository than the one GitHub signed for (the caller can't tell).
      */

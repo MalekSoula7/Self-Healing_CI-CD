@@ -954,3 +954,57 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
 - **Checked by hand:** the real worker answers a fake token with 401 (`ERR_JWS_INVALID` logged) and a bad body with 400.
 - **For Malek:** the local `.env` has a `GITHUB_APP_SLUG` that isn't a slug. The worker won't start until it is the App's URL name (`github.com/apps/<slug>`); the value wasn't read.
 
+## 2026-11-27 · Decisions for the rest of Phase 4
+
+- Before stepping away for 5 hours, Malek answered the decisions coming up in Phase 4:
+  - **D16 confirmed:** a session needs the recorded dispatch run, and a second exchange fails the attempt.
+  - **D17:** `HEAL_MODEL` gets a 16k-token context.
+  - **D18:** "within budget" means attempt caps: `maxAttemptsPerFailure`, 20 attempts per org per day, one running attempt per repository.
+  - **D19:** heal-action is loaded from the monorepo at a pinned SHA until a dedicated repository is published.
+
+## 2026-11-27 · P4.3 step loop (`POST /v1/step`, `GET /v1/step/:seq`)
+
+- **Order:** "run the next model turn" depends on P4.4's prompt builder and loop controller, so P4.3 builds everything around the turn behind a `TurnRunner` interface. `main.ts` wires a stub that stops every attempt with a clear reason until P4.4.
+- **DB** (migration `agent_steps`):
+  - `AgentStep` (one row per `stepSeq`) and `AgentEvent` (the timeline).
+  - Attempt statuses `AWAITING_SUBMISSION`/`NOT_REPRODUCIBLE`/`GAVE_UP`, plus `iterations` and `endReason`.
+  - System-scope helpers `attempts.acceptStep`/`completeTurn`/`getStep`/`history`, and `runnerSessions.authenticate`, with meta-test cases. They enforce:
+    - order and idempotency: a duplicate with the same body is the same step, another body is a conflict;
+    - results matching the previous step's calls;
+    - endings for a failure that doesn't reproduce, the iteration cap, a disabled org or repository, and session expiry;
+    - compare-and-set status writes with `orgId` in every `WHERE`;
+    - a turn completes once, and a concurrent turn or a race is settled and retried once.
+- **Gateway** (`steps.ts`):
+  - The session token is checked in `onRequest`, before any body.
+  - Each session has one POST and one GET (HEAD included) in flight, released once the socket has closed and the handler has settled.
+  - Rate and body limits: 120 requests per minute per session, and at most 16 step bodies read at once (4 per org).
+  - Stored data is redacted, then cut to the protocol's limit; the file tree is bounded and redacted.
+  - The long-poll lasts 20 s and re-checks the session. Schema errors answer 400.
+- **Worker** (`queues/turns.ts`): one job per step (3 attempts with backoff, a failed job is retried when queued again, concurrency 1). The model's tool calls get server-side IDs with a per-turn random part and are re-validated with the protocol's schema.
+- **Security review** (`security-reviewer`):
+  - Fixed, with tests:
+    - **H1:** locks and slots leaked when a client left while its session was looked up; one abort could lock a session for good, and 16 locked out every tenant.
+    - **M1:** an abort freed a slot while its handler kept working.
+    - **M2:** status writes weren't compare-and-set, so a contested attempt could be revived.
+    - **M3:** a duplicate turn could swap the tool calls under the runner.
+    - **M4:** a failed turn job was never retried.
+    - **M5:** redaction could push output past the limit, giving a 500 on every retry.
+    - **M6:** no per-session limit.
+    - **M7:** the file tree was unbounded and unredacted.
+    - **L1:** org and repository state wasn't re-checked.
+    - **L2:** session expiry wasn't handled in turns.
+    - **L3:** HEAD got its own long-poll.
+    - **L4:** long-polls didn't notice a revoked session.
+    - **L5:** writes without `orgId`.
+    - **L6:** a weak cross-org test.
+  - Recorded in SPEC §15: L7 (`NOT_REPRODUCIBLE` is the runner's word) and L8 (baseline reports for the behavioral check), plus the follow-ups for P4.4 and P5.3.
+- **Tests:**
+  - DB: the loop, duplicates and conflicts, results matching calls, not reproducible, the iteration cap, expiry and contested sessions, two simultaneous turns (one wins, nothing duplicated), two simultaneous POSTs, a repository disabled mid-loop, and `authenticate` across orgs.
+  - Worker: every kind of model answer, and tool calls outside the protocol.
+  - End to end over HTTP against Postgres:
+    - a full loop, with stored output redacted;
+    - the long-poll returning as soon as the turn finishes;
+    - idempotent retries and conflicts, a run that doesn't reproduce, auth before any body;
+    - one POST in flight, locks returned on every path, a client disconnecting mid-lookup over a real socket;
+    - the per-session rate limit, and redacted output cut back rather than refused.
+

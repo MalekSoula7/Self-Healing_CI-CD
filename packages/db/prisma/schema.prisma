@@ -137,6 +137,8 @@ model Organization {
   policyVersions PolicyVersion[]
   ruleDrafts     CustomRuleDraft[]
   healAttempts   HealAttempt[]
+  agentSteps     AgentStep[]
+  agentEvents    AgentEvent[]
 }
 
 enum Role {
@@ -510,6 +512,12 @@ enum AttemptStatus {
   DISPATCHED
   /// A runner opened the attempt's one session (SPEC §5.4).
   RUNNING
+  /// The model submitted a fix; the runner runs the full checks and uploads it (SPEC §7.3).
+  AWAITING_SUBMISSION
+  /// The failing check passed on the runner before any change (SPEC §7.3).
+  NOT_REPRODUCIBLE
+  /// The model gave up with a diagnosis.
+  GAVE_UP
   FAILED
 }
 
@@ -534,11 +542,78 @@ model HealAttempt {
   sessionTokenHash String?         @unique
   sessionOpenedAt  DateTime?
   sessionExpiresAt DateTime?
+  /// Model turns taken (SPEC §7.3's iteration cap).
+  iterations       Int             @default(0)
+  /// Why the attempt ended, when it did: a stop condition or the model's own words, bounded.
+  endReason        String?
   finishedAt       DateTime?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
+  steps  AgentStep[]
+  events AgentEvent[]
+
   @@unique([failureId, attemptNo])
   @@unique([orgId, id])
+  @@index([orgId, createdAt])
+}
+
+enum AgentStepStatus {
+  /// The runner's step was accepted; the model turn is queued or running.
+  PENDING
+  /// The model's next tool calls are waiting for the runner.
+  READY
+  /// The loop ended at this step (`outcome`).
+  DONE
+}
+
+/// One step of the runner <-> gateway loop (D15): what the runner sent, and what came back.
+model AgentStep {
+  id          String          @id @default(uuid(7)) @db.Uuid
+  orgId       String          @db.Uuid
+  org         Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  attemptId   String          @db.Uuid
+  attempt     HealAttempt     @relation(fields: [orgId, attemptId], references: [orgId, id], onDelete: Cascade)
+  stepSeq     Int
+  status      AgentStepStatus @default(PENDING)
+  /// SHA-256 of the request body, so a retried POST is recognised (idempotent on stepSeq).
+  requestHash String
+  /// The tool calls for the runner, validated with the shared protocol's schema.
+  toolCalls   Json?
+  /// When DONE: submit | gave_up | not_reproducible | stopped.
+  outcome     String?
+  reason      String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([attemptId, stepSeq])
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
+}
+
+enum AgentEventType {
+  MODEL_CALL
+  TOOL_CALL
+  TOOL_RESULT
+  POLICY_CHECK
+  INFO
+}
+
+/// The attempt's timeline (SPEC §7.3, §10): every model call, tool call, result and policy check.
+/// Tool output is redacted before it is stored.
+model AgentEvent {
+  id        String         @id @default(uuid(7)) @db.Uuid
+  orgId     String         @db.Uuid
+  org       Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  attemptId String         @db.Uuid
+  attempt   HealAttempt    @relation(fields: [orgId, attemptId], references: [orgId, id], onDelete: Cascade)
+  /// Order within the attempt.
+  seq       Int
+  stepSeq   Int
+  type      AgentEventType
+  payload   Json
+  createdAt DateTime       @default(now())
+
+  @@unique([attemptId, seq])
   @@index([orgId, createdAt])
 }

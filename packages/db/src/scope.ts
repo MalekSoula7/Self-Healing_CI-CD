@@ -7,6 +7,7 @@
 // - Every mutation writes its audit row in the same transaction. A no-op writes nothing.
 import { policyLayerSchema, type PolicyLayer } from "@pipeheal/policy";
 import { z } from "zod";
+import { attemptSteps } from "./attempt-steps";
 import { auditChanges, auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
 import { ConflictError, ForbiddenError, NotFoundError } from "./errors";
@@ -544,6 +545,8 @@ function buildSystemScope(ctx: ScopeContext) {
   return {
     ...base,
     attempts: {
+      ...attemptSteps(db, orgId, actor),
+
       /**
        * Records a dispatched attempt on one of this org's failures (SPEC §2 step 7; the
        * dispatcher, P4.8, and the local-mode CLI, P4.6). Numbered per failure.

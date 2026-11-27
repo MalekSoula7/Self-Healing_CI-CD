@@ -265,6 +265,42 @@ function signedBy(tenant: Tenant, attemptId: string) {
   };
 }
 
+/** A RUNNING attempt of the tenant's, with its session open: setup for the step helpers. */
+async function runningAttempt(tenant: Tenant, runId: bigint): Promise<string> {
+  // Written directly (no audit entry of its own): an enabled repository.
+  await db.repository.update({ where: { id: tenant.repo.id }, data: { enabled: true } });
+  const attempt = await tenant.system.attempts.create({
+    failureId: tenant.failure.id,
+    targetSha: tenant.failure.headSha,
+    failingCheck: "test",
+    dispatchRunId: runId,
+  });
+  await sessions.open(signedBy(tenant, attempt.id), { tokenHash: sessionHash(), now: new Date() });
+  return attempt.id;
+}
+
+const START_STEP = {
+  stepSeq: 1,
+  start: {
+    reproduced: true,
+    check: { name: "test" as const, exitCode: 1, output: "1 failed" },
+    fileTree: ["src/a.ts"],
+    reports: [],
+  },
+};
+
+function stepInput() {
+  return { request: START_STEP, requestHash: "b".repeat(64), now: new Date(), maxIterations: 10 };
+}
+
+const MODEL_CALL = {
+  model: "qwen3:14b",
+  promptVersion: "heal-v1",
+  inputTokens: 1000,
+  outputTokens: 50,
+  durationMs: 2000,
+};
+
 /** A fresh session-token hash: the column is unique across the whole test database. */
 const sessionHash = () => randomUUID().replaceAll("-", "").repeat(2);
 
@@ -300,6 +336,43 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
   },
   "attempts.recordDispatch": async () => {
     await expect(a.system.attempts.recordDispatch(bAttemptId, 5n)).rejects.toThrow(NotFoundError);
+  },
+  "attempts.acceptStep": async () => {
+    await expect(a.system.attempts.acceptStep(bAttemptId, stepInput())).rejects.toThrow(
+      NotFoundError,
+    );
+  },
+  "attempts.completeTurn": async () => {
+    await expect(
+      a.system.attempts.completeTurn(bAttemptId, 1, { done: "gave_up", reason: "x" }),
+    ).rejects.toThrow(NotFoundError);
+  },
+  "attempts.getStep": async () => {
+    await expect(a.system.attempts.getStep(bAttemptId, 1)).resolves.toBeNull();
+  },
+  "attempts.history": async () => {
+    await expect(a.system.attempts.history(bAttemptId)).resolves.toEqual([]);
+  },
+  // Keyed by the token's hash: only that token's attempt, whoever asks.
+  "runnerSessions.authenticate": async () => {
+    await expect(sessions.authenticate(sessionHash(), new Date())).resolves.toBeNull();
+    // A's token names A's attempt, org and repository, never B's.
+    await db.repository.update({ where: { id: a.repo.id }, data: { enabled: true } });
+    const attempt = await a.system.attempts.create({
+      failureId: a.failure.id,
+      targetSha: a.failure.headSha,
+      failingCheck: "test",
+      dispatchRunId: 47n,
+    });
+    const hash = sessionHash();
+    await sessions.open(signedBy(a, attempt.id), { tokenHash: hash, now: new Date() });
+    await expect(sessions.authenticate(hash, new Date())).resolves.toMatchObject({
+      attemptId: attempt.id,
+      orgId: a.org.id,
+      repoId: a.repo.id,
+    });
+    await sessions.contest(signedBy(a, attempt.id), { now: new Date(), reason: "test" });
+    await expect(sessions.authenticate(hash, new Date())).resolves.toBeNull();
   },
   "repositories.list": async () => {
     const repos = await a.asAdmin.repositories.list();
@@ -541,6 +614,9 @@ const readOnlyHelpers = [
   "installations.findByInstallationId",
   "installations.ownerCandidates",
   "runnerSessions.find",
+  "runnerSessions.authenticate",
+  "attempts.getStep",
+  "attempts.history",
 ];
 
 const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
@@ -599,6 +675,39 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
         action: "attempt.session_contested",
         target: `attempt:${attempt.id}`,
         metadata: { reason: "second exchange" },
+      },
+    ];
+  },
+  "attempts.acceptStep": async () => {
+    const attemptId = await runningAttempt(a, 45n);
+    await a.system.attempts.acceptStep(attemptId, stepInput());
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attemptId}` },
+      { actorType: "SYSTEM", action: "attempt.session_opened", target: `attempt:${attemptId}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.step_accepted",
+        target: `attempt:${attemptId}`,
+        metadata: { stepSeq: 1, status: "PENDING" },
+      },
+    ];
+  },
+  "attempts.completeTurn": async () => {
+    const attemptId = await runningAttempt(a, 46n);
+    await a.system.attempts.acceptStep(attemptId, stepInput());
+    await a.system.attempts.completeTurn(attemptId, 1, {
+      toolCalls: [{ callId: "c1", tool: "list_files", path: "." }],
+      model: MODEL_CALL,
+    });
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attemptId}` },
+      { actorType: "SYSTEM", action: "attempt.session_opened", target: `attempt:${attemptId}` },
+      { actorType: "SYSTEM", action: "attempt.step_accepted", target: `attempt:${attemptId}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.turn_completed",
+        target: `attempt:${attemptId}`,
+        metadata: { stepSeq: 1, status: "READY", toolCalls: 1 },
       },
     ];
   },

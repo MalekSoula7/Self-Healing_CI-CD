@@ -7,6 +7,13 @@ import { redisPacing } from "./pacing";
 import { githubOidcKeys } from "./gateway/oidc";
 import { DEFAULT_RATE_LIMIT, buildGateway, buildInternalServer } from "./gateway/server";
 import { registerSessionRoute } from "./gateway/session";
+import { registerStepRoutes } from "./gateway/steps";
+import {
+  createTurnsQueue,
+  createTurnsWorker,
+  enqueueTurn,
+  unavailableTurnRunner,
+} from "./queues/turns";
 import { createFailuresQueue, createFailuresWorker, failureJobs } from "./queues/failures";
 import { createMaintenanceQueue, createMaintenanceWorker } from "./queues/maintenance";
 import { createWebhooksQueue, createWebhooksWorker } from "./queues/webhooks";
@@ -86,6 +93,23 @@ async function main(): Promise<void> {
       return policy.limits.maxWallClockMinutes;
     },
   });
+  // The model turns of the step loop (D15). The real runner arrives with P4.4.
+  const turnsQueue = createTurnsQueue(redis);
+  const turnsWorker = createTurnsWorker(redis, {
+    attempts: async (orgId) => (await forSystem(db, orgId, "turns")).attempts,
+    runner: unavailableTurnRunner,
+    logger,
+  });
+  registerStepRoutes(gateway, {
+    sessions: runnerSessions(db, "gateway"),
+    attempts: async (orgId) => (await forSystem(db, orgId, "gateway")).attempts,
+    maxIterations: async (session) => {
+      const system = await forSystem(db, session.orgId, "gateway");
+      const { policy } = effectivePolicy(await system.policies.layers(session.repoId));
+      return policy.limits.maxIterationsPerAttempt;
+    },
+    enqueueTurn: (job) => enqueueTurn(turnsQueue, job),
+  });
   const internal = buildInternalServer({ logger, checks: { redis: () => pingRedis(redis) } });
 
   const shutdown = createShutdown({
@@ -98,6 +122,8 @@ async function main(): Promise<void> {
       { name: "failures worker", close: () => failuresWorker.close() },
       { name: "failures queue", close: () => failuresQueue.close() },
       { name: "rules worker", close: () => rulesWorker.close() },
+      { name: "turns worker", close: () => turnsWorker.close() },
+      { name: "turns queue", close: () => turnsQueue.close() },
       { name: "maintenance worker", close: () => maintenanceWorker.close() },
       { name: "maintenance queue", close: () => maintenanceQueue.close() },
       { name: "redis", close: () => redis.quit() },

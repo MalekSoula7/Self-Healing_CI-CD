@@ -51,6 +51,7 @@ export {
   type StoredLayers,
   type SystemScope,
 } from "./scope";
+export type { StepAcceptance, StepInput, StepOutcome, StepView, TurnInput } from "./attempt-steps";
 export {
   DISPATCH_TIMEOUT_MS,
   SESSION_TTL_MS,
@@ -73,6 +74,8 @@ export * from "./generated/prisma/enums";
 export {
   Prisma,
   type Account,
+  type AgentEvent,
+  type AgentStep,
   type AuditLog,
   type FailedJob,
   type FailedRun,
