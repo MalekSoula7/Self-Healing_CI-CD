@@ -542,6 +542,9 @@ model HealAttempt {
   sessionTokenHash String?         @unique
   sessionOpenedAt  DateTime?
   sessionExpiresAt DateTime?
+  /// The test inventory before any change, parsed by the server from the JUnit reports of the
+  /// runner's reproduction (SPEC §8.6), or why there is none; `testInventoryRecordSchema`.
+  baselineTests    Json?
   /// Model turns taken (SPEC §7.3's iteration cap).
   iterations       Int             @default(0)
   /// Why the attempt ended, when it did: a stop condition or the model's own words, bounded.

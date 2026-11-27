@@ -14,6 +14,7 @@ import { auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
 import { ConflictError, NotFoundError } from "./errors";
 import { Prisma, type AgentStep } from "./generated/prisma/client";
+import { testInventoryRecordSchema } from "./inputs";
 import type { AgentEventType } from "./generated/prisma/enums";
 
 const hashSchema = z.string().regex(/^[0-9a-f]{64}$/);
@@ -28,6 +29,11 @@ const acceptSchema = z.strictObject({
   now: z.date(),
   /** The policy's model-turn cap for this attempt (`limits.maxIterationsPerAttempt`). */
   maxIterations: z.int().min(1).max(500),
+  /**
+   * Step 1 only: the baseline test inventory the gateway parsed from the start's JUnit reports
+   * (SPEC §8.6), kept for the submission's behavioral check. Stored with the step, atomically.
+   */
+  baseline: testInventoryRecordSchema.optional(),
 });
 export type StepInput = z.input<typeof acceptSchema>;
 
@@ -247,8 +253,8 @@ export function attemptSteps(db: Db, orgId: string, actor: Actor) {
                 reproduced: start.reproduced,
                 check: start.check,
                 fileTree: start.fileTree,
-                // Only sizes here: keeping the baseline reports for the behavioral check (§8.6)
-                // comes with the submission (SPEC §15).
+                // Only sizes here: the reports' tests are parsed by the gateway and stored as the
+                // attempt's baseline inventory (`baselineTests`, SPEC §8.6).
                 reports: start.reports.map((report) => ({
                   path: report.path,
                   chars: report.xml.length,
@@ -317,6 +323,12 @@ export function attemptSteps(db: Db, orgId: string, actor: Actor) {
             },
           });
           await addEvents(tx, attemptId, request.stepSeq, events);
+          if ("start" in request && data.baseline !== undefined) {
+            await tx.healAttempt.update({
+              where: { id: attemptId },
+              data: { baselineTests: data.baseline },
+            });
+          }
           if (ending !== null) await endAttempt(tx, attemptId, ending.outcome, ending.reason, now);
           await writeAudit(tx, orgId, actor, {
             action: "attempt.step_accepted",

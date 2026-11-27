@@ -260,6 +260,39 @@ describe("the step loop over HTTP", () => {
     expect(poll.json()).toMatchObject({ status: "done", outcome: "not_reproducible" });
   });
 
+  it("keeps the baseline tests it parses from step 1's reports, never the XML", async () => {
+    const withReport = await session();
+    const without = await session();
+    const { app, as } = await gateway();
+    const xml =
+      '<testsuites><testsuite name="cart"><testcase classname="cart" name="totals">' +
+      `<failure message="${SECRET}"/></testcase><testcase classname="cart" name="empty"/>` +
+      "</testsuite></testsuites>";
+
+    await as(withReport.token).post({
+      ...START,
+      start: { ...START.start, reports: [{ path: "reports/junit.xml", xml }] },
+    });
+    await as(without.token).post(START);
+    await app.close();
+
+    const stored = await db.healAttempt.findUniqueOrThrow({ where: { id: withReport.attemptId } });
+    expect(stored.baselineTests).toEqual({
+      available: true,
+      tests: [
+        ["cart::totals", ["failed"]],
+        ["cart::empty", ["passed"]],
+      ],
+    });
+    const events = await db.agentEvent.findMany({ where: { attemptId: withReport.attemptId } });
+    expect(JSON.stringify(events.map((event) => event.payload))).not.toContain(SECRET);
+    await expect(
+      db.healAttempt.findUniqueOrThrow({ where: { id: without.attemptId } }),
+    ).resolves.toMatchObject({
+      baselineTests: { available: false, reason: "no JUnit report was found" },
+    });
+  });
+
   it("authenticates before reading the body", async () => {
     const { app, as } = await gateway();
     const big = { padding: "x".repeat(100_000) };

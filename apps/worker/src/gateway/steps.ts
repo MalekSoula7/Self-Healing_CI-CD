@@ -19,6 +19,7 @@ import {
 } from "@pipeheal/shared/protocol";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError, z } from "zod";
+import { inventoryRecord } from "./inventory";
 import { hashSessionToken } from "./session";
 
 type Attempts = Pick<SystemScope["attempts"], "acceptStep" | "getStep">;
@@ -258,6 +259,8 @@ export function registerStepRoutes(app: FastifyInstance, deps: StepRouteDeps): S
             requestHash: createHash("sha256").update(JSON.stringify(request.body)).digest("hex"),
             now: now(),
             maxIterations: await deps.maxIterations(session),
+            // Step 1: the baseline tests, parsed here from the raw reports (SPEC §8.6, P5.1a).
+            ...("start" in body.data ? { baseline: inventoryRecord(body.data.start.reports) } : {}),
           });
         } catch (error) {
           if (error instanceof ZodError) return reply.code(400).send({ error: "invalid step" });

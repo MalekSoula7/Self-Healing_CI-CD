@@ -328,6 +328,31 @@ export const failureSettleSchema = z.strictObject({
 });
 export type FailureSettleInput = z.input<typeof failureSettleSchema>;
 
+/**
+ * A test inventory as stored (SPEC §8.6): packages/policy's `TestInventory` as `[id, outcomes]`
+ * pairs, parsed by the server from JUnit reports, or why there is none (no report configured,
+ * one that couldn't be read). Bounded like the parser: 50,000 tests, IDs of 1,000 characters
+ * (hashed beyond that, with a short suffix for repeats).
+ */
+export const testInventoryRecordSchema = z.discriminatedUnion("available", [
+  z.strictObject({
+    available: z.literal(true),
+    tests: z
+      .array(
+        z.tuple([
+          z.string().min(1).max(1_100),
+          z
+            .array(z.enum(["passed", "failed", "skipped"]))
+            .min(1)
+            .max(50_000),
+        ]),
+      )
+      .max(50_000),
+  }),
+  z.strictObject({ available: z.literal(false), reason: z.string().trim().min(1).max(300) }),
+]);
+export type TestInventoryRecord = z.infer<typeof testInventoryRecordSchema>;
+
 /** A dispatch that didn't produce a healer run the attempt can be bound to. */
 export const dispatchFailureSchema = z.strictObject({
   reason: z.string().trim().min(1).max(300),
