@@ -390,8 +390,29 @@ export const submissionValidationSchema = z.strictObject({
     .max(60),
   draftReasons: z.array(z.string().min(1).max(500)).max(20),
   changedFiles: z.int().nonnegative(),
+  /**
+   * SHA-256 of what was checked (the target commit, each path and its final content): the pull
+   * request (P5.2) commits only a submission with this digest. Null when nothing was compared.
+   */
+  digest: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .nullable(),
 });
 export type SubmissionValidation = z.infer<typeof submissionValidationSchema>;
+
+/**
+ * The model's account of its fix, from `submit_fix` (P5.2): untrusted model text, bounded here and
+ * escaped wherever it is shown (the PR body, the dashboard).
+ */
+// Empty fields are kept as empty: a submit isn't refused for what the model left out.
+export const fixSummarySchema = z.strictObject({
+  rootCause: z.string().max(1_200),
+  changes: z.string().max(1_200),
+  verification: z.string().max(1_200),
+  confidence: z.enum(["low", "medium", "high"]),
+});
+export type FixSummary = z.infer<typeof fixSummarySchema>;
 
 /** A dispatch that didn't produce a healer run the attempt can be bound to. */
 export const dispatchFailureSchema = z.strictObject({

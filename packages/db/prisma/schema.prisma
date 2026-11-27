@@ -555,6 +555,9 @@ model HealAttempt {
   /// What checking the submission found (P5.1): the policy's violations, the behavioral and
   /// judge results, draft reasons; `submissionValidationSchema`.
   validation       Json?
+  /// The model's own account of its fix (`submit_fix`: root cause, changes, verification,
+  /// confidence), bounded; untrusted text for the PR body (P5.2). `fixSummarySchema`.
+  fix              Json?
   /// Model turns taken (SPEC §7.3's iteration cap).
   iterations       Int             @default(0)
   /// Why the attempt ended, when it did: a stop condition or the model's own words, bounded.

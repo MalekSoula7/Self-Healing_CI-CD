@@ -15,7 +15,7 @@ import { auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
 import { ConflictError, NotFoundError } from "./errors";
 import { Prisma, type AgentStep } from "./generated/prisma/client";
-import { testInventoryRecordSchema } from "./inputs";
+import { fixSummarySchema, testInventoryRecordSchema } from "./inputs";
 import type { AgentEventType } from "./generated/prisma/enums";
 
 const hashSchema = z.string().regex(/^[0-9a-f]{64}$/);
@@ -98,6 +98,8 @@ const turnSchema = z.union([
     reason: reasonSchema,
     model: modelCallSchema.optional(),
     policyChecks: policyChecksSchema.optional(),
+    /** With `submit`: the model's account of its fix, kept for the PR body (P5.2). */
+    fix: fixSummarySchema.optional(),
   }),
 ]);
 export type TurnInput = z.input<typeof turnSchema>;
@@ -560,6 +562,12 @@ export function attemptSteps(db: Db, orgId: string, actor: Actor) {
           }
           if (running && ending !== null) {
             await endAttempt(tx, attemptId, ending.outcome, ending.reason, now);
+            if (ending.outcome === "submit" && "done" in turn && turn.fix !== undefined) {
+              await tx.healAttempt.updateMany({
+                where: { id: attemptId, orgId, status: "AWAITING_SUBMISSION" },
+                data: { fix: turn.fix },
+              });
+            }
           }
           await writeAudit(tx, orgId, actor, {
             action: "attempt.turn_completed",

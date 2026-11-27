@@ -2,6 +2,7 @@
 // idempotency, answers matching calls, the loop's endings and the attempt's status after them.
 import { randomInt, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import type { FixSummary } from "./inputs";
 import { installations } from "./installations";
 import { runnerSessions } from "./runner-sessions";
 import { forSystem } from "./scope";
@@ -97,8 +98,18 @@ async function running(options: { maxIterations?: number } = {}) {
         toolCalls: ids.map((callId) => ({ callId, tool: "list_files" as const, path: "." })),
         model: MODEL,
       }),
-    finish: (stepSeq: number, done: "submit" | "gave_up" | "stopped", reason = "because") =>
-      steps.completeTurn(attempt.id, stepSeq, { done, reason, model: MODEL }),
+    finish: (
+      stepSeq: number,
+      done: "submit" | "gave_up" | "stopped",
+      reason = "because",
+      fix?: FixSummary,
+    ) =>
+      steps.completeTurn(attempt.id, stepSeq, {
+        done,
+        reason,
+        model: MODEL,
+        ...(fix === undefined ? {} : { fix }),
+      }),
     submit: (files: { path: string; content: string }[], requestHash = "c".repeat(64)) =>
       steps.acceptSubmission(attempt.id, {
         requestHash,
@@ -437,6 +448,30 @@ describe("runnerSessions.authenticate", () => {
     const later = new Date((stored.sessionExpiresAt ?? new Date()).getTime() + 1);
     expect(await sessions.authenticate(hash, later)).toBeNull();
     expect(await sessions.authenticate("nope", new Date())).toBeNull();
+  });
+});
+
+describe("the model's fix summary (P5.2)", () => {
+  const fix = {
+    rootCause: "The total subtracted instead of adding.",
+    changes: "src/cart.ts: + instead of -.",
+    verification: "The test check passes.",
+    confidence: "high" as const,
+  };
+
+  it("is stored with a submit, and only with a submit", async () => {
+    const submitted = await running();
+    const gaveUp = await running();
+    const without = await running();
+    for (const loop of [submitted, gaveUp, without]) await loop.accept(start());
+
+    await submitted.finish(1, "submit", "fixed", fix);
+    await gaveUp.finish(1, "gave_up", "no idea", fix);
+    await without.finish(1, "submit", "fixed");
+
+    expect(await submitted.attempt()).toMatchObject({ status: "AWAITING_SUBMISSION", fix });
+    expect(await gaveUp.attempt()).toMatchObject({ status: "GAVE_UP", fix: null });
+    expect(await without.attempt()).toMatchObject({ status: "AWAITING_SUBMISSION", fix: null });
   });
 });
 

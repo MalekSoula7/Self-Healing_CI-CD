@@ -195,6 +195,13 @@ export function healTurnRunner(deps: HealRunnerDeps): TurnRunner {
                   `Verification: ${field(read.fix.verification)}`,
                   `Confidence: ${read.fix.confidence}`,
                 ].join("\n"),
+                // Structured too, for the PR body (P5.2); bounded like the reason's fields.
+                fix: {
+                  rootCause: field(read.fix.rootCause),
+                  changes: field(read.fix.changes),
+                  verification: field(read.fix.verification),
+                  confidence: read.fix.confidence,
+                },
                 model,
                 policyChecks,
               };

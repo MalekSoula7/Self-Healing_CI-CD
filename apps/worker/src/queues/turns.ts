@@ -38,7 +38,18 @@ export interface PolicyCheck {
 export type TurnResult = (
   | /** Tool calls as the model wrote them, without IDs: validated here, never trusted. */
     { toolCalls: unknown[]; model: ModelCallSummary }
-  | { done: "submit" | "gave_up" | "stopped"; reason: string; model?: ModelCallSummary }
+  | {
+      done: "submit" | "gave_up" | "stopped";
+      reason: string;
+      model?: ModelCallSummary;
+      /** With `submit`: the model's account of its fix (stored for the PR body, P5.2). */
+      fix?: {
+        rootCause: string;
+        changes: string;
+        verification: string;
+        confidence: "low" | "medium" | "high";
+      };
+    }
 ) & { policyChecks?: PolicyCheck[] };
 
 export interface TurnContext {
@@ -129,6 +140,7 @@ export async function processTurnJob(job: QueueJob, deps: TurnsDeps): Promise<vo
       done: result.done,
       reason: result.reason.trim() === "" ? "no reason given" : result.reason.slice(0, 4_000),
       ...(result.model === undefined ? {} : { model: result.model }),
+      ...(result.done === "submit" && result.fix !== undefined ? { fix: result.fix } : {}),
       ...checksOf(result),
     });
     log.info({ outcome: result.done }, "turn ended the loop");

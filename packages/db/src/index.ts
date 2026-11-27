@@ -35,8 +35,10 @@ export {
   MAX_POLICY_FILE_ERRORS,
   policyFileRecordSchema,
   recentChangesRecordSchema,
+  fixSummarySchema,
   submissionValidationSchema,
   testInventoryRecordSchema,
+  type FixSummary,
   type SubmissionValidation,
   type TestInventoryRecord,
 } from "./inputs";

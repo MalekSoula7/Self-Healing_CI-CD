@@ -319,6 +319,7 @@ const validation = (passed: boolean) => ({
   judge: [],
   draftReasons: [],
   changedFiles: 1,
+  digest: null,
 });
 
 /** A fresh session-token hash: the column is unique across the whole test database. */

@@ -3,6 +3,7 @@
 // the file at the target commit (as GitHub has it) and the final content the runner uploaded,
 // then the full static policy runs on those changes, the tests after the fix are compared with
 // the baseline, and the checks the runner reports must have passed.
+import { createHash } from "node:crypto";
 import type { JudgeOutcome } from "@pipeheal/agent-core";
 import type { SubmissionValidation, TestInventoryRecord } from "@pipeheal/db";
 import type { FileAtRef } from "@pipeheal/github";
@@ -29,6 +30,8 @@ export interface SubmissionFacts {
   after: TestInventoryRecord;
   /** The check that reproduced the failure: it must pass now. */
   failingCheck: string;
+  /** The commit the files are compared with (and the PR's parent). */
+  targetSha: string;
   /** Every check configured for the repository: each must have run and passed (review M2). */
   configuredChecks: readonly string[];
 }
@@ -77,6 +80,24 @@ function commitProblems(files: readonly { path: string }[]): string[] {
     }
   }
   return problems;
+}
+
+/**
+ * What was checked, as one SHA-256 (P5.1 review L1): the target commit, then each path in order
+ * with its final content's own SHA-256 (or that it is deleted). The pull request (P5.2) recomputes
+ * it from the stored submission and commits nothing that differs.
+ */
+export function submissionDigest(targetSha: string, files: Submission["files"]): string {
+  const lines = [...files]
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    .map((file) =>
+      "deleted" in file
+        ? `${JSON.stringify(file.path)} deleted`
+        : `${JSON.stringify(file.path)} ${createHash("sha256").update(file.content, "utf8").digest("hex")}`,
+    );
+  return createHash("sha256")
+    .update([targetSha, ...lines].join("\n"), "utf8")
+    .digest("hex");
 }
 
 function violationRecord(violation: Violation) {
@@ -180,6 +201,7 @@ export function checkSubmission(
       judge: [],
       draftReasons: drafts.slice(0, LIMITS.draftReasons).map((draft) => draft.slice(0, 500)),
       changedFiles: changes.length,
+      digest: submissionDigest(facts.targetSha, facts.files),
     },
   };
 }

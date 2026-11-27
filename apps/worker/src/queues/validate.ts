@@ -63,6 +63,7 @@ export function refusal(reason: string): SubmissionValidation {
     judge: [],
     draftReasons: [],
     changedFiles: 0,
+    digest: null,
   };
 }
 
@@ -118,6 +119,7 @@ export async function validateSubmission(
       baseline,
       after,
       failingCheck: found.failingCheck,
+      targetSha: found.targetSha,
       configuredChecks: FINAL_CHECKS.filter((name) => commands[name] !== undefined),
     },
     policy,
