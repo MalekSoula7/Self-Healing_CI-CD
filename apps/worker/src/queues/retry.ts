@@ -1,7 +1,8 @@
 // The retry after red CI (SPEC §9.1, P5.3d): while the failure has attempts left, a second heal
 // starts on PipeHeal's own commit with what CI said about it (logs fetched read-only, cleaned and
 // redacted, shown to the model as untrusted data). The database claim applies the same caps and
-// in-flight rule as the first dispatch, and nothing starts unless HEAL_DISPATCH is on.
+// in-flight rule as the first dispatch, the new failure passes the same policy gates (category,
+// scope, setup), and nothing starts unless HEAL_DISPATCH is on.
 import {
   classifyHeuristically,
   combineClassifications,
@@ -12,14 +13,13 @@ import type { RetryClaimInput, SystemScope } from "@pipeheal/db";
 import type { GitHubApp, ReadOnlyRepoClient, WorkflowRun } from "@pipeheal/github";
 import { effectivePolicy } from "@pipeheal/policy";
 import type { Logger } from "@pipeheal/shared/logger";
-import { attemptCommandsSchema } from "@pipeheal/shared/protocol";
-import { checkFor, type DispatchCheck } from "../dispatch-decision";
+import { dispatchDecision } from "../dispatch-decision";
 import { MAX_ATTEMPTS_PER_DAY, startHealerRun } from "./dispatch";
 import { fetchLog } from "./triage";
 import type { Verifiable } from "./verify";
 
-/** The most failed jobs whose logs a retry reads. */
-const MAX_JOBS = 5;
+/** The most failed jobs a retry keeps (retryFeedbackSchema's bound). */
+const MAX_JOBS = 10;
 
 export interface Retry {
   githubApp: GitHubApp;
@@ -44,19 +44,25 @@ async function readFeedback(
     for (const job of await reader.listFailedJobs(run.id, run.runAttempt)) {
       if (feedback.length >= MAX_JOBS) return { feedback, classified };
       const fetched = await fetchLog(reader, job.id);
-      if (fetched === null) continue;
-      const { window, signals } = triageLog(fetched.text, { failedStep: job.failedStep });
-      const classification = classifyHeuristically({
-        window,
-        signals,
-        conclusion: job.conclusion === "timed_out" ? "timed_out" : "failure",
-      });
+      const conclusion = job.conclusion === "timed_out" ? "timed_out" : "failure";
+      // A job whose log is gone is kept all the same: it still has to pass again.
+      const triaged =
+        fetched === null ? null : triageLog(fetched.text, { failedStep: job.failedStep });
+      const classification =
+        triaged === null
+          ? null
+          : classifyHeuristically({
+              window: triaged.window,
+              signals: triaged.signals,
+              conclusion,
+            });
       if (classification !== null) classified.push({ jobName: job.name, classification });
       feedback.push({
+        workflowId: String(run.workflowId),
         name: job.name.slice(0, 500),
         failedStep: job.failedStep?.slice(0, 500) ?? null,
         summary: classification?.summary.slice(0, 2_000) ?? null,
-        errorWindow: window.slice(0, 200_000),
+        errorWindow: triaged?.window.slice(0, 200_000) ?? "",
       });
     }
   }
@@ -79,16 +85,25 @@ export async function startRetry(
   const { installationId } = attempt.org;
   const reader = await deps.githubApp.readOnlyRepo(installationId, repo);
   const { feedback, classified } = await readFeedback(reader, failed);
-  // The check the new failure shows in, when that's clear and configured; else the same as before.
-  const commands = attemptCommandsSchema.safeParse(repo.commands ?? {});
-  let failingCheck = attempt.failingCheck as DispatchCheck;
-  if (classified.length > 0 && commands.success) {
-    const shown = checkFor(combineClassifications(classified).category, commands.data);
-    if (shown !== null && commands.data[shown] !== undefined) failingCheck = shown;
+  const decision = dispatchDecision(
+    {
+      category:
+        classified.length === 0 ? null : combineClassifications(classified).category.toUpperCase(),
+      // The branch the failure was on: PipeHeal's own is never in a policy's scope.
+      headBranch: attempt.failure.headBranch,
+      runs: failed.map((run) => ({ workflowPath: run.path, conclusion: run.conclusion ?? "" })),
+      commands: repo.commands,
+      workflows: await system.workflows.listForRepo(repo.id),
+    },
+    policy,
+  );
+  if (decision.kind !== "dispatch") {
+    log.info({ attemptId: attempt.id, reason: decision.reason }, "no retry");
+    return false;
   }
   const claim = await system.attempts.claimRetry({
     previousAttemptId: attempt.id,
-    failingCheck,
+    failingCheck: decision.failingCheck,
     feedback,
     maxAttemptsPerFailure: policy.limits.maxAttemptsPerFailure,
     maxAttemptsPerDay: MAX_ATTEMPTS_PER_DAY,

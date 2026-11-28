@@ -15,12 +15,21 @@ import { retrySerialization } from "./serialization";
 /** How long an attempt being validated or published holds its repository (P5.2 review M4). */
 const SETTLING_TIMEOUT_MS = 2 * 60 * 60_000;
 
-/** The status of a failure whose attempt ended without a commit. */
-export function endedFailureStatus(
-  attempt: { retryOfId: string | null },
+/**
+ * The status of a failure whose attempt ended without a commit. For a retry the pull request is
+ * open: it goes to a person, unless the earlier fix has passed CI meanwhile.
+ */
+export async function endedFailureStatus(
+  tx: Prisma.TransactionClient,
+  attempt: { orgId: string; retryOfId: string | null },
   otherwise: FailureStatus,
-): FailureStatus {
-  return attempt.retryOfId === null ? otherwise : "NEEDS_HUMAN";
+): Promise<FailureStatus> {
+  if (attempt.retryOfId === null) return otherwise;
+  const previous = await tx.healAttempt.findFirst({
+    where: { id: attempt.retryOfId, orgId: attempt.orgId },
+    select: { status: true },
+  });
+  return previous?.status === "VERIFIED" ? "VERIFIED" : "NEEDS_HUMAN";
 }
 
 /**

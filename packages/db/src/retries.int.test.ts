@@ -248,6 +248,24 @@ describe("a retry that ends without a commit leaves the failure to a person", ()
     await expect(f.failureStatus()).resolves.toBe("NEEDS_HUMAN");
   });
 
+  it("unless the earlier fix passed CI meanwhile", async () => {
+    const f = await retrying();
+    await db.healAttempt.update({ where: { id: f.first.id }, data: { status: "VERIFIED" } });
+
+    await f.system.attempts.failDispatch(f.id, { reason: "x", failureStatus: "FAILED" });
+
+    await expect(f.failureStatus()).resolves.toBe("VERIFIED");
+  });
+
+  it("and a later green re-run of the earlier fix still counts", async () => {
+    const f = await retrying();
+    await f.system.attempts.failDispatch(f.id, { reason: "x", failureStatus: "FAILED" });
+
+    await f.system.attempts.recordVerification(f.first.id, { result: "verified" });
+
+    await expect(f.failureStatus()).resolves.toBe("VERIFIED");
+  });
+
   it("when it gives up", async () => {
     const f = await retrying();
     await f.set({ status: "NOT_REPRODUCIBLE" });

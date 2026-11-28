@@ -780,7 +780,7 @@ function buildSystemScope(ctx: ScopeContext) {
           if (!validation.passed) {
             await tx.pipelineFailure.update({
               where: { id: attempt.failureId },
-              data: { status: endedFailureStatus(attempt, "FAILED") },
+              data: { status: await endedFailureStatus(tx, attempt, "FAILED") },
             });
           }
           await writeAudit(tx, orgId, actor, {
@@ -970,7 +970,7 @@ function buildSystemScope(ctx: ScopeContext) {
           if (count === 0) return;
           await tx.pipelineFailure.update({
             where: { id: attempt.failureId },
-            data: { status: endedFailureStatus(attempt, "FAILED") },
+            data: { status: await endedFailureStatus(tx, attempt, "FAILED") },
           });
           await writeAudit(tx, orgId, actor, {
             action: "attempt.publish_failed",
@@ -1000,7 +1000,7 @@ function buildSystemScope(ctx: ScopeContext) {
           await tx.pipelineFailure.update({
             where: { id: attempt.failureId },
             data: {
-              status: endedFailureStatus(attempt, data.failureStatus),
+              status: await endedFailureStatus(tx, attempt, data.failureStatus),
               ...(data.failureStatus === "NEEDS_SETUP" ? { skipReason: data.reason } : {}),
             },
           });

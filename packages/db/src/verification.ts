@@ -33,6 +33,16 @@ const OUTCOMES: Record<VerificationInput["result"], Outcome> = {
   unverified: { attempt: "UNVERIFIED", failure: "UNVERIFIED", from: ["PR_OPENED"] },
 };
 
+/** Attempts still on their way to a commit. */
+const ACTIVE: AttemptStatus[] = [
+  "DISPATCHED",
+  "RUNNING",
+  "AWAITING_SUBMISSION",
+  "VALIDATING",
+  "VALIDATED",
+  "PUBLISHING",
+];
+
 /** A failure in one of these follows its newest attempt's verification. */
 const VERIFYING: FailureStatus[] = ["PR_OPENED", "VERIFIED", "UNVERIFIED", "NEEDS_HUMAN"];
 
@@ -50,6 +60,8 @@ const VERIFIABLE = {
   failure: {
     select: {
       id: true,
+      headBranch: true,
+      attempts: { select: { attemptNo: true, feedback: true } },
       repo: {
         select: {
           id: true,
@@ -134,8 +146,14 @@ export function attemptVerification(db: Db, orgId: string, actor: Actor) {
           }
           return { changed: false, firstFailure: false };
         }
+        // A newer attempt that is still going, or pushed its fix, speaks for the failure.
         const newer = await tx.healAttempt.count({
-          where: { orgId, failureId: attempt.failureId, attemptNo: { gt: attempt.attemptNo } },
+          where: {
+            orgId,
+            failureId: attempt.failureId,
+            attemptNo: { gt: attempt.attemptNo },
+            OR: [{ commitSha: { not: null } }, { status: { in: ACTIVE } }],
+          },
         });
         if (newer === 0) {
           await tx.pipelineFailure.updateMany({

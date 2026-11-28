@@ -670,7 +670,10 @@ describe("commits (Git Data API)", () => {
   });
   const SRC_TREE = "5".repeat(40);
 
-  function serveGitData(options: { root?: TreeEntry[]; branchTip?: string } = {}) {
+  function serveGitData(
+    options: { root?: TreeEntry[]; branchTip?: string; laterTip?: string } = {},
+  ) {
+    let reads = 0;
     const root = options.root ?? [
       { path: "src", mode: "040000", type: "tree", sha: SRC_TREE },
       blob("old.ts"),
@@ -688,7 +691,11 @@ describe("commits (Git Data API)", () => {
     mockServer.use(
       http.get(`${REPO}/git/ref/*`, async ({ request }) => {
         await record(request);
-        return HttpResponse.json({ ref: "x", object: { sha: options.branchTip ?? SHA_A } });
+        const later = reads++ > 0 ? options.laterTip : undefined;
+        return HttpResponse.json({
+          ref: "x",
+          object: { sha: later ?? options.branchTip ?? SHA_A },
+        });
       }),
       http.get(`${REPO}/git/commits/:sha`, async ({ request }) => {
         await record(request);
@@ -797,6 +804,17 @@ describe("commits (Git Data API)", () => {
       ),
     ).rejects.toThrow(GuardError);
     expect(writesIn(calls)).toEqual([]);
+  });
+
+  it("never moves a branch that was rewound while the commit was built", async () => {
+    const calls = serveGitData({ laterTip: SHA_B });
+
+    await expect(
+      (await repo()).commitFiles(
+        commit({ createBranch: false, changes: [{ path: "src/a.ts", content: "x" }] }),
+      ),
+    ).rejects.toThrow(GuardError);
+    expect(calls.filter((call) => call.method === "PATCH")).toEqual([]);
   });
 
   it.each([

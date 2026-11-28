@@ -75,7 +75,7 @@ export async function dispatchFailure(
     log.warn("GitHub App isn't configured; skipping the dispatch");
     return "nothing";
   }
-  // HEAL_DISPATCH: off until D20 is decided (P4.8 review H1). The diagnosis above still stands.
+  // HEAL_DISPATCH: off until D20 is built (P4.8 review H1). The diagnosis above still stands.
   if (deps.dispatchEnabled !== true) {
     log.info("dispatch is off (HEAL_DISPATCH)");
     return "nothing";

@@ -465,6 +465,14 @@ describe("the retry after red CI (P5.3d)", () => {
 
   async function red() {
     const f = await opened();
+    await f.system.workflows.syncInstalled(f.repoId, [
+      {
+        githubWorkflowId: githubId(),
+        path: ".github/workflows/pipeheal.yml",
+        name: "PipeHeal",
+        triggers: ["workflow_dispatch"],
+      },
+    ]);
     await db.repository.update({
       where: { id: f.repoId },
       data: { commands: { lint: ["pnpm", "lint"], test: ["pnpm", "test"] } },
@@ -525,6 +533,39 @@ describe("the retry after red CI (P5.3d)", () => {
     expect(comments[0]).toContain("Someone needs to take it from here.");
   });
 
+  it("applies the policy's scope to the new failure, as the first dispatch does", async () => {
+    const f = await red();
+    await f.system.policies.save("REPO", f.repoId, { scope: { categories: ["test"] } });
+
+    const { dispatched } = await run(f, {
+      runs: [runJson(f, { conclusion: "failure" })],
+      log: lintLog,
+    });
+
+    expect(await attempts(f)).toHaveLength(1);
+    expect(dispatched).toEqual([]);
+  });
+
+  it("requires what failed on PipeHeal's earlier commit to pass too", async () => {
+    const f = await opened();
+    const failedBefore = {
+      workflowId: String(f.lint),
+      name: "style",
+      failedStep: null,
+      summary: null,
+      errorWindow: "",
+    };
+    await db.healAttempt.update({
+      where: { id: f.attemptId },
+      data: { feedback: [failedBefore] },
+    });
+    mockGitHub(f, { runs: [runJson(f)] });
+
+    await processWorkflowRunEvent(deps(), event(f), logger);
+
+    await expect(state(f)).resolves.toEqual(UNCHANGED);
+  });
+
   it("leaves it to a person at the attempt cap", async () => {
     const f = await red();
     await f.system.policies.save("REPO", f.repoId, { limits: { maxAttemptsPerFailure: 1 } });
@@ -540,6 +581,7 @@ describe("the retry after red CI (P5.3d)", () => {
 
     const { comments } = await run(f, {
       runs: [runJson(f, { conclusion: "failure" })],
+      log: lintLog,
       refuseDispatch: true,
     });
 

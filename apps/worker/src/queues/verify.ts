@@ -3,7 +3,7 @@
 // this repository's own code, on PipeHeal's branch. Green is VERIFIED; red leaves the failure to a
 // person, with one comment on the PR, after starting a retry while one is left. A branch someone else pushed to is never called verified or
 // failed. Nothing here writes code, and nothing merges.
-import type { SystemScope } from "@pipeheal/db";
+import { retryFeedbackSchema, type SystemScope } from "@pipeheal/db";
 import {
   GitHubApiError,
   HEALER_WORKFLOW_PATH,
@@ -13,7 +13,13 @@ import {
   type WorkflowRun,
 } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
-import { ciVerdict, isProof, jobsProven, type RanAgain } from "../ci-verdict";
+import {
+  ciVerdict,
+  isProof,
+  jobsProven,
+  type FailedOriginally,
+  type RanAgain,
+} from "../ci-verdict";
 import { ciFailedComment, type FailedCiJob } from "../pr/comments";
 import { startRetry } from "./retry";
 
@@ -26,6 +32,22 @@ export type VerifyOutcome = "recorded" | "skipped" | `waiting-for-${"start" | "f
 const MAX_RUNS_DETAILED = 5;
 /** Passing runs whose jobs are checked for proof. */
 const MAX_PROOF_RUNS = 10;
+
+/**
+ * What failed on the commits PipeHeal made before this one (P5.3d review M3): a retry has to show
+ * those pass too, not only what failed originally.
+ */
+function failedOnEarlierFixes(attempt: Verifiable): FailedOriginally[] {
+  return attempt.failure.attempts
+    .filter((earlier) => earlier.attemptNo <= attempt.attemptNo)
+    .flatMap((earlier) => {
+      const feedback = retryFeedbackSchema.safeParse(earlier.feedback);
+      return feedback.success ? feedback.data : [];
+    })
+    .flatMap(({ workflowId, name, failedStep }) =>
+      workflowId === undefined ? [] : [{ workflowId: BigInt(workflowId), name, failedStep }],
+    );
+}
 
 /** The jobs of the passing runs of the workflows that failed originally. */
 async function jobsThatRanAgain(
@@ -96,16 +118,21 @@ export async function verifyAttempt(
       watched.has(run.workflowId),
   );
   const failedRuns = originalRuns.filter((run) => run.conclusion !== "success");
-  const required = new Set(failedRuns.map((run) => run.workflowId));
+  const mustPass: FailedOriginally[] = [
+    ...failedRuns.flatMap((run) => run.jobs.map((job) => ({ ...job, workflowId: run.workflowId }))),
+    ...failedOnEarlierFixes(attempt),
+  ];
+  const required = new Set([
+    ...failedRuns.map((run) => run.workflowId),
+    ...mustPass.map((job) => job.workflowId),
+  ]);
   const verdict = ciVerdict(runs, required);
   if (verdict.kind === "pending") return `waiting-for-${verdict.waitingFor}`;
-  if (verdict.kind === "green") {
-    const originally = failedRuns.flatMap((run) =>
-      run.jobs.map((job) => ({ ...job, workflowId: run.workflowId })),
-    );
-    if (!jobsProven(originally, await jobsThatRanAgain(reader, runs, required))) {
-      return "waiting-for-proof";
-    }
+  if (
+    verdict.kind === "green" &&
+    !jobsProven(mustPass, await jobsThatRanAgain(reader, runs, required))
+  ) {
+    return "waiting-for-proof";
   }
   // Later listings only add runs and attempts: a higher sum is newer evidence.
   const seen = runs.reduce((sum, run) => sum + run.runAttempt, 0);

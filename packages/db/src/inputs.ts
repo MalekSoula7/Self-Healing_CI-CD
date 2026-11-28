@@ -432,6 +432,11 @@ export type PullRequestRecord = z.infer<typeof pullRequestRecordSchema>;
 export const retryFeedbackSchema = z
   .array(
     z.strictObject({
+      /** The workflow the job ran in: it has to pass again before a later fix is verified. */
+      workflowId: z
+        .string()
+        .regex(/^[0-9]{1,20}$/)
+        .optional(),
       name: z.string().max(500),
       failedStep: z.string().max(500).nullable(),
       summary: z.string().max(2_000).nullable(),

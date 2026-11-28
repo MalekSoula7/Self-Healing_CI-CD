@@ -150,6 +150,12 @@ async function publishRetry(
     await stopBefore("the pull request is no longer open on PipeHeal's commit");
     return;
   }
+  const { policy } = effectivePolicy(await system.policies.layers(found.failure.repo.id));
+  const needsDraft = isDraft(stored.fix, stored.validation, policy.review.draftBelowConfidence);
+  if (needsDraft && !pull.draft) {
+    await stopBefore("the second fix needs a draft, and the pull request is ready for review");
+    return;
+  }
   if (!(await system.attempts.claimPublish(id, branch))) return;
   let commitSha;
   try {

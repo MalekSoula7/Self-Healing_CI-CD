@@ -38,10 +38,7 @@ export function inScope(globs: ScopeGlobs, name: string): boolean {
 }
 
 /** The configured check that shows a category's failure (SPEC §6.1, §7.2). */
-export function checkFor(
-  category: string,
-  commands: Record<string, unknown>,
-): DispatchCheck | null {
+function checkFor(category: string, commands: Record<string, unknown>): DispatchCheck | null {
   switch (category) {
     case "lint":
     case "typecheck":

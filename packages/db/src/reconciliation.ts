@@ -160,7 +160,7 @@ export function attemptRecovery(db: Db, orgId: string, actor: Actor) {
         if (newer === 0) {
           await tx.pipelineFailure.updateMany({
             where: { id: attempt.failureId, orgId, status: "HEALING" },
-            data: { status: endedFailureStatus(attempt, "FAILED") },
+            data: { status: await endedFailureStatus(tx, attempt, "FAILED") },
           });
         }
         await writeAudit(tx, orgId, actor, {
@@ -183,7 +183,7 @@ export function attemptRecovery(db: Db, orgId: string, actor: Actor) {
         if (attempt === null) throw new NotFoundError("attempt not found");
         const ended = ENDED[attempt.status];
         if (ended === undefined) return false;
-        const status = endedFailureStatus(attempt, ended);
+        const status = await endedFailureStatus(tx, attempt, ended);
         const newer = await tx.healAttempt.count({
           where: { orgId, failureId: attempt.failureId, attemptNo: { gt: attempt.attemptNo } },
         });

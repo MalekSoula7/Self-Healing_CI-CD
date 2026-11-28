@@ -396,6 +396,57 @@ describe("validate job: a retry (P5.3d)", () => {
     });
   });
 
+  it("refuses to re-create a file an earlier attempt deleted", async () => {
+    const target = await retried(
+      [{ path: "src/sum.ts", content: FIXED }],
+      [{ path: "src/sum.ts", content: FIXED }],
+    );
+    await db.attemptSubmission.updateMany({
+      where: { orgId: target.orgId, attemptId: { not: target.attemptId } },
+      data: { files: [{ path: "src/sum.ts", deleted: true }] },
+    });
+    const read = mockGitHub(target.fullName, { "src/sum.ts": BUGGY });
+
+    await processValidationJob(job(target), deps());
+
+    expect(read).toEqual([]);
+    expect(await stored(target.attemptId)).toMatchObject({
+      status: "REJECTED",
+      endReason: "src/sum.ts was deleted by an earlier attempt and can't be re-created",
+    });
+  });
+
+  it("refuses a retry that changes nothing", async () => {
+    const target = await retried(
+      [{ path: "src/sum.ts", content: FIXED }],
+      [{ path: "src/sum.ts", content: FIXED }],
+    );
+    mockGitHub(target.fullName, { "src/sum.ts": BUGGY });
+
+    await processValidationJob(job(target), deps());
+
+    expect(await stored(target.attemptId)).toMatchObject({
+      status: "REJECTED",
+      endReason: "the retry changes nothing",
+    });
+  });
+
+  it("refuses a flood of deletions before reading any file", async () => {
+    const target = await retried(
+      [{ path: "src/sum.ts", content: FIXED }],
+      Array.from({ length: 8 }, (_, index) => ({
+        path: `src/gone${String(index)}.ts`,
+        deleted: true as const,
+      })),
+    );
+    const read = mockGitHub(target.fullName, {});
+
+    await processValidationJob(job(target), deps());
+
+    expect(read).toEqual([]);
+    expect(await stored(target.attemptId)).toMatchObject({ status: "REJECTED" });
+  });
+
   it("refuses a retry whose earlier changes can't be read", async () => {
     const target = await retried(
       [{ path: "src/sum.ts", content: FIXED }],
@@ -748,8 +799,15 @@ describe("publish job: a retry (P5.3d)", () => {
     await processValidationJob(job(target), deps());
     github.resetHandlers();
     mockGitHub(target.fullName, {});
+    await confidence(target.attemptId, "high");
     return target;
   }
+  /** The model's own confidence in the second fix. */
+  const confidence = (attemptId: string, level: "high" | "low") =>
+    db.healAttempt.update({
+      where: { id: attemptId },
+      data: { fix: { rootCause: "x", changes: "y", verification: "z", confidence: level } },
+    });
   const state = async (target: { attemptId: string; failureId: string }) => ({
     attempt: await db.healAttempt.findUniqueOrThrow({ where: { id: target.attemptId } }),
     failure: await db.pipelineFailure.findUniqueOrThrow({ where: { id: target.failureId } }),
@@ -789,6 +847,20 @@ describe("publish job: a retry (P5.3d)", () => {
     const { attempt, failure } = await state(target);
     expect(attempt).toMatchObject({ status: "FAILED", endReason: reason });
     expect(failure.status).toBe("NEEDS_HUMAN");
+  });
+
+  it("pushes no fix that needs a draft onto a pull request ready for review", async () => {
+    const target = await validatedRetry();
+    await confidence(target.attemptId, "low");
+    const { writes } = mockRetryPublish(target.fullName);
+
+    await processValidationJob(publishJob(target), deps());
+
+    expect(writes).toEqual([]);
+    expect((await state(target)).attempt).toMatchObject({
+      status: "FAILED",
+      endReason: "the second fix needs a draft, and the pull request is ready for review",
+    });
   });
 
   it("writes nothing when the earlier fix passed CI after all", async () => {

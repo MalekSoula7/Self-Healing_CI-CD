@@ -565,7 +565,9 @@ export function repoClient(octokit: Octokit, fullName: string) {
       if (new Set(paths).size !== paths.length) throw new GuardError("a path appears twice");
       const parentSha = sha.parse(options.parentSha);
 
-      if (!options.createBranch) {
+      /** The branch still sits on the parent (not pushed to, nor rewound). */
+      const assertTip = async () => {
+        if (options.createBranch) return;
         const { data: ref } = await octokit.request("GET /repos/{owner}/{repo}/git/ref/{ref}", {
           ...where,
           ref: `heads/${options.branch}`,
@@ -574,7 +576,8 @@ export function repoClient(octokit: Octokit, fullName: string) {
         if (tip !== parentSha) {
           throw new GuardError("the branch moved: PipeHeal only extends its own last commit");
         }
-      }
+      };
+      await assertTip();
 
       const { data: parent } = await octokit.request(
         "GET /repos/{owner}/{repo}/git/commits/{commit_sha}",
@@ -627,6 +630,9 @@ export function repoClient(octokit: Octokit, fullName: string) {
           ...NO_RETRY,
         });
       } else {
+        // Again, as late as possible: a non-forced update would still restore a commit someone
+        // dropped by rewinding the branch meanwhile (P5.3d review L3).
+        await assertTip();
         await octokit.request("PATCH /repos/{owner}/{repo}/git/refs/{ref}", {
           ...where,
           ref: `heads/${options.branch}`,

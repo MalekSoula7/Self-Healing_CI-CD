@@ -67,31 +67,68 @@ interface Compared {
   files: Submission["files"];
   originalSha: string;
   baseline: Stored["baseline"];
+  /** What the earlier attempts left each path they touched as; empty for a first attempt. */
+  earlier: ReadonlyMap<string, Submission["files"][number]>;
 }
 
-/** For a retry, every attempt's files (a later one wins) since the first one's commit. */
+const UNREADABLE = "the earlier attempts' changes couldn't be read";
+
+/**
+ * For a retry, every attempt's files (a later one wins) since the first one's commit; or why they
+ * can't be compared. A path an earlier attempt deleted can't be written again: the new file would
+ * silently lose the original's mode (P5.3d review L2).
+ */
 async function compared(
   system: SystemScope,
   found: Found,
   stored: Stored,
-): Promise<Compared | null> {
+): Promise<Compared | string> {
   if (found.retryOfId === null) {
-    return { files: stored.files, originalSha: found.targetSha, baseline: stored.baseline };
+    const { files, baseline } = stored;
+    return { files, originalSha: found.targetSha, baseline, earlier: new Map() };
   }
   const chain = await system.attempts.chain(found.id);
-  if (chain === null) return null;
-  const merged = new Map<string, Submission["files"][number]>();
-  for (const uploaded of [...chain.earlierFiles, stored.files]) {
+  if (chain === null) return UNREADABLE;
+  const earlier = new Map<string, Submission["files"][number]>();
+  for (const uploaded of chain.earlierFiles) {
     const files = submissionSchema.shape.files.safeParse(uploaded);
-    if (!files.success) return null;
-    for (const file of files.data) merged.set(file.path, file);
+    if (!files.success) return UNREADABLE;
+    for (const file of files.data) earlier.set(file.path, file);
+  }
+  const merged = new Map(earlier);
+  for (const file of stored.files) {
+    const before = earlier.get(file.path);
+    if (!("deleted" in file) && before !== undefined && "deleted" in before) {
+      return `${file.path} was deleted by an earlier attempt and can't be re-created`;
+    }
+    merged.set(file.path, file);
   }
   const baseline =
     chain.baselineTests === null
       ? { success: true as const, data: null }
       : testInventoryRecordSchema.safeParse(chain.baselineTests);
-  if (!baseline.success) return null;
-  return { files: [...merged.values()], originalSha: chain.originalSha, baseline: baseline.data };
+  if (!baseline.success) return UNREADABLE;
+  return {
+    files: [...merged.values()],
+    originalSha: chain.originalSha,
+    baseline: baseline.data,
+    earlier,
+  };
+}
+
+/** Whether a file differs from what the retried commit already holds at its path. */
+function changesParent(
+  file: Submission["files"][number],
+  earlier: Compared["earlier"],
+  original: FileAtRef | null,
+): boolean {
+  const before = earlier.get(file.path);
+  if (before !== undefined) {
+    if ("deleted" in before) return !("deleted" in file);
+    return "deleted" in file || file.content !== before.content;
+  }
+  if (original === null) return !("deleted" in file);
+  return "deleted" in file || original.kind !== "text" || file.content !== original.content;
 }
 
 /** A refusal decided before any check ran: nothing was compared. */
@@ -138,16 +175,15 @@ export async function validateSubmission(
   }
   const { checks, after, commands } = stored;
   const whole = await compared(system, found, stored);
-  if (whole === null) {
-    await reject("the earlier attempts' changes couldn't be read");
+  if (typeof whole === "string") {
+    await reject(whole);
     return;
   }
-  const { originalSha, baseline } = whole;
+  const { originalSha, baseline, earlier } = whole;
   const { policy } = effectivePolicy(await system.policies.layers(repo.id));
-  // Cheap refusals before fetching anything (review M5). A retry's deletions may only undo what
-  // an earlier attempt added, so the policy counts those after the originals are read.
-  const counted =
-    found.retryOfId === null ? whole.files : whole.files.filter((file) => !("deleted" in file));
+  // Cheap refusals before fetching anything (review M5). Only a deletion of a path an earlier
+  // attempt touched may turn out to be no change at all, so only those aren't counted yet.
+  const counted = whole.files.filter((file) => !("deleted" in file && earlier.has(file.path)));
   if (counted.length > policy.limits.maxFilesChanged) {
     await reject(
       `the submission changes ${String(counted.length)} files; the policy allows ${String(policy.limits.maxFilesChanged)}`,
@@ -160,6 +196,13 @@ export async function validateSubmission(
   const originals = new Map<string, FileAtRef | null>();
   for (const file of whole.files) {
     originals.set(file.path, await client.getFileAtRef(file.path, originalSha));
+  }
+  if (
+    found.retryOfId !== null &&
+    !stored.files.some((file) => changesParent(file, earlier, originals.get(file.path) ?? null))
+  ) {
+    await reject("the retry changes nothing");
+    return;
   }
   // A file an earlier attempt added and this one removes is no change at all.
   const files =
