@@ -812,6 +812,7 @@ function buildSystemScope(ctx: ScopeContext) {
             attemptNo: true,
             targetSha: true,
             failingCheck: true,
+            retryOfId: true,
             iterations: true,
             validation: true,
             fix: true,

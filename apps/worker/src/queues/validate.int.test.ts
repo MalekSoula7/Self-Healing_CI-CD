@@ -673,3 +673,140 @@ describe("publish job (P5.2c)", () => {
     });
   });
 });
+
+/** GitHub for a retry's publish: the existing branch and PR, recording every write. */
+function mockRetryPublish(
+  fullName: string,
+  options: { tip?: string; head?: string; state?: "open" | "closed" } = {},
+) {
+  const api = `https://api.github.com/repos/${fullName}`;
+  const repoRef = { id: 777, full_name: fullName };
+  const previous = "d".repeat(40);
+  const commit = "9".repeat(40);
+  const writes: { what: string; body: unknown }[] = [];
+  const record = async (what: string, request: Request) => {
+    writes.push({ what, body: await request.json() });
+  };
+  github.use(
+    http.get(`${api}/git/ref/*`, ({ params }) =>
+      HttpResponse.json({
+        ref: `refs/${String(params[0])}`,
+        object: { sha: options.tip ?? previous },
+      }),
+    ),
+    http.get(`${api}/git/commits/:sha`, () =>
+      HttpResponse.json({ sha: previous, tree: { sha: "1".repeat(40) } }),
+    ),
+    http.get(`${api}/git/trees/:sha`, ({ params }) =>
+      HttpResponse.json({
+        sha: String(params.sha),
+        tree:
+          params.sha === "1".repeat(40)
+            ? [{ path: "src", mode: "040000", type: "tree", sha: "2".repeat(40) }]
+            : [],
+      }),
+    ),
+    http.post(`${api}/git/trees`, async ({ request }) => {
+      await record("tree", request);
+      return HttpResponse.json({ sha: "4".repeat(40) }, { status: 201 });
+    }),
+    http.post(`${api}/git/commits`, async ({ request }) => {
+      await record("commit", request);
+      return HttpResponse.json({ sha: commit }, { status: 201 });
+    }),
+    http.patch(`${api}/git/refs/*`, async ({ request }) => {
+      await record("move", request);
+      return HttpResponse.json({ object: { sha: commit } });
+    }),
+    http.get(`${api}/pulls/42`, () =>
+      HttpResponse.json({
+        number: 42,
+        html_url: `https://github.com/${fullName}/pull/42`,
+        state: options.state ?? "open",
+        draft: false,
+        merged: false,
+        head: { ref: "pipeheal/abc-1", sha: options.head ?? previous, repo: repoRef },
+        base: { ref: "main", repo: repoRef },
+      }),
+    ),
+    http.post(`${api}/issues/42/comments`, async ({ request }) => {
+      await record("comment", request);
+      return HttpResponse.json({ id: 1, html_url: "https://github.com/x" }, { status: 201 });
+    }),
+  );
+  return { writes, commit, previous };
+}
+
+describe("publish job: a retry (P5.3d)", () => {
+  /** A retry validated end to end. */
+  async function validatedRetry() {
+    const target = await retried(
+      [{ path: "src/sum.ts", content: FIXED }],
+      [{ path: "src/other.ts", content: "export const two = 2;\n" }],
+    );
+    mockGitHub(target.fullName, { "src/sum.ts": BUGGY });
+    await processValidationJob(job(target), deps());
+    github.resetHandlers();
+    mockGitHub(target.fullName, {});
+    return target;
+  }
+  const state = async (target: { attemptId: string; failureId: string }) => ({
+    attempt: await db.healAttempt.findUniqueOrThrow({ where: { id: target.attemptId } }),
+    failure: await db.pipelineFailure.findUniqueOrThrow({ where: { id: target.failureId } }),
+  });
+
+  it("adds a commit to the same branch and pull request, and says so on it", async () => {
+    const target = await validatedRetry();
+    const { writes, commit, previous } = mockRetryPublish(target.fullName);
+
+    await processValidationJob(publishJob(target), deps());
+
+    expect(writes.map((write) => write.what)).toEqual(["tree", "commit", "move", "comment"]);
+    expect(writes[1]?.body).toMatchObject({ parents: [previous] });
+    expect(writes[2]?.body).toMatchObject({ sha: commit, force: false });
+    const { attempt, failure } = await state(target);
+    expect(attempt).toMatchObject({
+      status: "PR_OPENED",
+      branch: "pipeheal/abc-1",
+      commitSha: commit,
+      prNumber: 42,
+    });
+    expect(failure.status).toBe("PR_OPENED");
+    expect(JSON.stringify(writes[3]?.body)).toContain("src/other.ts");
+  });
+
+  it.each([
+    ["the pull request's branch moved", { tip: "7".repeat(40) }],
+    ["the pull request is no longer open on PipeHeal's commit", { state: "closed" as const }],
+    ["the pull request is no longer open on PipeHeal's commit", { head: "7".repeat(40) }],
+  ])("writes nothing when %s", async (reason, options) => {
+    const target = await validatedRetry();
+    const { writes } = mockRetryPublish(target.fullName, options);
+
+    await processValidationJob(publishJob(target), deps());
+
+    expect(writes).toEqual([]);
+    const { attempt, failure } = await state(target);
+    expect(attempt).toMatchObject({ status: "FAILED", endReason: reason });
+    expect(failure.status).toBe("NEEDS_HUMAN");
+  });
+
+  it("writes nothing when the earlier fix passed CI after all", async () => {
+    const target = await validatedRetry();
+    const { writes } = mockRetryPublish(target.fullName);
+    const { retryOfId } = await db.healAttempt.findUniqueOrThrow({
+      where: { id: target.attemptId },
+    });
+    await db.healAttempt.update({
+      where: { id: retryOfId ?? "" },
+      data: { status: "VERIFIED" },
+    });
+
+    await processValidationJob(publishJob(target), deps());
+
+    expect(writes).toEqual([]);
+    expect((await state(target)).attempt).toMatchObject({
+      endReason: "the earlier fix is no longer failing CI",
+    });
+  });
+});

@@ -1,6 +1,6 @@
 // Comments PipeHeal posts on its own pull requests (SPEC §9.1). Pure. Names from the repository
 // are shown literally, with the PR body's rules (./body.ts).
-import { githubLink, inlineCode } from "./body";
+import { codeBlock, githubLink, inlineCode } from "./body";
 
 export interface FailedCiJob {
   workflowName: string;
@@ -11,6 +11,31 @@ export interface FailedCiJob {
 }
 
 const MAX_JOBS = 10;
+
+/**
+ * A retry's commit on the same pull request (P5.3d), whose description still tells of the first
+ * fix. Paths and the model's words are shown literally.
+ */
+export function retryPushedComment(
+  commitSha: string,
+  files: readonly string[],
+  rootCause: string | null,
+  draftReasons: readonly string[],
+): string {
+  const more = files.length - MAX_JOBS;
+  return [
+    `PipeHeal pushed a second fix in \`${commitSha.slice(0, 12)}\`. CI checks it now.`,
+    "",
+    ...files.slice(0, MAX_JOBS).map((path) => `- ${inlineCode(path, 300)}`),
+    ...(more > 0 ? [`- …and ${String(more)} more`] : []),
+    ...(rootCause === null ? [] : ["", "The model's account:", codeBlock(rootCause, 1_000)]),
+    ...(draftReasons.length === 0
+      ? []
+      : ["", "Review with extra care:", ...draftReasons.map((r) => `- ${inlineCode(r, 300)}`)]),
+    "",
+    "The checks and limits cover both fixes together. PipeHeal never merges.",
+  ].join("\n");
+}
 
 /** When CI never answered (§2.2). `reason` is PipeHeal's own words. */
 export function unverifiedComment(reason: string): string {

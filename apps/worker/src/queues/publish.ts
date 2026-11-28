@@ -19,12 +19,19 @@ import {
   type Db,
   type SystemScope,
 } from "@pipeheal/db";
-import { GitHubApiError, GuardError, type FileChange, type GitHubApp } from "@pipeheal/github";
+import {
+  GitHubApiError,
+  GuardError,
+  type FileChange,
+  type GitHubApp,
+  type RepoClient,
+} from "@pipeheal/github";
 import { effectivePolicy } from "@pipeheal/policy";
 import type { Logger } from "@pipeheal/shared/logger";
 import { submissionSchema } from "@pipeheal/shared/protocol";
 import { ZodError } from "zod";
 import { isDraft, prBody, prTitle } from "../pr/body";
+import { retryPushedComment } from "../pr/comments";
 import { submissionDigest } from "../submission-check";
 import type { ValidationJob } from "./submissions";
 
@@ -86,6 +93,104 @@ function readStored(found: Publication) {
   }
 }
 
+type StoredPublication = NonNullable<ReturnType<typeof readStored>>;
+
+function fileChanges(files: StoredPublication["files"]): FileChange[] {
+  return files.map((file) => ("deleted" in file ? { path: file.path, delete: true } : file));
+}
+
+/** Why a write to GitHub failed, in PipeHeal's words. */
+function writeFailure(error: unknown): string {
+  if (error instanceof GuardError) return "the change can't be committed safely";
+  if (error instanceof GitHubApiError) return "GitHub refused the commit or the pull request";
+  return "the pull request couldn't be opened";
+}
+
+/**
+ * A retry's fix (P5.3d): one more commit on the same branch, never forced, and only while the
+ * branch and the open PR still sit on the commit whose CI failed. No new PR; a comment says what
+ * was pushed.
+ */
+async function publishRetry(
+  system: SystemScope,
+  client: RepoClient,
+  found: Publication,
+  stored: StoredPublication,
+  log: Logger,
+): Promise<void> {
+  const { id, targetSha } = found;
+  const previous = (await system.attempts.chain(id))?.previous;
+  const branch = previous?.branch ?? healBranchName(found.failure.id, found.attemptNo);
+  const stopBefore = async (reason: string) => {
+    if (await system.attempts.claimPublish(id, branch)) {
+      await system.attempts.failPublish(id, reason);
+    }
+    log.warn({ attemptId: id, reason }, "retry not pushed");
+  };
+  if (previous?.branch == null || previous.prNumber === null) {
+    await stopBefore("the earlier attempts' changes couldn't be read");
+    return;
+  }
+  if (previous.status !== "CI_FAILED" || previous.commitSha !== targetSha) {
+    await stopBefore("the earlier fix is no longer failing CI");
+    return;
+  }
+  // Reads before the claim: an error retries the job with nothing written.
+  if ((await client.getBranchSha(branch)) !== targetSha) {
+    await stopBefore("the pull request's branch moved");
+    return;
+  }
+  const pull = await client.getPullRequest(previous.prNumber);
+  if (
+    pull.state !== "open" ||
+    pull.fromFork ||
+    pull.headRef !== branch ||
+    pull.headSha !== targetSha
+  ) {
+    await stopBefore("the pull request is no longer open on PipeHeal's commit");
+    return;
+  }
+  if (!(await system.attempts.claimPublish(id, branch))) return;
+  let commitSha;
+  try {
+    ({ commitSha } = await client.commitFiles({
+      branch,
+      parentSha: targetSha,
+      message: commitMessage(found.failingCheck, found.attemptNo, targetSha),
+      changes: fileChanges(stored.files),
+      createBranch: false,
+    }));
+    await system.attempts.recordCommit(id, commitSha);
+  } catch (error) {
+    await system.attempts.failPublish(id, writeFailure(error));
+    log.warn(
+      { attemptId: id, error: error instanceof Error ? error.name : "unknown" },
+      "retry not pushed",
+    );
+    return;
+  }
+  // The commit is on the PR: never marked FAILED from here (the reconciler finds it).
+  const record = { number: pull.number, url: pull.htmlUrl, draft: pull.draft };
+  await system.attempts.recordPullRequest(id, record);
+  log.info({ attemptId: id, pr: pull.number }, "retry pushed");
+  try {
+    await client.comment(
+      pull.number,
+      retryPushedComment(
+        commitSha,
+        stored.files.map((file) => file.path),
+        stored.fix?.rootCause ?? null,
+        stored.validation.draftReasons,
+      ),
+    );
+  } catch (error) {
+    log.warn(
+      { attemptId: id, error: error instanceof Error ? error.name : "unknown" },
+      "couldn't comment on the pull request",
+    );
+  }
+}
+
 export async function publishAttempt(
   deps: PublishDeps,
   job: ValidationJob,
@@ -121,6 +226,11 @@ export async function publishAttempt(
   // Commit exactly what was checked (P5.1 review L1).
   if (!validation.passed || validation.digest !== submissionDigest(found.targetSha, files)) {
     await stopBefore("the submission isn't the one that was checked");
+    return;
+  }
+  if (found.retryOfId !== null) {
+    const client = (await app.installation(found.org.installationId)).repo(repo.fullName);
+    await publishRetry(system, client, found, stored, log);
     return;
   }
   const base = failure.headBranch;
@@ -196,9 +306,7 @@ export async function publishAttempt(
 
   // From here on, nothing is retried.
   if (!(await system.attempts.claimPublish(job.attemptId, branch))) return;
-  const changes: FileChange[] = files.map((file) =>
-    "deleted" in file ? { path: file.path, delete: true } : file,
-  );
+  const changes = fileChanges(files);
   let pull;
   let commitSha;
   try {
@@ -212,12 +320,7 @@ export async function publishAttempt(
     await system.attempts.recordCommit(job.attemptId, commitSha);
     pull = await client.createPullRequest({ head: branch, base, title, body, draft });
   } catch (error) {
-    const reason =
-      error instanceof GuardError
-        ? "the change can't be committed safely"
-        : error instanceof GitHubApiError
-          ? "GitHub refused the commit or the pull request"
-          : "the pull request couldn't be opened";
+    const reason = writeFailure(error);
     await system.attempts.failPublish(job.attemptId, reason);
     log.warn(
       { attemptId: job.attemptId, error: error instanceof Error ? error.name : "unknown" },
