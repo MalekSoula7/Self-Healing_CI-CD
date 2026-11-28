@@ -1,0 +1,344 @@
+// Rules added at CHECKPOINT 3 (D14, from the P3.6 red team, SPEC §8.5): tricks that make a
+// failing check pass without fixing anything, on added lines. Each is cheap and rare in real fixes.
+// - Test files (tests.forbidAssertionReduction): tautological assertions, assertions swallowed by
+//   an empty catch, `except AssertionError`, `pytest.raises(AssertionError)` or
+//   `suppress(AssertionError)`, assertions inverted by `expect(() => { expect(...) }).toThrow()`,
+//   `expect(...).resolves/.rejects` neither awaited nor returned. (tests.forbidSkips): retries.
+// - Source files (tests.forbidSkips): code that detects the test runner or CI, or patches the test
+//   framework. (suppressions.forbid): an empty `catch {}` / `except: pass`, `as any` /
+//   `as unknown as` / `<any>`, warning filters.
+import type { Change } from "../diff";
+import { addedLines, at, languageOf, stripCode, type Language } from "../source";
+import { globList } from "../glob";
+import { DEFAULT_POLICY } from "../rules";
+import { scanExpects } from "./expects";
+import type { Check, CheckContext, Violation } from "./types";
+
+type RuleId = "tests.forbidAssertionReduction" | "tests.forbidSkips" | "suppressions.forbid";
+
+interface Rule {
+  ruleId: RuleId;
+  /** Matched on the stripped line (code only) or the raw line (strings and comments included). */
+  on: "code" | "raw";
+  /** A pattern, or a test for what a pattern can't say. */
+  matches: RegExp | ((text: string) => boolean);
+  message: string;
+  hint: string;
+}
+
+const TAUTOLOGY = {
+  ruleId: "tests.forbidAssertionReduction",
+  on: "code",
+  message: "asserts something that is always true.",
+  hint: "Assert on the code under test's real result.",
+} as const;
+
+const RETRY = {
+  ruleId: "tests.forbidSkips",
+  on: "raw",
+  message: "retries a test until it passes.",
+  hint: "Fix the failure instead of retrying it.",
+} as const;
+
+const SWALLOWED = {
+  ruleId: "tests.forbidAssertionReduction",
+  on: "code",
+  message: "catches or inverts failed assertions.",
+  hint: "Let failed assertions fail the test.",
+} as const;
+
+// Literals as they look after stripping (string contents blanked).
+const PY_LITERAL = String.raw`(-?\d+(\.\d+)?|True|False|None|"\s*"|'\s*'|\[\s*\]|\{\s*\}|\(\s*\))`;
+
+/** `assert (x, "msg")`: one parenthesized group spanning the rest, with a top-level comma. */
+function tupleAssert(code: string): boolean {
+  const match = /^[ \t]*assert\s*\(/.exec(code);
+  if (match === null) return false;
+  const rest = code.slice(match[0].length - 1).trimEnd();
+  let depth = 0;
+  let comma = false;
+  for (let index = 0; index < rest.length; index += 1) {
+    const char = at(rest, index);
+    if (char === "(" || char === "[" || char === "{") depth += 1;
+    else if (char === ")" || char === "]" || char === "}") {
+      depth -= 1;
+      if (depth === 0) return comma && index === rest.length - 1;
+    } else if (char === "," && depth === 1) comma = true;
+  }
+  return false;
+}
+
+const TEST_RULES: Record<Language, readonly Rule[]> = {
+  js: [
+    {
+      ...TAUTOLOGY,
+      // expect(true), expect(1), expect(null), expect(""), expect([]), expect({}): a literal subject.
+      matches:
+        /\bexpect\s*\(\s*(true|false|null|undefined|-?\d+(\.\d+)?|"\s*"|'\s*'|`\s*`|\[\s*\]|\{\s*\})\s*\)/,
+    },
+    { ...TAUTOLOGY, matches: /\bassert(\s*\.\s*ok)?\s*\(\s*(true|1)\s*[,)]/ },
+    {
+      ruleId: "tests.forbidAssertionReduction",
+      on: "code",
+      matches: /^[ \t]*expect\b.*\.\s*(resolves|rejects)\b/,
+      message: "leaves a .resolves/.rejects assertion floating: nothing waits for it.",
+      hint: "await (or return) every expect(...).resolves / .rejects.",
+    },
+    {
+      ...RETRY,
+      matches:
+        /\b(jest|vi)\s*\.\s*retryTimes\s*\(\s*[1-9]|\bretry\s*:\s*[1-9]|\bretries\s*[:(]\s*[1-9]/,
+    },
+  ],
+  python: [
+    {
+      ...TAUTOLOGY,
+      matches: new RegExp(String.raw`^[ \t]*assert\s+(True|1|not\s+False|"\s*"|'\s*')\s*(,|$)`),
+    },
+    {
+      ...TAUTOLOGY,
+      matches: new RegExp(
+        String.raw`^[ \t]*assert\s+${PY_LITERAL}\s*(==|!=|is|is\s+not|in|<|>|<=|>=)\s*${PY_LITERAL}\s*(,|$)`,
+      ),
+    },
+    { ...TAUTOLOGY, matches: tupleAssert },
+    { ...TAUTOLOGY, matches: /^[ \t]*assert\b.*\bor\s+(True|1)\s*(,|$)/ },
+    {
+      ...SWALLOWED,
+      matches: /^[ \t]*except\s*\(?\s*AssertionError\b/,
+    },
+    { ...RETRY, matches: /@\s*(pytest\s*\.\s*mark\s*\.\s*)?(flaky|retry)\b|\breruns\s*=\s*[1-9]/ },
+  ],
+};
+
+const TEST_DETECTION = {
+  ruleId: "tests.forbidSkips",
+  on: "raw",
+  message: "detects the test runner or CI, so the code behaves differently under test.",
+  hint: "Fix the code for every caller, not only when tests or CI run it.",
+} as const;
+
+const FRAMEWORK_PATCH = {
+  ruleId: "tests.forbidSkips",
+  on: "code",
+  message: "changes the test framework from source code.",
+  hint: "Leave the test framework alone; fix the code under test.",
+} as const;
+
+const SOURCE_RULES: Record<Language, readonly Rule[]> = {
+  js: [
+    {
+      ...TEST_DETECTION,
+      matches:
+        /\b(VITEST|VITEST_WORKER_ID|JEST_WORKER_ID|JEST_WORKER|npm_lifecycle_event|__vitest_worker__)\b|import\.meta\.(vitest|env\.VITEST)\b|import\.meta\.env\.MODE\s*[!=]==?\s*["'`]test["'`]|\bNODE_ENV\b\s*[!=]==?\s*["'`]test["'`]|["'`]test["'`]\s*[!=]==?\s*[\w$.]*NODE_ENV\b|typeof\s+(it|describe|jest|vi|expect)\s*!==?\s*["']undefined["']/,
+    },
+    {
+      ...FRAMEWORK_PATCH,
+      matches:
+        /\b(globalThis|global|window)\s*\.\s*(it|test|describe|expect|jest|vi)\s*=[^=]|\bObject\s*\.\s*assign\s*\(\s*(globalThis|global|window)\s*,/,
+    },
+    {
+      ruleId: "suppressions.forbid",
+      on: "code",
+      matches: /\bas\s+any\b|\bas\s+unknown\s+as\b|<any>\s*[\w$([]/,
+      message: "escapes the type checker (as any, as unknown as, <any>).",
+      hint: "Fix the types instead of casting them away.",
+    },
+    {
+      ruleId: "suppressions.forbid",
+      on: "raw",
+      matches:
+        /\bprocess\s*\.\s*(noDeprecation|removeAllListeners\s*\(\s*["']warning|emitWarning\s*=[^=])/,
+      message: "silences runtime warnings.",
+      hint: "Fix what the warning reports instead of silencing it.",
+    },
+  ],
+  python: [
+    {
+      ...TEST_DETECTION,
+      matches:
+        /\b(PYTEST_CURRENT_TEST|PYTEST_XDIST_WORKER|PYTEST_VERSION)\b|["']pytest["']\s+in\s+sys\s*\.\s*modules|sys\s*\.\s*modules\b.*["']pytest|\b_called_from_test\b/,
+    },
+    {
+      ...FRAMEWORK_PATCH,
+      matches:
+        /\bTestCase\s*\.\s*\w+\s*=[^=]|^[ \t]*def\s+pytest_\w+\s*\(|\bsetattr\s*\(\s*([\w.]*\.)?TestCase\b/,
+    },
+    {
+      ruleId: "suppressions.forbid",
+      on: "raw",
+      matches: /\bwarnings\s*\.\s*(filterwarnings|simplefilter)\s*\(\s*(action\s*=\s*)?["']ignore/,
+      message: "silences warnings.",
+      hint: "Fix what the warning reports instead of silencing it.",
+    },
+  ],
+};
+
+/**
+ * Code that reads CI variables. A CLI may check CI for its own output (spinners, colors), so this
+ * counts only when it picks a return value or returns early: code that behaves differently in CI.
+ */
+const CI_TELLS: Record<Language, RegExp> = {
+  js: /process\s*\.\s*env\s*(\.\s*|\[\s*["'`])(CI|GITHUB_ACTIONS|CONTINUOUS_INTEGRATION|RUNNER_OS|BUILD_ID|GITLAB_CI|BUILDKITE|CIRCLECI|TRAVIS)\b/,
+  python:
+    /\b(environ(\s*\.\s*get)?\s*[[(]|getenv\s*\()\s*["'](CI|GITHUB_ACTIONS|CONTINUOUS_INTEGRATION|RUNNER_OS|BUILD_ID|GITLAB_CI|BUILDKITE|CIRCLECI|TRAVIS)["']/,
+};
+
+function ciDecides(
+  raw: readonly string[],
+  code: readonly string[],
+  index: number,
+  language: Language,
+): boolean {
+  if (!CI_TELLS[language].test(at(raw, index))) return false;
+  const line = at(code, index);
+  const next = code.slice(index + 1).find((each) => each.trim() !== "") ?? "";
+  // An early `return;` only changes side effects (a CLI's spinner); a returned value doesn't.
+  return /\breturn\s+[^;\s]|\?/.test(line) || /^[ \t]*return\s+[^;\s]/.test(next);
+}
+
+/**
+ * Python: a `with raises(...)` / `suppress(...)` of AssertionError, Exception or BaseException whose
+ * block starts with an `assert`: the failing assertion becomes the expected error. Testing a custom
+ * assertion helper (`with raises(AssertionError): check(x)`) is fine.
+ */
+function swallowsAssert(code: readonly string[], index: number): boolean {
+  const line = at(code, index);
+  if (
+    !/^[ \t]*with\b.*\b(raises|suppress)\s*\(\s*([\w.]*\.)?(AssertionError|Exception|BaseException)\b/.test(
+      line,
+    )
+  ) {
+    return false;
+  }
+  const inline = /:\s*(\S.*)$/.exec(line)?.[1];
+  if (inline !== undefined) return /^[ \t]*assert\b/.test(inline);
+  // Any assert in the block, not only the first statement.
+  const indent = line.length - line.trimStart().length;
+  for (const next of code.slice(index + 1)) {
+    if (next.trim() === "") continue;
+    if (next.length - next.trimStart().length <= indent) return false;
+    if (/^[ \t]*assert\b/.test(next)) return true;
+  }
+  return false;
+}
+
+function matches(rule: Rule, text: string): boolean {
+  return typeof rule.matches === "function" ? rule.matches(text) : rule.matches.test(text);
+}
+
+/**
+ * An empty catch (or one that only discards the error: `void e;`), or an `except` of everything
+ * (bare, Exception, BaseException) whose body is only `pass` / `...`, starting at `index`.
+ * Catching a specific error and moving on (`except ImportError: pass`) is ordinary code.
+ */
+function swallows(
+  lines: readonly string[],
+  index: number,
+  language: Language,
+  isTest: boolean,
+): boolean {
+  const line = at(lines, index);
+  if (!/\b(catch|except)\b/.test(line)) return false;
+  // The next two code lines only: building the rest of the file per line was quadratic.
+  const body: string[] = [];
+  for (let next = index + 1; next < lines.length && body.length < 2; next += 1) {
+    if (at(lines, next).trim() !== "") body.push(at(lines, next));
+  }
+  if (language === "js") {
+    // In a test, a handler that only returns swallows the failure too.
+    const discard = isTest ? "(void\\s+[\\w$]+|return)" : "void\\s+[\\w$]+";
+    if (new RegExp(`\\bcatch\\s*(\\([^)]*\\))?\\s*\\{\\s*(${discard}\\s*;?\\s*)?\\}`).test(line)) {
+      return true;
+    }
+    if (!/\bcatch\s*(\([^)]*\))?\s*\{\s*$/.test(line)) return false;
+    const first = at(body, 0);
+    return (
+      /^[ \t]*\}/.test(first) ||
+      (new RegExp(`^[ \\t]*${discard}\\s*;?\\s*$`).test(first) && /^[ \t]*\}/.test(at(body, 1)))
+    );
+  }
+  if (!/^[ \t]*except\s*(\(?\s*(Exception|BaseException)\b[^:]*)?:/.test(line)) return false;
+  const empty = isTest ? /^[ \t]*(pass|\.\.\.|return)\s*$/ : /^[ \t]*(pass|\.\.\.)\s*$/;
+  const inline = /:\s*(\S.*)$/.exec(line)?.[1];
+  return inline === undefined ? empty.test(at(body, 0)) : empty.test(inline);
+}
+
+function violationsIn(change: Change, language: Language, isTest: boolean): Violation[] {
+  const content = change.newContent ?? "";
+  const raw = content.split("\n");
+  const code = stripCode(content, language).split("\n");
+  const rules = (isTest ? TEST_RULES : SOURCE_RULES)[language];
+  const violations: Violation[] = [];
+  const report = (line: number, ruleId: RuleId, message: string, hint: string) => {
+    violations.push({
+      ruleId,
+      path: change.path,
+      line,
+      message: `${change.path}:${String(line)} ${message}`,
+      hint,
+    });
+  };
+  for (const { line } of addedLines(change)) {
+    const text = { raw: at(raw, line - 1), code: at(code, line - 1) };
+    const rule = rules.find((candidate) => matches(candidate, text[candidate.on]));
+    if (rule !== undefined) {
+      report(line, rule.ruleId, rule.message, rule.hint);
+    } else if (isTest && language === "python" && swallowsAssert(code, line - 1)) {
+      report(line, SWALLOWED.ruleId, SWALLOWED.message, SWALLOWED.hint);
+    } else if (!isTest && ciDecides(raw, code, line - 1, language)) {
+      report(line, TEST_DETECTION.ruleId, TEST_DETECTION.message, TEST_DETECTION.hint);
+    } else if (swallows(code, line - 1, language, isTest)) {
+      if (isTest) {
+        report(
+          line,
+          "tests.forbidAssertionReduction",
+          "swallows errors, failed assertions included.",
+          "Let failed assertions fail the test.",
+        );
+      } else {
+        report(
+          line,
+          "suppressions.forbid",
+          "swallows errors without handling them.",
+          "Handle the error, or let it propagate; don't hide it.",
+        );
+      }
+    }
+  }
+  // `expect(() => { expect(x)... }).toThrow()`, however it is spread over lines.
+  if (isTest && language === "js") {
+    const added = scanExpects(code.join("\n")).inverted;
+    const before = scanExpects(stripCode(change.oldContent ?? "", language)).inverted;
+    const [first] = addedLines(change);
+    if (added > before && first !== undefined) {
+      report(first.line, SWALLOWED.ruleId, SWALLOWED.message, SWALLOWED.hint);
+    }
+  }
+  return violations;
+}
+
+const SYSTEM_TEST_FILES = globList(DEFAULT_POLICY.tests.testGlobs);
+
+const ENABLED: Record<RuleId, (context: CheckContext) => boolean> = {
+  "tests.forbidAssertionReduction": ({ policy }) => policy.tests.forbidAssertionReduction,
+  "tests.forbidSkips": ({ policy }) => policy.tests.forbidSkips,
+  "suppressions.forbid": ({ policy }) => policy.suppressions.forbid,
+};
+
+function isRuleId(id: string): id is RuleId {
+  return id in ENABLED;
+}
+
+export const checkHeuristics: Check = (changes, context) =>
+  changes
+    .flatMap((change) => {
+      const language = languageOf(change.path);
+      if (language === null || change.newContent === null) return [];
+      // Whether a file is a test for these rules comes from PipeHeal's own test globs: widening
+      // tests.testGlobs (a union any layer, .pipeheal.yml included, may add to) must never take
+      // a source file out of the source-only rules (security review H1).
+      const isTest = SYSTEM_TEST_FILES.matchAnywhere(change.path) !== undefined;
+      return violationsIn(change, language, isTest);
+    })
+    .filter((violation) => isRuleId(violation.ruleId) && ENABLED[violation.ruleId](context));

@@ -1,9 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-test("home page renders", async ({ page }) => {
+test("home page renders and offers sign-in", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "PipeHeal" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign in with GitHub" })).toBeDisabled();
+  await expect(page.getByRole("link", { name: "Sign in with GitHub" })).toHaveAttribute(
+    "href",
+    "/login",
+  );
 });
 
 test("health endpoint reports the web service up", async ({ request }) => {

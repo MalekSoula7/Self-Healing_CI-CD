@@ -10,6 +10,33 @@ import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
+const testingImports = {
+  group: ["@pipeheal/*/testing", "@/testing/*"],
+  message: "Test-only helpers: import them from tests only.",
+};
+
+// P1.8: tenant data only changes through packages/db's helpers, which write the audit entry in
+// the same transaction; and the audit log is append-only.
+const PRISMA_WRITES =
+  "create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert|delete|deleteMany";
+const auditedTableWrite = {
+  selector: `CallExpression > MemberExpression.callee[property.name=/^(${PRISMA_WRITES})$/] > MemberExpression.object[property.name=/^(organization|membership|repository|repoWorkflow|pipelineFailure|failedRun|failedJob|auditLog)$/]`,
+  message:
+    "Change tenant data through @pipeheal/db's helpers: they record the audit entry in the same transaction (P1.8).",
+};
+const rawSqlWrite = {
+  // Both `db.$executeRaw\`...\`` (tagged template) and `db.$executeRawUnsafe(...)`.
+  selector:
+    ":matches(CallExpression[callee.property.name=/^\\$executeRaw/], TaggedTemplateExpression[tag.property.name=/^\\$executeRaw/])",
+  message: "Raw SQL writes bypass the audit log: add a helper in @pipeheal/db instead (P1.8).",
+};
+const auditLogRewrite = {
+  selector:
+    "CallExpression > MemberExpression.callee[property.name=/^(update|updateMany|updateManyAndReturn|upsert|delete|deleteMany)$/] > MemberExpression.object[property.name='auditLog']",
+  message: "The audit log is append-only: never update or delete an entry (P1.8).",
+};
+const testFiles = ["**/*.test.{ts,tsx}", "{apps,packages}/*/src/testing/**"];
+
 export default defineConfig(
   globalIgnores([
     "**/node_modules/**",
@@ -21,6 +48,8 @@ export default defineConfig(
     "**/test-results/**",
     "**/generated/**",
     "**/next-env.d.ts",
+    // Standalone demo repos with their own lint setup (they get pushed to their own repositories).
+    "examples/**",
   ]),
   {
     linterOptions: {
@@ -56,6 +85,14 @@ export default defineConfig(
     },
   },
   {
+    // Test helpers (msw, the network guard, the test database) never ship in runtime code.
+    files: ["**/*.{ts,tsx}"],
+    ignores: ["**/*.test.{ts,tsx}", "vitest.*.ts", "{apps,packages}/*/src/testing/**"],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [testingImports] }],
+    },
+  },
+  {
     // packages/policy is pure: no I/O, no network, no process access.
     files: ["packages/policy/src/**/*.ts"],
     rules: {
@@ -80,6 +117,7 @@ export default defineConfig(
               ],
               message: "packages/policy must stay pure: no I/O, network or process access.",
             },
+            testingImports,
           ],
         },
       ],
@@ -89,6 +127,16 @@ export default defineConfig(
         { name: "fetch", message: "packages/policy must not do network calls." },
       ],
     },
+  },
+  {
+    files: ["{apps,packages}/*/src/**/*.{ts,tsx}"],
+    ignores: [...testFiles, "packages/db/src/**"],
+    rules: { "no-restricted-syntax": ["error", auditedTableWrite, rawSqlWrite] },
+  },
+  {
+    files: ["packages/db/src/**/*.ts"],
+    ignores: testFiles,
+    rules: { "no-restricted-syntax": ["error", auditLogRewrite] },
   },
   {
     // Next.js rules and React hooks rules. eslint-config-next is not used: its react, import and

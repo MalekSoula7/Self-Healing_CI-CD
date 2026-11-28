@@ -1,4 +1,4 @@
-import type { Logger } from "pino";
+import type { Logger } from "@pipeheal/shared/logger";
 
 export interface ShutdownStep {
   name: string;

@@ -1,0 +1,711 @@
+// PipeHeal data model (SPEC §10). Phase 1 tables, plus failures (P2.1); later phases add theirs
+// with a migration.
+//
+// Conventions:
+// - Every tenant-owned table carries `orgId` and is only queried through the org-scoped helpers
+//   in packages/db (CLAUDE.md). Child tables reference their parent through (orgId, parentId), so
+//   the database itself refuses a row whose orgId differs from its parent's.
+// - GitHub numeric IDs are BigInt: repository and job IDs already exceed 2^31.
+// - Our own IDs are UUIDv7 (time-ordered). Better Auth generates the IDs of its four tables.
+// - Rows are never moved between tenants. A repository transferred to another installed account
+//   gets a new row there; the old one keeps its history and is marked removed.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  // Extensionless imports resolve under TypeScript's bundler resolution, Vite/Vitest, tsx and Next.js.
+  importFileExtension = ""
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------------------------
+// Better Auth (P1.3). Field names and types follow Better Auth's Prisma schema; do not rename.
+// The user's GitHub ID is Account.accountId where providerId = "github" (not duplicated here).
+
+model User {
+  id            String   @id
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  // GitHub login at last sign-in (display only; logins can be renamed and reused).
+  login         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  sessions    Session[]
+  accounts    Account[]
+  memberships Membership[]
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Encrypted by Better Auth (account.encryptOAuthTokens, D8). Never read these columns directly.
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // One GitHub identity belongs to exactly one user.
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
+
+  @@index([identifier])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tenancy
+
+enum AccountType {
+  ORG
+  USER
+}
+
+enum OrgStatus {
+  ACTIVE
+  // The installation was suspended on GitHub: no processing until unsuspended.
+  SUSPENDED
+  UNINSTALLED
+}
+
+enum Plan {
+  FREE
+}
+
+/// One tenant = one GitHub account (organization or personal) with an installation of the App.
+model Organization {
+  id                String      @id @default(uuid(7)) @db.Uuid
+  githubAccountId   BigInt      @unique
+  /// GitHub login as GitHub spells it.
+  login             String
+  /// Lowercased login: the `[org]` URL segment (GitHub logins are case-insensitive).
+  slug              String      @unique
+  accountType       AccountType
+  installationId    BigInt      @unique
+  /// The `installation` webhook's sender: OWNER candidate until a verified sign-in binds them,
+  /// then cleared (SPEC §5.2).
+  installerGithubId BigInt?
+  status            OrgStatus   @default(ACTIVE)
+  plan              Plan        @default(FREE)
+  monthlyBudgetUsd  Decimal?    @db.Decimal(10, 2)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  memberships    Membership[]
+  repositories   Repository[]
+  workflows      RepoWorkflow[]
+  auditLogs      AuditLog[]
+  failures       PipelineFailure[]
+  failedRuns     FailedRun[]
+  failedJobs     FailedJob[]
+  modelCalls     ModelCall[]
+  policyVersions PolicyVersion[]
+  ruleDrafts     CustomRuleDraft[]
+  healAttempts   HealAttempt[]
+  agentSteps     AgentStep[]
+  agentEvents    AgentEvent[]
+  submissions    AttemptSubmission[]
+  healBranches   HealBranch[]
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model Membership {
+  id        String       @id @default(uuid(7)) @db.Uuid
+  orgId     String       @db.Uuid
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@unique([orgId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Repositories and workflows
+
+enum HealerStatus {
+  /// `.github/workflows/pipeheal.yml` not found on the default branch.
+  MISSING
+  OK
+  ERROR
+}
+
+model Repository {
+  id                        String       @id @default(uuid(7)) @db.Uuid
+  orgId                     String       @db.Uuid
+  org                       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  githubRepoId              BigInt
+  /// owner/name as GitHub spells it.
+  fullName                  String
+  defaultBranch             String
+  /// Off until an admin enables it during onboarding (SPEC §11).
+  enabled                   Boolean      @default(false)
+  /// Set when the repo leaves the installation; the repo is also disabled then.
+  removedFromInstallationAt DateTime?
+  healerStatus              HealerStatus @default(MISSING)
+  /// { install, build, lint, typecheck, test, testFile }, validated with zod in packages/db.
+  commands                  Json?
+  junitGlob                 String?
+  language                  String?
+  /// `.pipeheal.yml` as last read from the default branch (SPEC §8.1, P3.7): the validated layer,
+  /// or the errors that kept it out (shown in the UI), and the commit it was read at. Both null
+  /// when the file doesn't exist. Validated with zod in packages/db.
+  policyFile                Json?
+  policyFileErrors          Json?
+  policyFileCommitSha       String?
+  policyFileReadAt          DateTime?
+  createdAt                 DateTime     @default(now())
+  updatedAt                 DateTime     @updatedAt
+
+  workflows      RepoWorkflow[]
+  failures       PipelineFailure[]
+  failedRuns     FailedRun[]
+  policyVersions PolicyVersion[]
+  ruleDrafts     CustomRuleDraft[]
+  healBranches   HealBranch[]
+
+  // Webhook lookups go installation → org → (orgId, githubRepoId), never by repo ID alone.
+  @@unique([orgId, githubRepoId])
+  // Target of the composite foreign keys that pin children to the same org.
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
+}
+
+/// A workflow discovered in the repo; `selected` workflows are the ones PipeHeal watches (SPEC §2.1).
+model RepoWorkflow {
+  id               String       @id @default(uuid(7)) @db.Uuid
+  orgId            String       @db.Uuid
+  org              Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  repoId           String       @db.Uuid
+  repo             Repository   @relation(fields: [orgId, repoId], references: [orgId, id], onDelete: Cascade)
+  githubWorkflowId BigInt
+  /// Repo-relative POSIX path, e.g. `.github/workflows/ci.yml`.
+  path             String
+  name             String
+  selected         Boolean      @default(false)
+  /// A job in the workflow uses `environment:` (never re-run or dispatched by us).
+  usesEnvironment  Boolean      @default(false)
+  /// Trigger event names from `on:` (push, pull_request, ...).
+  triggers         String[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([repoId, githubWorkflowId])
+  @@index([orgId, createdAt])
+  @@index([repoId, path])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Failures (SPEC §2.1, §10): one per repo + head SHA, holding every failed run and job of it.
+
+enum FailureStatus {
+  /// Collecting runs (window open), or waiting for triage.
+  DETECTED
+  TRIAGED
+  SKIPPED
+  /// Every failed run passed on a re-run before any dispatch.
+  FLAKY
+  QUEUED
+  HEALING
+  PR_OPENED
+  VERIFIED
+  UNVERIFIED
+  NEEDS_HUMAN
+  NEEDS_SETUP
+  NOT_REPRODUCIBLE
+  FAILED
+}
+
+/// SPEC §6.1. Set by triage (Phase 2 onward).
+enum FailureCategory {
+  COMPILE
+  TYPECHECK
+  LINT
+  TEST
+  DEPENDENCY
+  BUILD
+  INFRA
+  CONFIG
+  FLAKY
+  UNKNOWN
+}
+
+model PipelineFailure {
+  id             String           @id @default(uuid(7)) @db.Uuid
+  orgId          String           @db.Uuid
+  org            Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  repoId         String           @db.Uuid
+  repo           Repository       @relation(fields: [orgId, repoId], references: [orgId, id], onDelete: Cascade)
+  headSha        String
+  /// Null for runs GitHub reports without a branch (e.g. some tag pushes).
+  headBranch     String?
+  status         FailureStatus    @default(DETECTED)
+  category       FailureCategory?
+  /// 0..1, from triage.
+  confidence     Float?
+  summary        String?
+  skipReason     String?
+  /// When the collection window closes at the latest (first failure + 5 min, SPEC §2.1).
+  windowClosesAt DateTime
+  /// When it actually closed (possibly earlier: every selected run completed). Runs attached
+  /// after this are late arrivals.
+  windowClosedAt DateTime?
+  /// What changed since the last green commit (SPEC §6.2 step 7), redacted and cut to a token
+  /// budget; `recentChangesRecordSchema` in inputs.ts. Null until resolved.
+  recentChanges  Json?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  runs       FailedRun[]
+  modelCalls ModelCall[]
+  attempts   HealAttempt[]
+
+  @@unique([repoId, headSha])
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
+}
+
+/// One failed workflow run of a failure; a re-run (higher runAttempt) updates this row.
+model FailedRun {
+  id               String          @id @default(uuid(7)) @db.Uuid
+  orgId            String          @db.Uuid
+  org              Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  repoId           String          @db.Uuid
+  repo             Repository      @relation(fields: [orgId, repoId], references: [orgId, id], onDelete: Cascade)
+  failureId        String          @db.Uuid
+  failure          PipelineFailure @relation(fields: [orgId, failureId], references: [orgId, id], onDelete: Cascade)
+  runId            BigInt
+  /// The latest attempt we've seen.
+  runAttempt       Int
+  workflowId       BigInt
+  workflowName     String
+  workflowPath     String
+  /// GitHub's conclusion for `runAttempt`: failure or timed_out, or success once a re-run passed.
+  conclusion       String
+  htmlUrl          String?
+  /// We asked GitHub to re-run it (flaky check, SPEC §6.2 step 8). At most once per run.
+  rerunByUs        Boolean         @default(false)
+  /// The attempt we asked GitHub to re-run. While `runAttempt` still equals it, the re-run's
+  /// result hasn't arrived; a newer attempt is that result.
+  rerunFromAttempt Int?
+  /// Attached after the failure's collection window closed (SPEC §2.1).
+  lateArrival      Boolean         @default(false)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  jobs FailedJob[]
+
+  @@unique([repoId, runId])
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
+  @@index([failureId])
+}
+
+/// A failed job of the run's latest failed attempt. Triage fields are filled from Phase 2 on.
+model FailedJob {
+  id          String           @id @default(uuid(7)) @db.Uuid
+  orgId       String           @db.Uuid
+  org         Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  failedRunId String           @db.Uuid
+  failedRun   FailedRun        @relation(fields: [orgId, failedRunId], references: [orgId, id], onDelete: Cascade)
+  githubJobId BigInt
+  name        String
+  failedStep  String?
+  htmlUrl     String?
+  category    FailureCategory?
+  confidence  Float?
+  summary     String?
+  /// Redacted before it's stored (SPEC §6.2).
+  errorWindow String?
+  signals     Json?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([failedRunId, githubJobId])
+  @@index([orgId, createdAt])
+}
+
+/// One model API call and what it cost (SPEC §7.5, §13): tokens and cost per call. P7.1 rolls
+/// these up into UsageRecord. Triage calls for now; heal attempts later.
+model ModelCall {
+  id               String          @id @default(uuid(7)) @db.Uuid
+  orgId            String          @db.Uuid
+  org              Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  failureId        String          @db.Uuid
+  failure          PipelineFailure @relation(fields: [orgId, failureId], references: [orgId, id], onDelete: Cascade)
+  /// What the call was for, e.g. "triage".
+  purpose          String
+  model            String
+  promptVersion    String
+  inputTokens      Int
+  outputTokens     Int
+  cacheReadTokens  Int             @default(0)
+  cacheWriteTokens Int             @default(0)
+  costUsd          Decimal         @db.Decimal(12, 6)
+  /// "valid", "invalid" (the output failed validation) or "error" (the API call failed).
+  outcome          String
+  createdAt        DateTime        @default(now())
+
+  @@index([orgId, createdAt])
+  @@index([failureId])
+}
+
+// ---------------------------------------------------------------------------------------------
+// Audit and webhooks
+
+enum ActorType {
+  USER
+  SYSTEM
+}
+
+/// Append-only record of every mutation (P1.8): who, what, when.
+model AuditLog {
+  id        String       @id @default(uuid(7)) @db.Uuid
+  orgId     String       @db.Uuid
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  actorType ActorType
+  /// User.id for USER actors, a component name (e.g. "webhook") for SYSTEM actors.
+  actorId   String?
+  /// Dotted verb, e.g. "repository.enabled".
+  action    String
+  /// What was acted on, e.g. "repository:<id>".
+  target    String
+  /// IDs and redacted values only, never secrets or raw customer content.
+  metadata  Json?
+  createdAt DateTime     @default(now())
+
+  @@index([orgId, createdAt])
+}
+
+/// GitHub webhook deliveries, for idempotency by delivery ID (P1.6). Not tenant-owned: a delivery
+/// is recorded before it is attributed to an org.
+model WebhookDelivery {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  /// X-GitHub-Delivery header (a GUID). Redeliveries reuse it.
+  deliveryId     String    @unique
+  event          String
+  action         String?
+  installationId BigInt?
+  receivedAt     DateTime  @default(now())
+  processedAt    DateTime?
+  /// Redacted error summary of the last failed processing attempt.
+  error          String?
+
+  @@index([receivedAt])
+}
+
+/// Which policy layer a version belongs to (SPEC §8.1, D13).
+enum PolicyKind {
+  /// Org defaults: overridden per repository (an admin may loosen them there).
+  ORG_DEFAULT
+  /// Org guardrails: the ceiling no other layer can loosen.
+  ORG_GUARDRAIL
+  /// A repository's dashboard settings, over the org defaults.
+  REPO
+}
+
+/// One saved version of a policy layer (SPEC §8.9): append-only, so the history is the table.
+/// The current layer is the highest version for (orgId, kind, target).
+model PolicyVersion {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  orgId       String       @db.Uuid
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  kind        PolicyKind
+  /// Set for REPO; the helpers check it belongs to orgId (Prisma can't pin an optional relation
+  /// to the org with a composite key).
+  repoId      String?      @db.Uuid
+  repo        Repository?  @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  /// "org" for the org-wide kinds, the repository ID for REPO: one version sequence per layer.
+  target      String
+  version     Int
+  /// The layer, validated with packages/policy's layer schema before it is stored.
+  rules       Json
+  /// User.id of the admin who saved it (no foreign key: history outlives accounts).
+  createdById String?
+  createdAt   DateTime     @default(now())
+
+  @@unique([orgId, kind, target, version])
+  @@index([orgId, kind, target, createdAt])
+}
+
+/// Where a proposed custom rule stands (SPEC §8.7, P3.9).
+enum RuleDraftStatus {
+  /// Waiting for the worker to compile it.
+  PENDING
+  /// The model answered: `compiled` holds a validated layer, or the rule needs the judge.
+  COMPILED
+  /// The model didn't answer validly: the rule can still be kept as a judge rule.
+  FAILED
+  /// Added to the layer's custom rules (a new policy version).
+  ACCEPTED
+  DISCARDED
+}
+
+/// A plain-language rule an admin proposed for a policy layer, before it is confirmed (P3.9).
+model CustomRuleDraft {
+  id          String          @id @default(uuid(7)) @db.Uuid
+  orgId       String          @db.Uuid
+  org         Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  kind        PolicyKind
+  /// Set for REPO (checked against orgId by the helpers, like PolicyVersion).
+  repoId      String?         @db.Uuid
+  repo        Repository?     @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  target      String
+  text        String
+  status      RuleDraftStatus @default(PENDING)
+  /// The model's proposal: a layer validated with packages/policy's schema, or null for a rule
+  /// only a reviewer can check.
+  compiled    Json?
+  explanation String?
+  /// Why compiling failed (no answer, an invalid layer): short, never the model's raw output.
+  error       String?
+  createdById String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([orgId, kind, target, createdAt])
+}
+
+/// Where a healing attempt stands (SPEC §2, §10). Later Phase 4 tasks add the loop's outcomes.
+enum AttemptStatus {
+  /// The healer workflow was dispatched; no runner has opened a session yet.
+  DISPATCHED
+  /// A runner opened the attempt's one session (SPEC §5.4).
+  RUNNING
+  /// The model submitted a fix; the runner runs the full checks and uploads it (SPEC §7.3).
+  AWAITING_SUBMISSION
+  /// The runner uploaded its submission; the server is checking it (SPEC §2 step 10, P5.1).
+  VALIDATING
+  /// The submission passed every check: ready for its pull request (P5.2).
+  VALIDATED
+  /// The PR job claimed it: committing and opening the pull request. Never repeated (P5.2).
+  PUBLISHING
+  /// Its pull request is open; CI on it decides what's next (SPEC §9.1, P5.3).
+  PR_OPENED
+  /// CI passed on PipeHeal's commit.
+  VERIFIED
+  /// CI failed on PipeHeal's commit.
+  CI_FAILED
+  /// CI never answered: nothing ran, it didn't finish in time, or someone else pushed.
+  UNVERIFIED
+  /// The submission broke a rule, failed a check or a test, or couldn't be checked.
+  REJECTED
+  /// The failing check passed on the runner before any change (SPEC §7.3).
+  NOT_REPRODUCIBLE
+  /// The model gave up with a diagnosis.
+  GAVE_UP
+  FAILED
+}
+
+/// One healing attempt on a failure (SPEC §10). Fields arrive with the tasks that use them.
+model HealAttempt {
+  id               String          @id @default(uuid(7)) @db.Uuid
+  orgId            String          @db.Uuid
+  org              Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  failureId        String          @db.Uuid
+  failure          PipelineFailure @relation(fields: [orgId, failureId], references: [orgId, id], onDelete: Cascade)
+  /// 1 for the first attempt on a failure, 2 for the retry (SPEC §9.1).
+  attemptNo        Int
+  status           AttemptStatus   @default(DISPATCHED)
+  /// The commit the runner checks out and heals.
+  targetSha        String
+  /// The configured check that reproduces the failure: install, build, lint, typecheck or test.
+  failingCheck     String
+  /// The healer run GitHub created for the dispatch (`return_run_details`), when it said.
+  dispatchRunId    BigInt?
+  dispatchedAt     DateTime        @default(now())
+  /// SHA-256 of the session token; the token itself is never stored (SPEC §5.4).
+  sessionTokenHash String?         @unique
+  sessionOpenedAt  DateTime?
+  sessionExpiresAt DateTime?
+  /// The test inventory before any change, parsed by the server from the JUnit reports of the
+  /// runner's reproduction (SPEC §8.6), or why there is none; `testInventoryRecordSchema`.
+  baselineTests    Json?
+  /// What checking the submission found (P5.1): the policy's violations, the behavioral and
+  /// judge results, draft reasons; `submissionValidationSchema`.
+  validation       Json?
+  /// The model's own account of its fix (`submit_fix`: root cause, changes, verification,
+  /// confidence), bounded; untrusted text for the PR body (P5.2). `fixSummarySchema`.
+  fix              Json?
+  /// The `pipeheal/*` branch, the App's commit on it, and the pull request (P5.2).
+  branch           String?
+  commitSha        String?
+  prNumber         Int?
+  prUrl            String?
+  draft            Boolean?
+  /// When the pull request was recorded: the verification timeouts count from here (SPEC §2.2).
+  prOpenedAt       DateTime?
+  /// How far CI had got when its answer was recorded (the sum of the runs' attempts, which only
+  /// grows): an answer from older evidence is refused.
+  ciSeen           Int             @default(0)
+  /// When CI first failed on the fix: the PR is told once.
+  ciFailedAt       DateTime?
+  /// The attempt whose red CI this one retries (SPEC §9.1): its commit is this one's target.
+  retryOfId        String?         @db.Uuid
+  /// What CI said about that commit: failed jobs with their redacted error windows.
+  feedback         Json?
+  /// Model turns taken (SPEC §7.3's iteration cap).
+  iterations       Int             @default(0)
+  /// Why the attempt ended, when it did: a stop condition or the model's own words, bounded.
+  endReason        String?
+  finishedAt       DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  steps      AgentStep[]
+  events     AgentEvent[]
+  submission AttemptSubmission?
+
+  @@unique([failureId, attemptNo])
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
+  @@index([orgId, commitSha])
+}
+
+enum AgentStepStatus {
+  /// The runner's step was accepted; the model turn is queued or running.
+  PENDING
+  /// The model's next tool calls are waiting for the runner.
+  READY
+  /// The loop ended at this step (`outcome`).
+  DONE
+}
+
+/// One step of the runner <-> gateway loop (D15): what the runner sent, and what came back.
+model AgentStep {
+  id          String          @id @default(uuid(7)) @db.Uuid
+  orgId       String          @db.Uuid
+  org         Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  attemptId   String          @db.Uuid
+  attempt     HealAttempt     @relation(fields: [orgId, attemptId], references: [orgId, id], onDelete: Cascade)
+  stepSeq     Int
+  status      AgentStepStatus @default(PENDING)
+  /// SHA-256 of the request body, so a retried POST is recognised (idempotent on stepSeq).
+  requestHash String
+  /// The tool calls for the runner, validated with the shared protocol's schema.
+  toolCalls   Json?
+  /// When DONE: submit | gave_up | not_reproducible | stopped.
+  outcome     String?
+  reason      String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([attemptId, stepSeq])
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
+}
+
+/// A `pipeheal/*` branch the App created, with its last commit (PLAN P5.2): PipeHeal only ever
+/// extends these, and only from exactly that commit (`commitFiles` refuses a moved branch).
+model HealBranch {
+  id            String       @id @default(uuid(7)) @db.Uuid
+  orgId         String       @db.Uuid
+  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  repoId        String       @db.Uuid
+  repo          Repository   @relation(fields: [orgId, repoId], references: [orgId, id], onDelete: Cascade)
+  name          String
+  lastCommitSha String
+  /// The attempt whose commit it holds last.
+  attemptId     String       @db.Uuid
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([repoId, name])
+  @@unique([orgId, id])
+  @@index([orgId, createdAt])
+}
+
+/// What the runner uploaded for an attempt's fix (SPEC §2 step 10, P5.1): final file contents, never a
+/// diff (the server rebuilds the diff from the target commit), the checks it ran (output
+/// redacted), and the test inventory the server parsed from its JUnit reports (never the XML).
+/// The contents are customer code: never logged, and only kept until the pull request (P5.2).
+model AttemptSubmission {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  orgId       String       @db.Uuid
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  attemptId   String       @unique @db.Uuid
+  attempt     HealAttempt  @relation(fields: [orgId, attemptId], references: [orgId, id], onDelete: Cascade)
+  /// SHA-256 of the body as received: a retried upload is the same submission.
+  requestHash String
+  /// `[{ path, content } | { path, deleted: true }]`
+  files       Json
+  /// `[{ name, exitCode, output }]`
+  checks      Json
+  /// `testInventoryRecordSchema`
+  afterTests  Json
+  createdAt   DateTime     @default(now())
+
+  @@unique([orgId, id])
+  @@unique([orgId, attemptId])
+  @@index([orgId, createdAt])
+}
+
+enum AgentEventType {
+  MODEL_CALL
+  TOOL_CALL
+  TOOL_RESULT
+  POLICY_CHECK
+  INFO
+}
+
+/// The attempt's timeline (SPEC §7.3, §10): every model call, tool call, result and policy check.
+/// Tool output is redacted before it is stored.
+model AgentEvent {
+  id        String         @id @default(uuid(7)) @db.Uuid
+  orgId     String         @db.Uuid
+  org       Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  attemptId String         @db.Uuid
+  attempt   HealAttempt    @relation(fields: [orgId, attemptId], references: [orgId, id], onDelete: Cascade)
+  /// Order within the attempt.
+  seq       Int
+  stepSeq   Int
+  type      AgentEventType
+  payload   Json
+  createdAt DateTime       @default(now())
+
+  @@unique([attemptId, seq])
+  @@index([orgId, createdAt])
+}

@@ -1,5 +1,5 @@
 import { Redis } from "ioredis";
-import type { Logger } from "pino";
+import type { Logger } from "@pipeheal/shared/logger";
 
 export function createRedis(url: string, logger: Logger): Redis {
   // BullMQ workers need maxRetriesPerRequest: null (blocking commands must not time out).
@@ -7,6 +7,23 @@ export function createRedis(url: string, logger: Logger): Redis {
   // Log the message only: the connection URL can carry a password.
   redis.on("error", (error: Error) => {
     logger.warn({ error: error.message }, "redis connection error");
+  });
+  return redis;
+}
+
+/**
+ * A separate connection for the gateway's rate limiter that fails fast: no offline queue, one
+ * retry and a short command timeout. With BullMQ's settings a Redis outage would queue every
+ * limiter call forever, hanging requests and growing memory (P4.1b review H1).
+ */
+export function createRateLimitRedis(url: string, logger: Logger): Redis {
+  const redis = new Redis(url, {
+    enableOfflineQueue: false,
+    maxRetriesPerRequest: 1,
+    commandTimeout: 500,
+  });
+  redis.on("error", (error: Error) => {
+    logger.warn({ error: error.message }, "rate-limit redis connection error");
   });
   return redis;
 }

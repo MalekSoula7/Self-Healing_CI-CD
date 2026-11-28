@@ -5,12 +5,21 @@
   "description": "The rules engine. Pure functions, no I/O, no network.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./glob": "./src/glob.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "typescript": "catalog:"
+    "fast-check": "^4.11.0",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "dependencies": {
+    "@pipeheal/shared": "workspace:*",
+    "smol-toml": "1.9.1",
+    "yaml": "2.9.1",
+    "zod": "catalog:"
   }
 }

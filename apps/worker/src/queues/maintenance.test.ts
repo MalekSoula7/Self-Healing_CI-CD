@@ -1,10 +1,10 @@
 import { UnrecoverableError } from "bullmq";
-import { pino } from "pino";
+import { createLogger } from "@pipeheal/shared/logger";
 import { ZodError } from "zod";
 import { describe, expect, it } from "vitest";
 import { processMaintenanceJob } from "./maintenance";
 
-const logger = pino({ level: "silent" });
+const logger = createLogger({ level: "silent", service: "test" });
 
 describe("processMaintenanceJob", () => {
   it("answers a ping", () => {

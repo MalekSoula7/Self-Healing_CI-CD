@@ -1,0 +1,117 @@
+// Repository paths, checked the way git protects checkouts (verify_path with protectNTFS and
+// protectHFS), since customers check PipeHeal's branches out on Windows and macOS. Pure: shared by
+// the GitHub client (which refuses to write such paths) and the policy engine (which matches globs
+// against what a path *is* on those systems, so `.GitHub/x` or `GITHUB~1/x` can't slip past
+// `.github/**`). Repo paths are POSIX strings; never use the platform `path` module for them.
+
+// Code points macOS (HFS+) ignores in file names, so ".git‌" is ".git" there.
+const HFS_IGNORABLE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u206a-\u206f\ufeff]/;
+const HFS_IGNORABLE_ALL = new RegExp(HFS_IGNORABLE.source, "g");
+// Names Windows reserves (any extension), and characters it refuses.
+const WINDOWS_RESERVED =
+  /^(con|prn|aux|nul|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3])(\..*)?$/i;
+const WINDOWS_INVALID_CHARS = /[<>:"|?*]/;
+const GITHUB_DIR = /^(\.github|github~\d+)$/i;
+const GIT_NAME = /^(\.git|git~\d+|\.gitmodules)$/i;
+
+export const MAX_REPO_PATH_LENGTH = 4096;
+
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/**
+ * Why `path` isn't a repo-relative POSIX path safe to name in an API call (traversal, absolute or
+ * Windows paths, control characters), or null when it is one.
+ */
+export function repoPathProblem(path: string): string | null {
+  const segments = path.split("/");
+  const invalid =
+    path.length === 0 ||
+    path.length > MAX_REPO_PATH_LENGTH ||
+    path.includes("\\") ||
+    /^[A-Za-z]:/.test(path) ||
+    hasControlCharacter(path) ||
+    segments.some(
+      (segment) => segment === "" || segment === "." || segment === ".." || segment.length > 255,
+    );
+  return invalid ? "not a repository-relative POSIX path" : null;
+}
+
+/**
+ * Why the App may not write `path`, or null when it may:
+ * - never under `.github/` (INV-GITHUB-DIR; GitHub itself only blocks `.github/workflows/` for
+ *   Apps without the Workflows permission), including its Windows 8.3 alias `GITHUB~1`;
+ * - never a `.git` directory or `.gitmodules` file, at any depth;
+ * - no name Windows can't check out (reserved names, trailing dot or space, `<>:"|?*`), and no
+ *   code point macOS ignores.
+ * Compared case-insensitively: Windows and macOS checkouts are case-insensitive.
+ */
+export function writablePathProblem(path: string): string | null {
+  const problem = repoPathProblem(path);
+  if (problem !== null) return problem;
+  const segments = path.split("/");
+  // Compared folded too (`.gıthub` is `.github` on some file systems).
+  const first = segments[0] ?? "";
+  if (GITHUB_DIR.test(first) || canonicalPath(first) === ".github") {
+    return "the App never writes under .github/";
+  }
+  // The repository's own policy file: a fix must never change the rules it is checked against.
+  if (segments.length === 1 && /^\.pipeheal\.ya?ml$/.test(canonicalPath(first))) {
+    return "the App never writes .pipeheal.yml";
+  }
+  for (const segment of segments) {
+    if (GIT_NAME.test(segment)) return "the App never writes .git or .gitmodules";
+    // A Windows 8.3 short name (`ENV~1`, `TERRAF~1`) can alias another file or directory.
+    if (/~\d+(\.[^.]*)?$/.test(segment)) {
+      return "the path can't be checked out safely on Windows or macOS";
+    }
+    if (
+      HFS_IGNORABLE.test(segment) ||
+      WINDOWS_RESERVED.test(segment) ||
+      WINDOWS_INVALID_CHARS.test(segment) ||
+      /[. ]$/.test(segment)
+    ) {
+      return "the path can't be checked out safely on Windows or macOS";
+    }
+  }
+  return null;
+}
+
+/**
+ * What a path can name somewhere, for matching deny-style globs: `\` as `/`, `.` and empty
+ * segments dropped and `..` resolved; compatibility forms and accents folded (NFKD without
+ * combining marks), case folded through upper case (so `ı`, `ſ` and the Kelvin sign fold too),
+ * code points macOS ignores removed, the trailing dots and spaces Windows drops removed, and the
+ * 8.3 aliases of `.github` and `.git` spelled out. It folds more than any one file system does:
+ * deny-style matching only gets stricter. Two paths with the same canonical form can be the same
+ * file somewhere.
+ */
+export function canonicalPath(path: string): string {
+  const folded = path
+    .replace(/\\/g, "/")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .replace(HFS_IGNORABLE_ALL, "")
+    .toUpperCase()
+    .toLowerCase()
+    .normalize("NFC");
+  const segments: string[] = [];
+  for (const segment of folded.split("/")) {
+    const trimmed = segment.replace(/[. ]+$/, "");
+    const name = trimmed === "" ? segment : trimmed;
+    if (name === "" || name === ".") continue;
+    if (name === "..") {
+      segments.pop();
+      continue;
+    }
+    if (/^github~\d+$/.test(name)) segments.push(".github");
+    else if (/^git~\d+$/.test(name)) segments.push(".git");
+    else segments.push(name);
+  }
+  return segments.join("/");
+}

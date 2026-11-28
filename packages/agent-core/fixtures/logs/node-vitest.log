@@ -1,0 +1,356 @@
+2026-09-28T23:55:14.7436295Z Current runner version: '2.337.0'
+2026-09-28T23:55:14.7470810Z ##[group]Runner Image Provisioner
+2026-09-28T23:55:14.7472067Z Hosted Compute Agent
+2026-09-28T23:55:14.7473137Z Version: 20260828.587
+2026-09-28T23:55:14.7474297Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-28T23:55:14.7475475Z Build Date: 2026-08-28T16:44:25Z
+2026-09-28T23:55:14.7477177Z Worker ID: {525be27a-a502-4525-aed2-54a1e2eaf54c}
+2026-09-28T23:55:14.7478458Z Azure Region: eastus
+2026-09-28T23:55:14.7479442Z ##[endgroup]
+2026-09-28T23:55:14.7481945Z ##[group]Operating System
+2026-09-28T23:55:14.7483395Z Ubuntu
+2026-09-28T23:55:14.7484346Z 24.04.5
+2026-09-28T23:55:14.7485219Z LTS
+2026-09-28T23:55:14.7486255Z ##[endgroup]
+2026-09-28T23:55:14.7487430Z ##[group]Runner Image
+2026-09-28T23:55:14.7488390Z Image: ubuntu-24.04
+2026-09-28T23:55:14.7489482Z Version: 20260920.314.1
+2026-09-28T23:55:14.7491601Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260920.314/images/ubuntu/Ubuntu2404-Readme.md
+2026-09-28T23:55:14.7494353Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260920.314
+2026-09-28T23:55:14.7496091Z ##[endgroup]
+2026-09-28T23:55:14.7498374Z ##[group]GITHUB_TOKEN Permissions
+2026-09-28T23:55:14.7501055Z Contents: read
+2026-09-28T23:55:14.7502097Z Metadata: read
+2026-09-28T23:55:14.7503005Z ##[endgroup]
+2026-09-28T23:55:14.7506757Z Secret source: Actions
+2026-09-28T23:55:14.7508231Z Cache mode: write
+2026-09-28T23:55:14.7509833Z Prepare workflow directory
+2026-09-28T23:55:14.7982595Z Prepare all required actions
+2026-09-28T23:55:14.8054329Z Getting action download info
+2026-09-28T23:55:15.0435108Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-09-28T23:55:15.1395208Z Download action repository 'actions/setup-node@v7' (SHA:820762786026740c76f36085b0efc47a31fe5020)
+2026-09-28T23:55:15.2372481Z Download action repository 'actions/upload-artifact@v7' (SHA:043fb46d1a93c77aae656e7c1c64a875d1fc6a0a)
+2026-09-28T23:55:15.4266043Z Complete job name: check
+2026-09-28T23:55:15.5015752Z ##[group]Run actions/checkout@v7
+2026-09-28T23:55:15.5017109Z with:
+2026-09-28T23:55:15.5017688Z   repository: pipeheal-sandbox-malek/pipeheal-demo-node
+2026-09-28T23:55:15.5021489Z   token: ***
+2026-09-28T23:55:15.5021917Z   ssh-strict: true
+2026-09-28T23:55:15.5022354Z   ssh-user: git
+2026-09-28T23:55:15.5022786Z   persist-credentials: true
+2026-09-28T23:55:15.5023265Z   clean: true
+2026-09-28T23:55:15.5023698Z   sparse-checkout-cone-mode: true
+2026-09-28T23:55:15.5024211Z   fetch-depth: 1
+2026-09-28T23:55:15.5024627Z   fetch-tags: false
+2026-09-28T23:55:15.5025057Z   show-progress: true
+2026-09-28T23:55:15.5025493Z   lfs: false
+2026-09-28T23:55:15.5025896Z   submodules: false
+2026-09-28T23:55:15.5026331Z   set-safe-directory: true
+2026-09-28T23:55:15.5027010Z   allow-unsafe-pr-checkout: false
+2026-09-28T23:55:15.5027865Z ##[endgroup]
+2026-09-28T23:55:15.6239573Z Syncing repository: pipeheal-sandbox-malek/pipeheal-demo-node
+2026-09-28T23:55:15.6242567Z ##[group]Getting Git version info
+2026-09-28T23:55:15.6244068Z Working directory is '/home/runner/work/pipeheal-demo-node/pipeheal-demo-node'
+2026-09-28T23:55:15.6246207Z [command]/usr/bin/git version
+2026-09-28T23:55:15.6353284Z git version 2.55.0
+2026-09-28T23:55:15.6422175Z ##[endgroup]
+2026-09-28T23:55:15.6448828Z Temporarily overriding HOME='/home/runner/work/_temp/b87160a9-1446-43ed-8406-b89bd9289cef' before making global git config changes
+2026-09-28T23:55:15.6467577Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-28T23:55:15.6470362Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/pipeheal-demo-node/pipeheal-demo-node
+2026-09-28T23:55:15.6474257Z Deleting the contents of '/home/runner/work/pipeheal-demo-node/pipeheal-demo-node'
+2026-09-28T23:55:15.6477033Z ##[group]Determining repository object format
+2026-09-28T23:55:15.6478720Z ##[endgroup]
+2026-09-28T23:55:15.6480055Z ##[group]Initializing the repository
+2026-09-28T23:55:15.6481833Z [command]/usr/bin/git init /home/runner/work/pipeheal-demo-node/pipeheal-demo-node
+2026-09-28T23:55:15.6613434Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-28T23:55:15.6632854Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-28T23:55:15.6642982Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-28T23:55:15.6644419Z hint: call:
+2026-09-28T23:55:15.6645185Z hint:
+2026-09-28T23:55:15.6646114Z hint: 	git config --global init.defaultBranch <name>
+2026-09-28T23:55:15.6647541Z hint:
+2026-09-28T23:55:15.6648913Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-28T23:55:15.6674985Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-28T23:55:15.6677763Z hint:
+2026-09-28T23:55:15.6678704Z hint: 	git branch -m <name>
+2026-09-28T23:55:15.6679602Z hint:
+2026-09-28T23:55:15.6680770Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-28T23:55:15.6682917Z Initialized empty Git repository in /home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git/
+2026-09-28T23:55:15.6686965Z [command]/usr/bin/git remote add origin https://github.com/pipeheal-sandbox-malek/pipeheal-demo-node
+2026-09-28T23:55:15.6902997Z ##[endgroup]
+2026-09-28T23:55:15.6904444Z ##[group]Disabling automatic garbage collection
+2026-09-28T23:55:15.6905746Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-28T23:55:15.6912237Z ##[endgroup]
+2026-09-28T23:55:15.6913815Z ##[group]Setting up auth
+2026-09-28T23:55:15.6914949Z Removing SSH command configuration
+2026-09-28T23:55:15.6916871Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-28T23:55:15.6953020Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-28T23:55:15.8149657Z Removing HTTP extra header
+2026-09-28T23:55:15.8151346Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-28T23:55:15.8154926Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-28T23:55:15.8259258Z Removing includeIf entries pointing to credentials config files
+2026-09-28T23:55:15.8262622Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-28T23:55:15.8302623Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-28T23:55:15.8782826Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-74b1e581-7001-483f-bffd-ac9d8f444d3d.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-28T23:55:15.8791324Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git.path /home/runner/work/_temp/git-credentials-74b1e581-7001-483f-bffd-ac9d8f444d3d.config
+2026-09-28T23:55:15.8797937Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-74b1e581-7001-483f-bffd-ac9d8f444d3d.config
+2026-09-28T23:55:15.8803664Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-74b1e581-7001-483f-bffd-ac9d8f444d3d.config
+2026-09-28T23:55:15.8840156Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-74b1e581-7001-483f-bffd-ac9d8f444d3d.config
+2026-09-28T23:55:15.8872360Z ##[endgroup]
+2026-09-28T23:55:15.8874026Z ##[group]Fetching the repository
+2026-09-28T23:55:15.8880962Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +7c87604410f92ecfb610be5ed5eb5c894496994f:refs/remotes/origin/break/logic-bug-20260928-235507
+2026-09-28T23:55:16.1282313Z From https://github.com/pipeheal-sandbox-malek/pipeheal-demo-node
+2026-09-28T23:55:16.1285176Z  * [new ref]         7c87604410f92ecfb610be5ed5eb5c894496994f -> origin/break/logic-bug-20260928-235507
+2026-09-28T23:55:16.1293664Z [command]/usr/bin/git branch --list --remote origin/break/logic-bug-20260928-235507
+2026-09-28T23:55:16.1327610Z   origin/break/logic-bug-20260928-235507
+2026-09-28T23:55:16.1336616Z [command]/usr/bin/git rev-parse refs/remotes/origin/break/logic-bug-20260928-235507
+2026-09-28T23:55:16.1367274Z 7c87604410f92ecfb610be5ed5eb5c894496994f
+2026-09-28T23:55:16.1389346Z ##[endgroup]
+2026-09-28T23:55:16.1398277Z ##[group]Determining the checkout info
+2026-09-28T23:55:16.1411066Z ##[endgroup]
+2026-09-28T23:55:16.1412125Z [command]/usr/bin/git sparse-checkout disable
+2026-09-28T23:55:16.1448379Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-28T23:55:16.1484418Z ##[group]Checking out the ref
+2026-09-28T23:55:16.1498125Z [command]/usr/bin/git checkout --progress --force -B break/logic-bug-20260928-235507 refs/remotes/origin/break/logic-bug-20260928-235507
+2026-09-28T23:55:16.1562756Z Switched to a new branch 'break/logic-bug-20260928-235507'
+2026-09-28T23:55:16.1570160Z branch 'break/logic-bug-20260928-235507' set up to track 'origin/break/logic-bug-20260928-235507'.
+2026-09-28T23:55:16.1579743Z ##[endgroup]
+2026-09-28T23:55:16.1633793Z [command]/usr/bin/git log -1 --format=%H
+2026-09-28T23:55:16.1663642Z 7c87604410f92ecfb610be5ed5eb5c894496994f
+2026-09-28T23:55:16.1977995Z ##[group]Run actions/setup-node@v7
+2026-09-28T23:55:16.1978608Z with:
+2026-09-28T23:55:16.1979016Z   node-version: 24
+2026-09-28T23:55:16.1979455Z   cache: npm
+2026-09-28T23:55:16.1979879Z   check-latest: false
+2026-09-28T23:55:16.1983509Z   token: ***
+2026-09-28T23:55:16.1983978Z   package-manager-cache: true
+2026-09-28T23:55:16.1984487Z ##[endgroup]
+2026-09-28T23:55:16.3387648Z Found in cache @ /opt/hostedtoolcache/node/24.21.0/x64
+2026-09-28T23:55:16.3390096Z ##[group]Environment details
+2026-09-28T23:55:16.8878847Z node: v24.21.0
+2026-09-28T23:55:16.8889157Z npm: 11.19.0
+2026-09-28T23:55:16.8897750Z yarn: 1.22.22
+2026-09-28T23:55:16.8900531Z ##[endgroup]
+2026-09-28T23:55:16.8938146Z [command]/opt/hostedtoolcache/node/24.21.0/x64/bin/npm config get cache
+2026-09-28T23:55:17.0543986Z /home/runner/.npm
+2026-09-28T23:55:17.1490755Z Cache hit for: node-cache-Linux-x64-npm-b9cade9c9150c08daf4c2c299ba05cc2ea15069486f7137f9ff59b813fd044b7
+2026-09-28T23:55:17.5043979Z Received 22136809 of 22136809 (100.0%), 72.3 MBs/sec
+2026-09-28T23:55:17.5044661Z Cache Size: ~21 MB (22136809 B)
+2026-09-28T23:55:17.5144829Z [command]/usr/bin/tar -xf /home/runner/work/_temp/e36b1d85-6071-4085-9884-da9cc0b437c1/cache.tzst -P -C /home/runner/work/pipeheal-demo-node/pipeheal-demo-node --use-compress-program unzstd
+2026-09-28T23:55:17.5931237Z Cache restored successfully
+2026-09-28T23:55:17.5958898Z Cache restored from key: node-cache-Linux-x64-npm-b9cade9c9150c08daf4c2c299ba05cc2ea15069486f7137f9ff59b813fd044b7
+2026-09-28T23:55:17.6107635Z ##[group]Run npm ci
+2026-09-28T23:55:17.6107965Z [36;1mnpm ci[0m
+2026-09-28T23:55:17.6394728Z shell: /usr/bin/bash -e {0}
+2026-09-28T23:55:17.6395093Z ##[endgroup]
+2026-09-28T23:55:19.8135753Z 
+2026-09-28T23:55:19.8145415Z added 130 packages, and audited 131 packages in 2s
+2026-09-28T23:55:19.8147562Z 
+2026-09-28T23:55:19.8148093Z 41 packages are looking for funding
+2026-09-28T23:55:19.8148839Z   run `npm fund` for details
+2026-09-28T23:55:19.8153400Z 
+2026-09-28T23:55:19.8153846Z found 0 vulnerabilities
+2026-09-28T23:55:19.8653280Z ##[group]Run npm run typecheck
+2026-09-28T23:55:19.8653593Z [36;1mnpm run typecheck[0m
+2026-09-28T23:55:19.8719252Z shell: /usr/bin/bash -e {0}
+2026-09-28T23:55:19.8719514Z ##[endgroup]
+2026-09-28T23:55:19.9796672Z 
+2026-09-28T23:55:19.9797859Z > pipeheal-demo-node@1.0.0 typecheck
+2026-09-28T23:55:19.9798754Z > tsc --noEmit
+2026-09-28T23:55:19.9799697Z 
+2026-09-28T23:55:21.1491015Z ##[group]Run npm run lint
+2026-09-28T23:55:21.1491317Z [36;1mnpm run lint[0m
+2026-09-28T23:55:21.1554267Z shell: /usr/bin/bash -e {0}
+2026-09-28T23:55:21.1554559Z ##[endgroup]
+2026-09-28T23:55:21.2626852Z 
+2026-09-28T23:55:21.2627747Z > pipeheal-demo-node@1.0.0 lint
+2026-09-28T23:55:21.2629000Z > eslint . --max-warnings 0
+2026-09-28T23:55:21.2629652Z 
+2026-09-28T23:55:22.5959306Z ##[group]Run npm run test:ci
+2026-09-28T23:55:22.5959621Z [36;1mnpm run test:ci[0m
+2026-09-28T23:55:22.6023069Z shell: /usr/bin/bash -e {0}
+2026-09-28T23:55:22.6023350Z ##[endgroup]
+2026-09-28T23:55:22.7105891Z 
+2026-09-28T23:55:22.7106917Z > pipeheal-demo-node@1.0.0 test:ci
+2026-09-28T23:55:22.7108501Z > vitest run --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml
+2026-09-28T23:55:22.7109515Z 
+2026-09-28T23:55:23.0443830Z 
+2026-09-28T23:55:23.0508630Z [1m[30m[46m RUN [49m[39m[22m [36mv5.0.2 [39m[90m/home/runner/work/pipeheal-demo-node/pipeheal-demo-node[39m
+2026-09-28T23:55:23.0526801Z 
+2026-09-28T23:55:23.3302745Z  [32m✓[39m test/cart.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+2026-09-28T23:55:23.5170558Z  [31m❯[39m test/receipt.test.ts [2m([22m[2m2 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 40[2mms[22m[39m
+2026-09-28T23:55:23.5178098Z    [31m❯[39m receiptLines [2m(2)[22m
+2026-09-28T23:55:23.5179519Z [31m     [31m×[31m prints each line and the total[39m[32m 37[2mms[22m[39m
+2026-09-28T23:55:23.5181336Z [31m     [31m×[31m shows the discount and the discounted total[39m[32m 1[2mms[22m[39m
+2026-09-28T23:55:23.6791652Z  [31m❯[39m test/money.test.ts [2m([22m[2m4 tests[22m[2m | [22m[31m3 failed[39m[2m)[22m[32m 26[2mms[22m[39m
+2026-09-28T23:55:23.6803216Z    [31m❯[39m formatCents [2m(4)[22m
+2026-09-28T23:55:23.6804490Z [31m     [31m×[31m formats dollars and cents[39m[32m 22[2mms[22m[39m
+2026-09-28T23:55:23.6805847Z [31m     [31m×[31m groups thousands[39m[32m 1[2mms[22m[39m
+2026-09-28T23:55:23.6807734Z [31m     [31m×[31m formats refunds as negative amounts[39m[32m 1[2mms[22m[39m
+2026-09-28T23:55:23.6816196Z      [32m✓[39m rejects fractions of a cent[32m 1[2mms[22m[39m
+2026-09-28T23:55:23.6829285Z 
+2026-09-28T23:55:23.6830362Z [31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 5 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+2026-09-28T23:55:23.6846952Z 
+2026-09-28T23:55:23.6848896Z [41m[1m FAIL [22m[49m test/money.test.ts[2m > [22mformatCents[2m > [22mformats dollars and cents
+2026-09-28T23:55:23.6868828Z [31m[1mAssertionError[22m: expected '$13.50' to be '$12.50' // Object.is equality[39m
+2026-09-28T23:55:23.6896317Z 
+2026-09-28T23:55:23.6907855Z Expected: [32m"$1[7m2[27m.50"[39m
+2026-09-28T23:55:23.6909159Z Received: [31m"$1[7m3[27m.50"[39m
+2026-09-28T23:55:23.6909831Z 
+2026-09-28T23:55:23.6925318Z [36m [2m❯[22m test/money.test.ts:[2m7:31[22m[39m
+2026-09-28T23:55:23.6926008Z 
+2026-09-28T23:55:23.6934503Z     [90m  5|[39m   it("formats dollars and cents", () => {
+2026-09-28T23:55:23.6941255Z     [90m  6|[39m     expect(formatCents(1205)).toBe("$12.05");
+2026-09-28T23:55:23.6942830Z [2m Test Files [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[90m (3)[39m
+2026-09-28T23:55:23.6946243Z [2m      Tests [22m [1m[31m5 failed[39m[22m[2m | [22m[1m[32m5 passed[39m[22m[90m (10)[39m
+2026-09-28T23:55:23.6948220Z     [90m  7|[39m     expect(formatCents(1250)).toBe("$12.50");
+2026-09-28T23:55:23.6949015Z [2m   Start at [22m 23:55:23
+2026-09-28T23:55:23.6952019Z     [90m   |[39m                               [31m^[39m
+2026-09-28T23:55:23.6953511Z [2m   Duration [22m 620ms[2m (tests 40%, transform 31%, import 20%, worker 8%)[22m
+2026-09-28T23:55:23.6954900Z     [90m  8|[39m     expect(formatCents(99)).toBe("$0.99");
+2026-09-28T23:55:23.6963825Z     [90m  9|[39m   });
+2026-09-28T23:55:23.6964439Z 
+2026-09-28T23:55:23.6965205Z [31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯[22m[39m
+2026-09-28T23:55:23.6966108Z 
+2026-09-28T23:55:23.6966672Z 
+2026-09-28T23:55:23.6967707Z [2m    Isolate [22m [33m3 workers spawned[39m[2m · ~129ms startup each (spawn + environment, per file)[22m
+2026-09-28T23:55:23.6969720Z [41m[1m FAIL [22m[49m test/money.test.ts[2m > [22mformatCents[2m > [22mgroups thousands
+2026-09-28T23:55:23.6971912Z [2m            [22m [2mat least ~258ms faster with [22m[33misolate: false[39m[2m — reuses workers across files instead of one per file[22m
+2026-09-28T23:55:23.6975595Z [31m[1mAssertionError[22m: expected '$1,234,568.89' to be '$1,234,567.89' // Object.is equality[39m
+2026-09-28T23:55:23.6976287Z 
+2026-09-28T23:55:23.6982690Z 
+2026-09-28T23:55:23.6983462Z Expected: [32m"$1,234,56[7m7[27m.89"[39m
+2026-09-28T23:55:23.6984600Z Received: [31m"$1,234,56[7m8[27m.89"[39m
+2026-09-28T23:55:23.6985265Z 
+2026-09-28T23:55:23.6986053Z [36m [2m❯[22m test/money.test.ts:[2m12:36[22m[39m
+2026-09-28T23:55:23.6987239Z     [90m 10|[39m
+2026-09-28T23:55:23.6988066Z     [90m 11|[39m   it("groups thousands", () => {
+2026-09-28T23:55:23.6989207Z     [90m 12|[39m     expect(formatCents(123456789)).toBe("$1,234,567.89");
+2026-09-28T23:55:23.6990312Z     [90m   |[39m                                    [31m^[39m
+2026-09-28T23:55:23.6991159Z     [90m 13|[39m   });
+2026-09-28T23:55:23.6991842Z     [90m 14|[39m
+2026-09-28T23:55:23.6992299Z 
+2026-09-28T23:55:23.6992966Z [31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯[22m[39m
+2026-09-28T23:55:23.6993574Z 
+2026-09-28T23:55:23.6994721Z [41m[1m FAIL [22m[49m test/money.test.ts[2m > [22mformatCents[2m > [22mformats refunds as negative amounts
+2026-09-28T23:55:23.6996601Z [31m[1mAssertionError[22m: expected '-$3.50' to be '-$2.50' // Object.is equality[39m
+2026-09-28T23:55:23.6997587Z 
+2026-09-28T23:55:23.6998204Z Expected: [32m"-$[7m2[27m.50"[39m
+2026-09-28T23:55:23.6999204Z Received: [31m"-$[7m3[27m.50"[39m
+2026-09-28T23:55:23.7014129Z 
+2026-09-28T23:55:23.7015048Z [36m [2m❯[22m test/money.test.ts:[2m16:31[22m[39m
+2026-09-28T23:55:23.7016027Z     [90m 14|[39m
+2026-09-28T23:55:23.7020958Z     [90m 15|[39m   it("formats refunds as negative amounts", () => {
+2026-09-28T23:55:23.7022131Z     [90m 16|[39m     expect(formatCents(-250)).toBe("-$2.50");
+2026-09-28T23:55:23.7023160Z     [90m   |[39m                               [31m^[39m
+2026-09-28T23:55:23.7023966Z     [90m 17|[39m   });
+2026-09-28T23:55:23.7024667Z     [90m 18|[39m
+2026-09-28T23:55:23.7025122Z 
+2026-09-28T23:55:23.7025789Z [31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯[22m[39m
+2026-09-28T23:55:23.7026635Z 
+2026-09-28T23:55:23.7027829Z [41m[1m FAIL [22m[49m test/receipt.test.ts[2m > [22mreceiptLines[2m > [22mprints each line and the total
+2026-09-28T23:55:23.7029897Z [31m[1mAssertionError[22m: expected [ '2 x MUG  $25.00', …(2) ] to deeply equal [ '2 x MUG  $25.00', …(2) ][39m
+2026-09-28T23:55:23.7036845Z 
+2026-09-28T23:55:23.7053397Z [32m- Expected[39m
+2026-09-28T23:55:23.7054190Z [31m+ Received[39m
+2026-09-28T23:55:23.7054703Z 
+2026-09-28T23:55:23.7055116Z [2m  [[22m
+2026-09-28T23:55:23.7055849Z [2m    "2 x MUG  $25.00",[22m
+2026-09-28T23:55:23.7057044Z [32m-   "1 x TEA  $8.99",[39m
+2026-09-28T23:55:23.7057961Z [32m-   "Total  $33.99",[39m
+2026-09-28T23:55:23.7058761Z [31m+   "1 x TEA  $9.99",[39m
+2026-09-28T23:55:23.7059666Z [31m+   "Total  $34.99",[39m
+2026-09-28T23:55:23.7060399Z [2m  ][22m
+2026-09-28T23:55:23.7060866Z 
+2026-09-28T23:55:23.7061667Z [36m [2m❯[22m test/receipt.test.ts:[2m11:33[22m[39m
+2026-09-28T23:55:23.7062657Z     [90m  9|[39m
+2026-09-28T23:55:23.7063647Z     [90m 10|[39m   it("prints each line and the total", () => {
+2026-09-28T23:55:23.7065025Z     [90m 11|[39m     expect(receiptLines(items)).toEqual(["2 x MUG  $25.00", "1 x TEA  …
+2026-09-28T23:55:23.7067836Z     [90m   |[39m                                 [31m^[39m
+2026-09-28T23:55:23.7068841Z     [90m 12|[39m   });
+2026-09-28T23:55:23.7069757Z     [90m 13|[39m
+2026-09-28T23:55:23.7070262Z 
+2026-09-28T23:55:23.7071279Z [31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯[22m[39m
+2026-09-28T23:55:23.7071972Z 
+2026-09-28T23:55:23.7073328Z [41m[1m FAIL [22m[49m test/receipt.test.ts[2m > [22mreceiptLines[2m > [22mshows the discount and the discounted total
+2026-09-28T23:55:23.7075484Z [31m[1mAssertionError[22m: expected [ '2 x MUG  $25.00', …(3) ] to deeply equal [ '2 x MUG  $25.00', …(3) ][39m
+2026-09-28T23:55:23.7076957Z 
+2026-09-28T23:55:23.7077763Z [32m- Expected[39m
+2026-09-28T23:55:23.7079611Z [31m+ Received[39m
+2026-09-28T23:55:23.7080123Z 
+2026-09-28T23:55:23.7080560Z [2m  [[22m
+2026-09-28T23:55:23.7081365Z [2m    "2 x MUG  $25.00",[22m
+2026-09-28T23:55:23.7082383Z [32m-   "1 x TEA  $8.99",[39m
+2026-09-28T23:55:23.7083233Z [31m+   "1 x TEA  $9.99",[39m
+2026-09-28T23:55:23.7084059Z [2m    "Discount 10%",[22m
+2026-09-28T23:55:23.7084915Z [32m-   "Total  $30.59",[39m
+2026-09-28T23:55:23.7085760Z [31m+   "Total  $31.59",[39m
+2026-09-28T23:55:23.7086732Z [2m  ][22m
+2026-09-28T23:55:23.7087406Z 
+2026-09-28T23:55:23.7090475Z [36m [2m❯[22m test/receipt.test.ts:[2m15:37[22m[39m
+2026-09-28T23:55:23.7091396Z     [90m 13|[39m
+2026-09-28T23:55:23.7092407Z     [90m 14|[39m   it("shows the discount and the discounted total", () => {
+2026-09-28T23:55:23.7093634Z     [90m 15|[39m     expect(receiptLines(items, 10)).toEqual([
+2026-09-28T23:55:23.7094726Z     [90m   |[39m                                     [31m^[39m
+2026-09-28T23:55:23.7095718Z     [90m 16|[39m       "2 x MUG  $25.00",
+2026-09-28T23:55:23.7096827Z     [90m 17|[39m       "1 x TEA  $8.99",
+2026-09-28T23:55:23.7097351Z 
+2026-09-28T23:55:23.7097984Z [31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯[22m[39m
+2026-09-28T23:55:23.7106203Z 
+2026-09-28T23:55:23.7146872Z JUNIT report written to /home/runner/work/pipeheal-demo-node/pipeheal-demo-node/reports/junit.xml
+2026-09-28T23:55:23.7376044Z ##[error]Process completed with exit code 1.
+2026-09-28T23:55:23.7463165Z ##[group]Run actions/upload-artifact@v7
+2026-09-28T23:55:23.7463460Z with:
+2026-09-28T23:55:23.7463674Z   name: junit
+2026-09-28T23:55:23.7463878Z   path: reports/junit.xml
+2026-09-28T23:55:23.7464122Z   if-no-files-found: ignore
+2026-09-28T23:55:23.7464362Z   compression-level: 6
+2026-09-28T23:55:23.7464583Z   overwrite: false
+2026-09-28T23:55:23.7464804Z   include-hidden-files: false
+2026-09-28T23:55:23.7465090Z   archive: true
+2026-09-28T23:55:23.7465289Z ##[endgroup]
+2026-09-28T23:55:23.8997507Z With the provided path, there will be 1 file uploaded
+2026-09-28T23:55:23.9037112Z Artifact name is valid!
+2026-09-28T23:55:23.9037708Z Root directory input is valid!
+2026-09-28T23:55:24.1237062Z Uploading artifact: junit.zip
+2026-09-28T23:55:24.1297316Z Beginning upload of artifact content to blob storage
+2026-09-28T23:55:24.2401058Z Uploaded bytes 1096
+2026-09-28T23:55:24.2558428Z Finished uploading artifact content to blob storage!
+2026-09-28T23:55:24.2567870Z SHA256 digest of uploaded artifact is ed0a3b3885f88c0592c3dd085ad89088ce88e41940b320cee833766010302c2a
+2026-09-28T23:55:24.2569152Z Finalizing artifact upload
+2026-09-28T23:55:24.4852141Z Artifact junit successfully finalized. Artifact ID 11005430878
+2026-09-28T23:55:24.4853737Z Artifact junit has been successfully uploaded! Final size is 1096 bytes. Artifact ID is 11005430878
+2026-09-28T23:55:24.4857549Z Artifact download URL: https://github.com/pipeheal-sandbox-malek/pipeheal-demo-node/actions/runs/36500484048/artifacts/11005430878
+2026-09-28T23:55:24.5042632Z Post job cleanup.
+2026-09-28T23:55:24.5980114Z [command]/usr/bin/git version
+2026-09-28T23:55:24.6040446Z git version 2.55.0
+2026-09-28T23:55:24.6124229Z Temporarily overriding HOME='/home/runner/work/_temp/cdf7683d-9c3d-4089-a507-4473b0c26d9f' before making global git config changes
+2026-09-28T23:55:24.6140603Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-28T23:55:24.6142240Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/pipeheal-demo-node/pipeheal-demo-node
+2026-09-28T23:55:24.6184502Z Removing SSH command configuration
+2026-09-28T23:55:24.6186012Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-28T23:55:24.6246602Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-28T23:55:24.6638565Z Removing HTTP extra header
+2026-09-28T23:55:24.6660167Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-28T23:55:24.6685453Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-28T23:55:24.7117673Z Removing includeIf entries pointing to credentials config files
+2026-09-28T23:55:24.7157521Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-28T23:55:24.7178042Z includeif.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git.path
+2026-09-28T23:55:24.7197519Z includeif.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git/worktrees/*.path
+2026-09-28T23:55:24.7235533Z includeif.gitdir:/github/workspace/.git.path
+2026-09-28T23:55:24.7284960Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-28T23:55:24.7297302Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git.path
+2026-09-28T23:55:24.7324812Z /home/runner/work/_temp/git-credentials-74b1e581-7001-483f-bffd-ac9d8f444d3d.config
+2026-09-28T23:55:24.7339284Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-74b1e581\-7001\-483f\-bffd\-ac9d8f444d3d\.config
+2026-09-28T23:55:24.7417865Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git/worktrees/*.path
+2026-09-28T23:55:24.7420163Z /home/runner/work/_temp/git-credentials-74b1e581-7001-483f-bffd-ac9d8f444d3d.config
+2026-09-28T23:55:24.7508659Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/pipeheal-demo-node/pipeheal-demo-node/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-74b1e581\-7001\-483f\-bffd\-ac9d8f444d3d\.config
+2026-09-28T23:55:24.7528672Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-09-28T23:55:24.7551652Z /github/runner_temp/git-credentials-74b1e581-7001-483f-bffd-ac9d8f444d3d.config
+2026-09-28T23:55:24.7598153Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-74b1e581\-7001\-483f\-bffd\-ac9d8f444d3d\.config
+2026-09-28T23:55:24.7638804Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-28T23:55:24.7689048Z /github/runner_temp/git-credentials-74b1e581-7001-483f-bffd-ac9d8f444d3d.config
+2026-09-28T23:55:24.7723571Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-74b1e581\-7001\-483f\-bffd\-ac9d8f444d3d\.config
+2026-09-28T23:55:24.7769168Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-28T23:55:24.8013267Z Removing credentials config '/home/runner/work/_temp/git-credentials-74b1e581-7001-483f-bffd-ac9d8f444d3d.config'
+2026-09-28T23:55:24.8159786Z Cleaning up orphan processes

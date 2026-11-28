@@ -39,6 +39,8 @@ function workspacePackages(): { dir: string; group: string }[] {
 const IGNORED_DIRS = new Set([
   ".git",
   "node_modules",
+  // A local Python install (examples/demo-python): git-ignored, and ships activate.bat/.ps1.
+  ".venv",
   ".next",
   ".turbo",
   "dist",

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 
 describe("test environment", () => {
   it.each([
-    "ANTHROPIC_API_KEY",
     "BETTER_AUTH_SECRET",
     "GITHUB_APP_PRIVATE_KEY",
     "GITHUB_CLIENT_SECRET",

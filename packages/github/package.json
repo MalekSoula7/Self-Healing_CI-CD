@@ -5,7 +5,8 @@
   "description": "GitHub App client (Octokit) with typed wrappers.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./credentials": "./src/credentials.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -16,5 +17,9 @@
     "msw": "^2.15.0",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "dependencies": {
+    "octokit": "5.0.5",
+    "zod": "catalog:"
   }
 }

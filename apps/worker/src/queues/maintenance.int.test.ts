@@ -1,10 +1,11 @@
-// Needs Redis: `docker compose up -d` (REDIS_URL, default redis://localhost:6379).
+// Needs Redis: `docker compose up -d` (REDIS_URL from the shell or .env, default redis://localhost:6379).
 import { randomUUID } from "node:crypto";
 import { QueueEvents, type Worker } from "bullmq";
 import type { Redis } from "ioredis";
-import { pino } from "pino";
+import { createLogger } from "@pipeheal/shared/logger";
+import { testRedisUrl } from "@pipeheal/shared/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildGateway } from "../gateway/server";
+import { buildInternalServer } from "../gateway/server";
 import { createRedis, pingRedis } from "../redis";
 import {
   MAINTENANCE_QUEUE,
@@ -13,8 +14,8 @@ import {
   type MaintenanceQueue,
 } from "./maintenance";
 
-const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
-const logger = pino({ level: "silent" });
+const REDIS_URL = testRedisUrl();
+const logger = createLogger({ level: "silent", service: "test" });
 
 function ready<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("test setup did not complete");
@@ -76,11 +77,11 @@ describe("maintenance queue against real Redis", () => {
     await expect(job.waitUntilFinished(ready(events), 5000)).rejects.toThrow();
   });
 
-  it("reports Redis as up through the gateway health check", async () => {
+  it("reports Redis as up through the internal readiness check", async () => {
     expect(await pingRedis(redis)).toBe(true);
-    const gateway = buildGateway({ logger, checks: { redis: () => pingRedis(redis) } });
-    const response = await gateway.inject({ method: "GET", url: "/health" });
-    await gateway.close();
+    const internal = buildInternalServer({ logger, checks: { redis: () => pingRedis(redis) } });
+    const response = await internal.inject({ method: "GET", url: "/readyz" });
+    await internal.close();
     expect(response.statusCode).toBe(200);
   });
 });

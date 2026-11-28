@@ -1,0 +1,276 @@
+2026-09-28T23:49:37.0512934Z Current runner version: '2.337.0'
+2026-09-28T23:49:37.0591357Z ##[group]Runner Image Provisioner
+2026-09-28T23:49:37.0592642Z Hosted Compute Agent
+2026-09-28T23:49:37.0593653Z Version: 20260828.587
+2026-09-28T23:49:37.0594668Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29
+2026-09-28T23:49:37.0595771Z Build Date: 2026-08-28T16:44:25Z
+2026-09-28T23:49:37.0617443Z Worker ID: {ad62d8a1-045b-48f2-8110-90d0f81a5db4}
+2026-09-28T23:49:37.0618654Z Azure Region: northcentralus
+2026-09-28T23:49:37.0619841Z ##[endgroup]
+2026-09-28T23:49:37.0622572Z ##[group]Operating System
+2026-09-28T23:49:37.0623547Z Ubuntu
+2026-09-28T23:49:37.0624503Z 24.04.5
+2026-09-28T23:49:37.0625344Z LTS
+2026-09-28T23:49:37.0626244Z ##[endgroup]
+2026-09-28T23:49:37.0627467Z ##[group]Runner Image
+2026-09-28T23:49:37.0628437Z Image: ubuntu-24.04
+2026-09-28T23:49:37.0629534Z Version: 20260920.314.1
+2026-09-28T23:49:37.0631605Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260920.314/images/ubuntu/Ubuntu2404-Readme.md
+2026-09-28T23:49:37.0634794Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260920.314
+2026-09-28T23:49:37.0636337Z ##[endgroup]
+2026-09-28T23:49:37.0658634Z ##[group]GITHUB_TOKEN Permissions
+2026-09-28T23:49:37.0661905Z Contents: read
+2026-09-28T23:49:37.0662841Z Metadata: read
+2026-09-28T23:49:37.0663684Z ##[endgroup]
+2026-09-28T23:49:37.0667283Z Secret source: Actions
+2026-09-28T23:49:37.0668652Z Cache mode: write
+2026-09-28T23:49:37.0669878Z Prepare workflow directory
+2026-09-28T23:49:37.1676075Z Prepare all required actions
+2026-09-28T23:49:37.1831720Z Getting action download info
+2026-09-28T23:49:37.4781133Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-09-28T23:49:37.5639445Z Download action repository 'actions/setup-python@v7' (SHA:5fda3b95a4ea91299a34e894583c3862153e4b97)
+2026-09-28T23:49:37.6498439Z Download action repository 'actions/upload-artifact@v7' (SHA:043fb46d1a93c77aae656e7c1c64a875d1fc6a0a)
+2026-09-28T23:49:37.8510894Z Complete job name: check
+2026-09-28T23:49:37.9262384Z ##[group]Run actions/checkout@v7
+2026-09-28T23:49:37.9263235Z with:
+2026-09-28T23:49:37.9263822Z   repository: pipeheal-sandbox-malek/pipeheal-demo-python
+2026-09-28T23:49:37.9268467Z   token: ***
+2026-09-28T23:49:37.9268918Z   ssh-strict: true
+2026-09-28T23:49:37.9269363Z   ssh-user: git
+2026-09-28T23:49:37.9269822Z   persist-credentials: true
+2026-09-28T23:49:37.9270326Z   clean: true
+2026-09-28T23:49:37.9270772Z   sparse-checkout-cone-mode: true
+2026-09-28T23:49:37.9271296Z   fetch-depth: 1
+2026-09-28T23:49:37.9271726Z   fetch-tags: false
+2026-09-28T23:49:37.9272238Z   show-progress: true
+2026-09-28T23:49:37.9272680Z   lfs: false
+2026-09-28T23:49:37.9273095Z   submodules: false
+2026-09-28T23:49:37.9273545Z   set-safe-directory: true
+2026-09-28T23:49:37.9274054Z   allow-unsafe-pr-checkout: false
+2026-09-28T23:49:37.9274827Z ##[endgroup]
+2026-09-28T23:49:38.1632142Z Syncing repository: pipeheal-sandbox-malek/pipeheal-demo-python
+2026-09-28T23:49:38.1644130Z ##[group]Getting Git version info
+2026-09-28T23:49:38.1648226Z Working directory is '/home/runner/work/pipeheal-demo-python/pipeheal-demo-python'
+2026-09-28T23:49:38.1659675Z [command]/usr/bin/git version
+2026-09-28T23:49:38.1660801Z git version 2.55.0
+2026-09-28T23:49:38.1664649Z ##[endgroup]
+2026-09-28T23:49:38.1672959Z Temporarily overriding HOME='/home/runner/work/_temp/2c0c2df4-baec-434b-ab95-50e1d7969109' before making global git config changes
+2026-09-28T23:49:38.1678682Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-28T23:49:38.1682086Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/pipeheal-demo-python/pipeheal-demo-python
+2026-09-28T23:49:38.1688696Z Deleting the contents of '/home/runner/work/pipeheal-demo-python/pipeheal-demo-python'
+2026-09-28T23:49:38.1691663Z ##[group]Determining repository object format
+2026-09-28T23:49:38.1693646Z ##[endgroup]
+2026-09-28T23:49:38.1695751Z ##[group]Initializing the repository
+2026-09-28T23:49:38.1699358Z [command]/usr/bin/git init /home/runner/work/pipeheal-demo-python/pipeheal-demo-python
+2026-09-28T23:49:38.1701145Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-09-28T23:49:38.1706902Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-09-28T23:49:38.1708698Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-09-28T23:49:38.1710054Z hint: call:
+2026-09-28T23:49:38.1710924Z hint:
+2026-09-28T23:49:38.1711830Z hint: 	git config --global init.defaultBranch <name>
+2026-09-28T23:49:38.1712905Z hint:
+2026-09-28T23:49:38.1714133Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-09-28T23:49:38.1715773Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-09-28T23:49:38.1721145Z hint:
+2026-09-28T23:49:38.1721991Z hint: 	git branch -m <name>
+2026-09-28T23:49:38.1722924Z hint:
+2026-09-28T23:49:38.1724055Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-09-28T23:49:38.1726079Z Initialized empty Git repository in /home/runner/work/pipeheal-demo-python/pipeheal-demo-python/.git/
+2026-09-28T23:49:38.1732575Z [command]/usr/bin/git remote add origin https://github.com/pipeheal-sandbox-malek/pipeheal-demo-python
+2026-09-28T23:49:38.1735755Z ##[endgroup]
+2026-09-28T23:49:38.1737276Z ##[group]Disabling automatic garbage collection
+2026-09-28T23:49:38.1738455Z [command]/usr/bin/git config --local gc.auto 0
+2026-09-28T23:49:38.1741198Z ##[endgroup]
+2026-09-28T23:49:38.1743030Z ##[group]Setting up auth
+2026-09-28T23:49:38.1744118Z Removing SSH command configuration
+2026-09-28T23:49:38.1745435Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-28T23:49:38.1749312Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-28T23:49:38.2077634Z Removing HTTP extra header
+2026-09-28T23:49:38.2090370Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-28T23:49:38.2344285Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-28T23:49:38.2472683Z Removing includeIf entries pointing to credentials config files
+2026-09-28T23:49:38.2478708Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-28T23:49:38.2523485Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-28T23:49:38.2844574Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-37ac6211-d33a-41b6-9e70-f3d959b7b441.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-09-28T23:49:38.2893127Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/pipeheal-demo-python/pipeheal-demo-python/.git.path /home/runner/work/_temp/git-credentials-37ac6211-d33a-41b6-9e70-f3d959b7b441.config
+2026-09-28T23:49:38.2933978Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/pipeheal-demo-python/pipeheal-demo-python/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-37ac6211-d33a-41b6-9e70-f3d959b7b441.config
+2026-09-28T23:49:38.2977942Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-37ac6211-d33a-41b6-9e70-f3d959b7b441.config
+2026-09-28T23:49:38.3021373Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-37ac6211-d33a-41b6-9e70-f3d959b7b441.config
+2026-09-28T23:49:38.3058476Z ##[endgroup]
+2026-09-28T23:49:38.3059890Z ##[group]Fetching the repository
+2026-09-28T23:49:38.3067108Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +7ce1e597b73d964311a0cdd540142d244ea2e542:refs/remotes/origin/break/lint-20260928-234928
+2026-09-28T23:49:38.6135489Z From https://github.com/pipeheal-sandbox-malek/pipeheal-demo-python
+2026-09-28T23:49:38.6138327Z  * [new ref]         7ce1e597b73d964311a0cdd540142d244ea2e542 -> origin/break/lint-20260928-234928
+2026-09-28T23:49:38.6143853Z [command]/usr/bin/git branch --list --remote origin/break/lint-20260928-234928
+2026-09-28T23:49:38.6168080Z   origin/break/lint-20260928-234928
+2026-09-28T23:49:38.6183482Z [command]/usr/bin/git rev-parse refs/remotes/origin/break/lint-20260928-234928
+2026-09-28T23:49:38.6207581Z 7ce1e597b73d964311a0cdd540142d244ea2e542
+2026-09-28T23:49:38.6214078Z ##[endgroup]
+2026-09-28T23:49:38.6216204Z ##[group]Determining the checkout info
+2026-09-28T23:49:38.6220169Z ##[endgroup]
+2026-09-28T23:49:38.6224498Z [command]/usr/bin/git sparse-checkout disable
+2026-09-28T23:49:38.6288425Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-09-28T23:49:38.6326308Z ##[group]Checking out the ref
+2026-09-28T23:49:38.6339229Z [command]/usr/bin/git checkout --progress --force -B break/lint-20260928-234928 refs/remotes/origin/break/lint-20260928-234928
+2026-09-28T23:49:38.6399299Z Switched to a new branch 'break/lint-20260928-234928'
+2026-09-28T23:49:38.6406122Z branch 'break/lint-20260928-234928' set up to track 'origin/break/lint-20260928-234928'.
+2026-09-28T23:49:38.6417056Z ##[endgroup]
+2026-09-28T23:49:38.6472214Z [command]/usr/bin/git log -1 --format=%H
+2026-09-28T23:49:38.6505223Z 7ce1e597b73d964311a0cdd540142d244ea2e542
+2026-09-28T23:49:38.6829528Z ##[group]Run actions/setup-python@v7
+2026-09-28T23:49:38.6830187Z with:
+2026-09-28T23:49:38.6830652Z   python-version: 3.13
+2026-09-28T23:49:38.6831168Z   cache: pip
+2026-09-28T23:49:38.6831689Z   cache-dependency-path: requirements-dev.txt
+2026-09-28T23:49:38.6832336Z   check-latest: false
+2026-09-28T23:49:38.6836819Z   token: ***
+2026-09-28T23:49:38.6837340Z   update-environment: true
+2026-09-28T23:49:38.6837891Z   allow-prereleases: false
+2026-09-28T23:49:38.6838428Z   freethreaded: false
+2026-09-28T23:49:38.6838926Z ##[endgroup]
+2026-09-28T23:49:38.8229028Z ##[group]Installed versions
+2026-09-28T23:49:38.8292266Z Successfully set up CPython (3.13.15)
+2026-09-28T23:49:38.8294229Z ##[endgroup]
+2026-09-28T23:49:38.8747818Z [command]/opt/hostedtoolcache/Python/3.13.15/x64/bin/pip cache dir
+2026-09-28T23:49:39.1986861Z /home/runner/.cache/pip
+2026-09-28T23:49:39.3450193Z Cache hit for: setup-python-Linux-x64-24.04-Ubuntu-python-3.13.15-pip-257bafd57ea17cdb95e8a43f069441f5cc397f88ff1cf083d9b4b636e1cd30d6
+2026-09-28T23:49:40.1056107Z Received 30618231 of 30618231 (100.0%), 46.7 MBs/sec
+2026-09-28T23:49:40.1056943Z Cache Size: ~29 MB (30618231 B)
+2026-09-28T23:49:40.1095769Z [command]/usr/bin/tar -xf /home/runner/work/_temp/5433e752-abf2-4e16-b1fc-8ccf643234e9/cache.tzst -P -C /home/runner/work/pipeheal-demo-python/pipeheal-demo-python --use-compress-program unzstd
+2026-09-28T23:49:40.1785736Z Cache restored successfully
+2026-09-28T23:49:40.1828434Z Cache restored from key: setup-python-Linux-x64-24.04-Ubuntu-python-3.13.15-pip-257bafd57ea17cdb95e8a43f069441f5cc397f88ff1cf083d9b4b636e1cd30d6
+2026-09-28T23:49:40.2032392Z ##[group]Run pip install -r requirements-dev.txt
+2026-09-28T23:49:40.2032933Z [36;1mpip install -r requirements-dev.txt[0m
+2026-09-28T23:49:40.2273023Z shell: /usr/bin/bash -e {0}
+2026-09-28T23:49:40.2273370Z env:
+2026-09-28T23:49:40.2273695Z   pythonLocation: /opt/hostedtoolcache/Python/3.13.15/x64
+2026-09-28T23:49:40.2274177Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.13.15/x64/lib/pkgconfig
+2026-09-28T23:49:40.2274642Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+2026-09-28T23:49:40.2275043Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+2026-09-28T23:49:40.2275460Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+2026-09-28T23:49:40.2275853Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.13.15/x64/lib
+2026-09-28T23:49:40.2276509Z ##[endgroup]
+2026-09-28T23:49:41.0020578Z Collecting mypy==2.3.1 (from -r requirements-dev.txt (line 1))
+2026-09-28T23:49:41.0033119Z   Using cached mypy-2.3.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+2026-09-28T23:49:41.0265347Z Collecting pytest==9.1.1 (from -r requirements-dev.txt (line 2))
+2026-09-28T23:49:41.0279422Z   Using cached pytest-9.1.1-py3-none-any.whl.metadata (7.6 kB)
+2026-09-28T23:49:41.3135279Z Collecting ruff==0.16.9 (from -r requirements-dev.txt (line 3))
+2026-09-28T23:49:41.3145375Z   Using cached ruff-0.16.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (20 kB)
+2026-09-28T23:49:41.3300910Z Collecting typing_extensions>=4.6.0 (from mypy==2.3.1->-r requirements-dev.txt (line 1))
+2026-09-28T23:49:41.3314379Z   Using cached typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+2026-09-28T23:49:41.3393599Z Collecting mypy_extensions>=1.0.0 (from mypy==2.3.1->-r requirements-dev.txt (line 1))
+2026-09-28T23:49:41.3405676Z   Using cached mypy_extensions-1.1.0-py3-none-any.whl.metadata (1.1 kB)
+2026-09-28T23:49:41.3509600Z Collecting pathspec>=1.0.0 (from mypy==2.3.1->-r requirements-dev.txt (line 1))
+2026-09-28T23:49:41.3521751Z   Using cached pathspec-1.1.1-py3-none-any.whl.metadata (14 kB)
+2026-09-28T23:49:41.4704593Z Collecting librt>=0.13.0 (from mypy==2.3.1->-r requirements-dev.txt (line 1))
+2026-09-28T23:49:41.4723455Z   Using cached librt-0.15.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (1.3 kB)
+2026-09-28T23:49:41.5081845Z Collecting ast-serialize<1.0.0,>=0.6.0 (from mypy==2.3.1->-r requirements-dev.txt (line 1))
+2026-09-28T23:49:41.5103653Z   Using cached ast_serialize-0.11.2-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (1.4 kB)
+2026-09-28T23:49:41.5189329Z Collecting iniconfig>=1.0.1 (from pytest==9.1.1->-r requirements-dev.txt (line 2))
+2026-09-28T23:49:41.5204797Z   Using cached iniconfig-2.3.0-py3-none-any.whl.metadata (2.5 kB)
+2026-09-28T23:49:41.5315933Z Collecting packaging>=22 (from pytest==9.1.1->-r requirements-dev.txt (line 2))
+2026-09-28T23:49:41.5328356Z   Using cached packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+2026-09-28T23:49:41.5418157Z Collecting pluggy<2,>=1.5 (from pytest==9.1.1->-r requirements-dev.txt (line 2))
+2026-09-28T23:49:41.5430444Z   Using cached pluggy-1.6.0-py3-none-any.whl.metadata (4.8 kB)
+2026-09-28T23:49:41.5581690Z Collecting pygments>=2.7.2 (from pytest==9.1.1->-r requirements-dev.txt (line 2))
+2026-09-28T23:49:41.5644351Z   Using cached pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+2026-09-28T23:49:41.5670722Z Using cached mypy-2.3.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (15.2 MB)
+2026-09-28T23:49:41.5736090Z Using cached pytest-9.1.1-py3-none-any.whl (386 kB)
+2026-09-28T23:49:41.5749783Z Using cached ruff-0.16.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (10.4 MB)
+2026-09-28T23:49:41.5800978Z Using cached ast_serialize-0.11.2-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (1.3 MB)
+2026-09-28T23:49:41.5817488Z Using cached pluggy-1.6.0-py3-none-any.whl (20 kB)
+2026-09-28T23:49:41.5832145Z Using cached iniconfig-2.3.0-py3-none-any.whl (7.5 kB)
+2026-09-28T23:49:41.5844606Z Using cached librt-0.15.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (531 kB)
+2026-09-28T23:49:41.5858264Z Using cached mypy_extensions-1.1.0-py3-none-any.whl (5.0 kB)
+2026-09-28T23:49:41.5870111Z Using cached packaging-26.3-py3-none-any.whl (129 kB)
+2026-09-28T23:49:41.5882529Z Using cached pathspec-1.1.1-py3-none-any.whl (57 kB)
+2026-09-28T23:49:41.5894293Z Using cached pygments-2.21.0-py3-none-any.whl (1.3 MB)
+2026-09-28T23:49:41.5910531Z Using cached typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+2026-09-28T23:49:41.6928709Z Installing collected packages: typing_extensions, ruff, pygments, pluggy, pathspec, packaging, mypy_extensions, librt, iniconfig, ast-serialize, pytest, mypy
+2026-09-28T23:49:44.9656072Z 
+2026-09-28T23:49:44.9685795Z Successfully installed ast-serialize-0.11.2 iniconfig-2.3.0 librt-0.15.0 mypy-2.3.1 mypy_extensions-1.1.0 packaging-26.3 pathspec-1.1.1 pluggy-1.6.0 pygments-2.21.0 pytest-9.1.1 ruff-0.16.9 typing_extensions-4.16.0
+2026-09-28T23:49:45.0567348Z ##[group]Run ruff check .
+2026-09-28T23:49:45.0567788Z [36;1mruff check .[0m
+2026-09-28T23:49:45.0639229Z shell: /usr/bin/bash -e {0}
+2026-09-28T23:49:45.0639493Z env:
+2026-09-28T23:49:45.0639781Z   pythonLocation: /opt/hostedtoolcache/Python/3.13.15/x64
+2026-09-28T23:49:45.0640229Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.13.15/x64/lib/pkgconfig
+2026-09-28T23:49:45.0640666Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+2026-09-28T23:49:45.0641052Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+2026-09-28T23:49:45.0641444Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+2026-09-28T23:49:45.0641830Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.13.15/x64/lib
+2026-09-28T23:49:45.0642190Z ##[endgroup]
+2026-09-28T23:49:45.0803185Z I001 [*] Import block is un-sorted or un-formatted
+2026-09-28T23:49:45.0804149Z  --> billing/invoice.py:3:1
+2026-09-28T23:49:45.0804865Z   |
+2026-09-28T23:49:45.0805347Z 1 |   """Invoice totals."""
+2026-09-28T23:49:45.0805949Z 2 |
+2026-09-28T23:49:45.0806491Z 3 | / from decimal import ROUND_HALF_UP, Decimal
+2026-09-28T23:49:45.0807952Z 4 | | from dataclasses import dataclass
+2026-09-28T23:49:45.0808401Z   | |_________________________________^
+2026-09-28T23:49:45.0808768Z 5 |
+2026-09-28T23:49:45.0809038Z 6 |   CENT = Decimal("0.01")
+2026-09-28T23:49:45.0809405Z   |
+2026-09-28T23:49:45.0809692Z help: Organize imports
+2026-09-28T23:49:45.0810024Z   |
+2026-09-28T23:49:45.0810282Z 2 |
+2026-09-28T23:49:45.0810607Z 3 + from dataclasses import dataclass
+2026-09-28T23:49:45.0811098Z 4 | from decimal import ROUND_HALF_UP, Decimal
+2026-09-28T23:49:45.0811584Z   - from dataclasses import dataclass
+2026-09-28T23:49:45.0811980Z 5 |
+2026-09-28T23:49:45.0812240Z   |
+2026-09-28T23:49:45.0812417Z 
+2026-09-28T23:49:45.0812553Z Found 1 error.
+2026-09-28T23:49:45.0812900Z [*] 1 fixable with the `--fix` option.
+2026-09-28T23:49:45.0825020Z ##[error]Process completed with exit code 1.
+2026-09-28T23:49:45.0925336Z ##[group]Run actions/upload-artifact@v7
+2026-09-28T23:49:45.0925645Z with:
+2026-09-28T23:49:45.0925866Z   name: junit
+2026-09-28T23:49:45.0926088Z   path: reports/junit.xml
+2026-09-28T23:49:45.0926342Z   if-no-files-found: ignore
+2026-09-28T23:49:45.0926835Z   compression-level: 6
+2026-09-28T23:49:45.0927095Z   overwrite: false
+2026-09-28T23:49:45.0927327Z   include-hidden-files: false
+2026-09-28T23:49:45.0927584Z   archive: true
+2026-09-28T23:49:45.0927804Z env:
+2026-09-28T23:49:45.0928070Z   pythonLocation: /opt/hostedtoolcache/Python/3.13.15/x64
+2026-09-28T23:49:45.0928524Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.13.15/x64/lib/pkgconfig
+2026-09-28T23:49:45.0928953Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+2026-09-28T23:49:45.0929338Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+2026-09-28T23:49:45.0929752Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.13.15/x64
+2026-09-28T23:49:45.0930168Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.13.15/x64/lib
+2026-09-28T23:49:45.0930507Z ##[endgroup]
+2026-09-28T23:49:45.2447720Z No files were found with the provided path: reports/junit.xml. No artifacts will be uploaded.
+2026-09-28T23:49:45.2776782Z Post job cleanup.
+2026-09-28T23:49:45.3877874Z [command]/usr/bin/git version
+2026-09-28T23:49:45.3938034Z git version 2.55.0
+2026-09-28T23:49:45.4024461Z Temporarily overriding HOME='/home/runner/work/_temp/72d4dd57-85b9-4183-82dc-28e1b30a2147' before making global git config changes
+2026-09-28T23:49:45.4025833Z Adding repository directory to the temporary git global config as a safe directory
+2026-09-28T23:49:45.4029170Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/pipeheal-demo-python/pipeheal-demo-python
+2026-09-28T23:49:45.4114143Z Removing SSH command configuration
+2026-09-28T23:49:45.4115403Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-09-28T23:49:45.4163623Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-09-28T23:49:45.4539326Z Removing HTTP extra header
+2026-09-28T23:49:45.4540530Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-09-28T23:49:45.4605868Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-09-28T23:49:45.5377530Z Removing includeIf entries pointing to credentials config files
+2026-09-28T23:49:45.5396460Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-09-28T23:49:45.5420673Z includeif.gitdir:/home/runner/work/pipeheal-demo-python/pipeheal-demo-python/.git.path
+2026-09-28T23:49:45.5422130Z includeif.gitdir:/home/runner/work/pipeheal-demo-python/pipeheal-demo-python/.git/worktrees/*.path
+2026-09-28T23:49:45.5439020Z includeif.gitdir:/github/workspace/.git.path
+2026-09-28T23:49:45.5652966Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-28T23:49:45.5870188Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/pipeheal-demo-python/pipeheal-demo-python/.git.path
+2026-09-28T23:49:45.5871447Z /home/runner/work/_temp/git-credentials-37ac6211-d33a-41b6-9e70-f3d959b7b441.config
+2026-09-28T23:49:45.5873712Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/pipeheal-demo-python/pipeheal-demo-python/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-37ac6211\-d33a\-41b6\-9e70\-f3d959b7b441\.config
+2026-09-28T23:49:45.5876033Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/pipeheal-demo-python/pipeheal-demo-python/.git/worktrees/*.path
+2026-09-28T23:49:45.5887833Z /home/runner/work/_temp/git-credentials-37ac6211-d33a-41b6-9e70-f3d959b7b441.config
+2026-09-28T23:49:45.5890294Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/pipeheal-demo-python/pipeheal-demo-python/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-37ac6211\-d33a\-41b6\-9e70\-f3d959b7b441\.config
+2026-09-28T23:49:45.6326726Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-09-28T23:49:45.6332320Z /github/runner_temp/git-credentials-37ac6211-d33a-41b6-9e70-f3d959b7b441.config
+2026-09-28T23:49:45.6348456Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-37ac6211\-d33a\-41b6\-9e70\-f3d959b7b441\.config
+2026-09-28T23:49:45.6360442Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-09-28T23:49:45.6364593Z /github/runner_temp/git-credentials-37ac6211-d33a-41b6-9e70-f3d959b7b441.config
+2026-09-28T23:49:45.6368161Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-37ac6211\-d33a\-41b6\-9e70\-f3d959b7b441\.config
+2026-09-28T23:49:45.6372423Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-09-28T23:49:45.6500204Z Removing credentials config '/home/runner/work/_temp/git-credentials-37ac6211-d33a-41b6-9e70-f3d959b7b441.config'
+2026-09-28T23:49:45.6658858Z Cleaning up orphan processes
