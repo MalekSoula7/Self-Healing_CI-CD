@@ -728,6 +728,7 @@ function buildSystemScope(ctx: ScopeContext) {
             status: true,
             targetSha: true,
             failingCheck: true,
+            retryOfId: true,
             baselineTests: true,
             org: { select: { installationId: true, status: true } },
             failure: {

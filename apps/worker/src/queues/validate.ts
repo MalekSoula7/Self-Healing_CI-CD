@@ -4,7 +4,9 @@
 // static checks, the behavioral comparison with the step-1 baseline, the checks the runner
 // reported, then (only when all of that passed, to spare the GPU) the AI judge on the team's
 // judge rules. The attempt ends VALIDATED or REJECTED with what was found; it never stays
-// VALIDATING silently (P5.1 review M1). Stored JSON is re-validated before use.
+// VALIDATING silently (P5.1 review M1). Stored JSON is re-validated before use. A retry (P5.3d)
+// is checked as the whole change: every attempt's files over the commit the first one healed,
+// against that attempt's baseline, so two attempts can't do together what one may not.
 import {
   forSystem,
   testInventoryRecordSchema,
@@ -15,10 +17,14 @@ import {
 import type { FileAtRef, GitHubApp } from "@pipeheal/github";
 import { effectivePolicy } from "@pipeheal/policy";
 import type { Logger } from "@pipeheal/shared/logger";
-import { attemptCommandsSchema, submissionSchema } from "@pipeheal/shared/protocol";
+import {
+  attemptCommandsSchema,
+  submissionSchema,
+  type Submission,
+} from "@pipeheal/shared/protocol";
 import { ZodError } from "zod";
 import { judgeSubmission, type JudgeModel } from "../judge-model";
-import { checkSubmission, withJudge } from "../submission-check";
+import { checkSubmission, submissionDigest, withJudge } from "../submission-check";
 import type { ValidationJob } from "./submissions";
 
 /** How long the judge may take over one submission (its calls share one GPU). */
@@ -52,6 +58,40 @@ function readStored(found: Found) {
     if (error instanceof ZodError) return null;
     throw error;
   }
+}
+
+type Stored = NonNullable<ReturnType<typeof readStored>>;
+
+/** What is compared: the files over the healed commit, and the tests that ran on it. */
+interface Compared {
+  files: Submission["files"];
+  originalSha: string;
+  baseline: Stored["baseline"];
+}
+
+/** For a retry, every attempt's files (a later one wins) since the first one's commit. */
+async function compared(
+  system: SystemScope,
+  found: Found,
+  stored: Stored,
+): Promise<Compared | null> {
+  if (found.retryOfId === null) {
+    return { files: stored.files, originalSha: found.targetSha, baseline: stored.baseline };
+  }
+  const chain = await system.attempts.chain(found.id);
+  if (chain === null) return null;
+  const merged = new Map<string, Submission["files"][number]>();
+  for (const uploaded of [...chain.earlierFiles, stored.files]) {
+    const files = submissionSchema.shape.files.safeParse(uploaded);
+    if (!files.success) return null;
+    for (const file of files.data) merged.set(file.path, file);
+  }
+  const baseline =
+    chain.baselineTests === null
+      ? { success: true as const, data: null }
+      : testInventoryRecordSchema.safeParse(chain.baselineTests);
+  if (!baseline.success) return null;
+  return { files: [...merged.values()], originalSha: chain.originalSha, baseline: baseline.data };
 }
 
 /** A refusal decided before any check ran: nothing was compared. */
@@ -96,24 +136,38 @@ export async function validateSubmission(
     await reject("the stored submission couldn't be read");
     return;
   }
-  const { files, checks, after, baseline, commands } = stored;
+  const { checks, after, commands } = stored;
+  const whole = await compared(system, found, stored);
+  if (whole === null) {
+    await reject("the earlier attempts' changes couldn't be read");
+    return;
+  }
+  const { originalSha, baseline } = whole;
   const { policy } = effectivePolicy(await system.policies.layers(repo.id));
-  // Cheap refusals before fetching anything (review M5).
-  if (files.length > policy.limits.maxFilesChanged) {
+  // Cheap refusals before fetching anything (review M5). A retry's deletions may only undo what
+  // an earlier attempt added, so the policy counts those after the originals are read.
+  const counted =
+    found.retryOfId === null ? whole.files : whole.files.filter((file) => !("deleted" in file));
+  if (counted.length > policy.limits.maxFilesChanged) {
     await reject(
-      `the submission changes ${String(files.length)} files; the policy allows ${String(policy.limits.maxFilesChanged)}`,
+      `the submission changes ${String(counted.length)} files; the policy allows ${String(policy.limits.maxFilesChanged)}`,
     );
     return;
   }
 
-  // The originals, as GitHub has them at the target commit: never what the runner says.
+  // The originals, as GitHub has them at the healed commit: never what the runner says.
   const client = await deps.githubApp.readOnlyRepo(found.org.installationId, repo);
   const originals = new Map<string, FileAtRef | null>();
-  for (const file of files) {
-    originals.set(file.path, await client.getFileAtRef(file.path, found.targetSha));
+  for (const file of whole.files) {
+    originals.set(file.path, await client.getFileAtRef(file.path, originalSha));
   }
+  // A file an earlier attempt added and this one removes is no change at all.
+  const files =
+    found.retryOfId === null
+      ? whole.files
+      : whole.files.filter((file) => !("deleted" in file && originals.get(file.path) === null));
 
-  const { changes, validation } = checkSubmission(
+  const checked = checkSubmission(
     {
       files,
       checks,
@@ -126,6 +180,12 @@ export async function validateSubmission(
     },
     policy,
   );
+  const { changes } = checked;
+  // The digest is of this attempt's own files: what the pull request job commits.
+  const validation: SubmissionValidation = {
+    ...checked.validation,
+    digest: submissionDigest(found.targetSha, stored.files),
+  };
   let result = validation;
   if (validation.passed) {
     const now = deps.now ?? Date.now;

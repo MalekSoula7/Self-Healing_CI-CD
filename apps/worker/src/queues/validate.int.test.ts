@@ -13,6 +13,7 @@ import type { JudgeModel } from "../judge-model";
 import { processValidationJob, type SubmissionsDeps } from "./submissions";
 import { recordUnpublishable } from "./publish";
 import { recordUncheckable } from "./validate";
+import { submissionDigest } from "../submission-check";
 
 const db = createTestDb();
 const github = setupServer();
@@ -273,6 +274,142 @@ describe("validate job (P5.1c)", () => {
     await expect(processValidationJob({ name: "other", data: {} }, deps())).rejects.toThrow(
       /unknown submissions job/,
     );
+  });
+});
+
+/**
+ * A retry after red CI: the first attempt (`submitted`) is CI_FAILED on PipeHeal's commit, and
+ * the second uploaded `files`.
+ */
+async function retried(
+  first: { path: string; content: string }[],
+  files: ({ path: string; content: string } | { path: string; deleted: true })[],
+  afterTests: [string, ("passed" | "failed")[]][] = [["sum::adds", ["passed"]]],
+) {
+  const target = await submitted(first);
+  const commitSha = "d".repeat(40);
+  await db.healAttempt.update({
+    where: { id: target.attemptId },
+    data: { status: "CI_FAILED", branch: "pipeheal/abc-1", commitSha, prNumber: 42 },
+  });
+  await db.pipelineFailure.update({
+    where: { id: target.failureId },
+    data: { status: "NEEDS_HUMAN" },
+  });
+  const claim = await target.system.attempts.claimRetry({
+    previousAttemptId: target.attemptId,
+    failingCheck: "test",
+    feedback: [],
+    maxAttemptsPerFailure: 2,
+    maxAttemptsPerDay: 20,
+  });
+  if (claim.outcome !== "created") throw new Error(`test setup: ${claim.outcome}`);
+  const attemptId = claim.attempt.id;
+  await db.healAttempt.update({
+    where: { id: attemptId },
+    data: {
+      status: "AWAITING_SUBMISSION",
+      // What the second runner saw: not the baseline the fix is judged against.
+      baselineTests: { available: true, tests: [] },
+    },
+  });
+  await target.system.attempts.acceptSubmission(attemptId, {
+    requestHash: "f".repeat(64),
+    files,
+    checks: [{ name: "test", exitCode: 0, output: "1 passed" }],
+    afterTests: { available: true, tests: afterTests },
+  });
+  return { ...target, attemptId, commitSha };
+}
+
+describe("validate job: a retry (P5.3d)", () => {
+  const stored = (attemptId: string) =>
+    db.healAttempt.findUniqueOrThrow({ where: { id: attemptId } });
+
+  it("checks both attempts' changes against the original commit", async () => {
+    const target = await retried(
+      [{ path: "src/sum.ts", content: FIXED }],
+      [{ path: "src/other.ts", content: "export const two = 2;\n" }],
+    );
+    const read = mockGitHub(target.fullName, { "src/sum.ts": BUGGY });
+
+    await processValidationJob(job(target), deps());
+
+    expect(read.sort()).toEqual([`src/other.ts@${"c".repeat(40)}`, `src/sum.ts@${"c".repeat(40)}`]);
+    expect(await stored(target.attemptId)).toMatchObject({
+      status: "VALIDATED",
+      validation: {
+        passed: true,
+        changedFiles: 2,
+        digest: submissionDigest(target.commitSha, [
+          { path: "src/other.ts", content: "export const two = 2;\n" },
+        ]),
+      },
+    });
+  });
+
+  it("holds the two together to the file limit", async () => {
+    const files = (prefix: string) =>
+      Array.from({ length: 3 }, (_, index) => ({
+        path: `src/${prefix}${String(index)}.ts`,
+        content: "export {};\n",
+      }));
+    const target = await retried(files("a"), files("b"));
+    mockGitHub(target.fullName, {});
+
+    await processValidationJob(job(target), deps());
+
+    expect(await stored(target.attemptId)).toMatchObject({ status: "REJECTED" });
+    await expect(
+      db.pipelineFailure.findUniqueOrThrow({ where: { id: target.failureId } }),
+    ).resolves.toMatchObject({ status: "NEEDS_HUMAN" });
+  });
+
+  it("compares the tests with the first attempt's baseline", async () => {
+    const target = await retried(
+      [{ path: "src/sum.ts", content: FIXED }],
+      [{ path: "src/other.ts", content: "export {};\n" }],
+      [["sum::renamed", ["passed"]]],
+    );
+    mockGitHub(target.fullName, { "src/sum.ts": BUGGY });
+
+    await processValidationJob(job(target), deps());
+
+    expect(await stored(target.attemptId)).toMatchObject({ status: "REJECTED" });
+  });
+
+  it("accepts a retry that removes a file the first attempt added", async () => {
+    const target = await retried(
+      [
+        { path: "src/sum.ts", content: FIXED },
+        { path: "src/extra.ts", content: "export {};\n" },
+      ],
+      [{ path: "src/extra.ts", deleted: true }],
+    );
+    mockGitHub(target.fullName, { "src/sum.ts": BUGGY });
+
+    await processValidationJob(job(target), deps());
+
+    expect(await stored(target.attemptId)).toMatchObject({
+      status: "VALIDATED",
+      validation: { changedFiles: 1 },
+    });
+  });
+
+  it("refuses a retry whose earlier changes can't be read", async () => {
+    const target = await retried(
+      [{ path: "src/sum.ts", content: FIXED }],
+      [{ path: "src/other.ts", content: "export {};\n" }],
+    );
+    const { retryOfId } = await stored(target.attemptId);
+    await db.attemptSubmission.delete({ where: { attemptId: retryOfId ?? "" } });
+
+    await processValidationJob(job(target), deps());
+
+    expect(await stored(target.attemptId)).toMatchObject({
+      status: "REJECTED",
+      endReason: "the earlier attempts' changes couldn't be read",
+    });
   });
 });
 
