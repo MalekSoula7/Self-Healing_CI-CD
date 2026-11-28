@@ -725,6 +725,26 @@ export function repoClient(octokit: Octokit, fullName: string) {
       return pulls.find((pull) => !pull.fromFork && pull.headRef === branch) ?? null;
     },
 
+    /**
+     * Every pull request, open or not, whose head is one of PipeHeal's branches in this
+     * repository: how an interrupted publish finds the PR it opened (§2.2). Never a fork's.
+     * Read only.
+     */
+    async findPullRequestsByHead(branch: string): Promise<PullRequest[]> {
+      assertHealBranch(branch);
+      const { data } = await octokit.request("GET /repos/{owner}/{repo}/pulls", {
+        ...where,
+        state: "all",
+        head: `${owner}:${branch}`,
+        per_page: 10,
+      });
+      return z
+        .array(pullRequestSchema)
+        .parse(data)
+        .map(toPullRequest)
+        .filter((pull) => !pull.fromFork && pull.headRef === branch);
+    },
+
     /** Requests reviewers on one of PipeHeal's own PRs. */
     async requestReviewers(number: number, reviewers: string[]): Promise<void> {
       const logins = z.array(login).min(1).parse(reviewers);

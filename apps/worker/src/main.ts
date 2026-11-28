@@ -19,7 +19,12 @@ import {
 import { createTurnsQueue, createTurnsWorker, enqueueTurn } from "./queues/turns";
 import { healTurnRunner, loadHealInputs } from "./heal-runner";
 import { createFailuresQueue, createFailuresWorker, failureJobs } from "./queues/failures";
-import { createMaintenanceQueue, createMaintenanceWorker } from "./queues/maintenance";
+import {
+  createMaintenanceQueue,
+  createMaintenanceWorker,
+  scheduleReconciler,
+} from "./queues/maintenance";
+import { reconcile } from "./queues/reconcile";
 import { createWebhooksQueue, createWebhooksWorker } from "./queues/webhooks";
 import { createRateLimitRedis, createRedis, pingRedis } from "./redis";
 import { createShutdown } from "./shutdown";
@@ -36,7 +41,6 @@ async function main(): Promise<void> {
   const redis = createRedis(env.REDIS_URL, logger);
   const pacing = redisPacing(redis, logger);
   const maintenanceQueue = createMaintenanceQueue(redis, logger);
-  const maintenanceWorker = createMaintenanceWorker(redis, logger);
 
   // Repository/workflow sync (P1.6) needs the App; other queues don't, so it stays optional
   // until the GitHub App is registered (CHECKPOINT 1a), same fallback as web's sign-in.
@@ -135,6 +139,10 @@ async function main(): Promise<void> {
     attempts: async (orgId) => (await forSystem(db, orgId, "gateway")).attempts,
     enqueueValidation: (job) => enqueueValidation(submissionsQueue, job),
   });
+  // The §2.2 reconciler: timeouts, lost jobs and missed webhooks.
+  const maintenanceWorker = createMaintenanceWorker(redis, logger, undefined, () =>
+    reconcile({ db, githubApp, pacing, submissions: submissionsQueue, logger }),
+  );
   const internal = buildInternalServer({ logger, checks: { redis: () => pingRedis(redis) } });
 
   const shutdown = createShutdown({
@@ -177,6 +185,7 @@ async function main(): Promise<void> {
   await gateway.listen({ host: env.GATEWAY_HOST, port: env.GATEWAY_PORT });
   await internal.listen({ host: env.GATEWAY_INTERNAL_HOST, port: env.GATEWAY_INTERNAL_PORT });
   await maintenanceQueue.add("ping", { requestedAt: new Date().toISOString() });
+  await scheduleReconciler(maintenanceQueue);
   if (githubApp === null) logger.warn("GitHub App not configured: webhook repo sync is disabled");
   // Host only: the URL is internal infrastructure.
   const ollamaHost = new URL(env.OLLAMA_URL).host;

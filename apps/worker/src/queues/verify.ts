@@ -11,8 +11,8 @@ import { ciFailedComment, type FailedCiJob } from "../pr/comments";
 
 export type Verifiable = NonNullable<Awaited<ReturnType<SystemScope["attempts"]["forCommit"]>>>;
 
-/** "idle" and "running": no answer yet, which the §2.2 timeouts treat differently. */
-export type VerifyOutcome = "idle" | "running" | "recorded" | "skipped";
+/** The "waiting-for-" outcomes mean no answer yet; the §2.2 timeouts treat each differently. */
+export type VerifyOutcome = "recorded" | "skipped" | `waiting-for-${"start" | "finish" | "proof"}`;
 
 /** Failed runs whose jobs are listed for the comment. */
 const MAX_RUNS_DETAILED = 5;
@@ -46,7 +46,7 @@ export async function verifyAttempt(
     originalRuns.filter((run) => run.conclusion !== "success").map((run) => run.workflowId),
   );
   const verdict = ciVerdict(runs, required);
-  if (verdict.kind === "pending") return verdict.started ? "running" : "idle";
+  if (verdict.kind === "pending") return `waiting-for-${verdict.waitingFor}`;
 
   const client = (await githubApp.installation(installationId)).repo(repo.fullName);
   const pull = await client.getPullRequest(prNumber);

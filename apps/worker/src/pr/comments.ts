@@ -12,6 +12,15 @@ export interface FailedCiJob {
 
 const MAX_JOBS = 10;
 
+/** When CI never answered (§2.2). `reason` is PipeHeal's own words. */
+export function unverifiedComment(reason: string): string {
+  return [
+    `PipeHeal couldn't verify this fix: ${reason}.`,
+    "",
+    "Nothing shows that it works, so review it with extra care. PipeHeal never merges.",
+  ].join("\n");
+}
+
 export function ciFailedComment(commitSha: string, jobs: readonly FailedCiJob[]): string {
   const lines = jobs.slice(0, MAX_JOBS).map((job) => {
     const where = [

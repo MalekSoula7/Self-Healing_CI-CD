@@ -26,6 +26,7 @@ import {
   type SystemScope,
 } from "./scope";
 import { createTestDb } from "./testing";
+import { reconciliation } from "./reconciliation";
 
 const db = createTestDb();
 const installs = installations(db, "test");
@@ -443,6 +444,25 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
       a.system.attempts.recordVerification(bAttemptId, { result: "verified" }),
     ).rejects.toThrow(NotFoundError);
   },
+  "attempts.forVerification": async () => {
+    await expect(a.system.attempts.forVerification(bAttemptId)).resolves.toBeNull();
+  },
+  "attempts.expire": async () => {
+    await expect(a.system.attempts.expire(bAttemptId, new Date())).rejects.toThrow(NotFoundError);
+  },
+  "attempts.settleFailure": async () => {
+    await expect(a.system.attempts.settleFailure(bAttemptId)).rejects.toThrow(NotFoundError);
+  },
+  // Crosses organizations by design: IDs and times only, and it changes nothing.
+  "reconciliation.due": async () => {
+    const due = await reconciliation(db).due(new Date(), 5);
+    const rows = [due.expired, due.submissions, due.publishing, due.opened, due.unsettled].flat();
+    for (const row of rows) {
+      expect(
+        Object.keys(row).every((k) => ["orgId", "attemptId", "since", "status"].includes(k)),
+      ).toBe(true);
+    }
+  },
   "attempts.history": async () => {
     await expect(a.system.attempts.history(bAttemptId)).resolves.toEqual([]);
   },
@@ -714,6 +734,7 @@ function allHelperNames(): string[] {
     ...helperNames(a.system),
     ...helperNames(installs).map((name) => `installations.${name}`),
     ...helperNames(sessions).map((name) => `runnerSessions.${name}`),
+    ...helperNames(reconciliation(db)).map((name) => `reconciliation.${name}`),
   ];
 }
 
@@ -747,6 +768,8 @@ const readOnlyHelpers = [
   "attempts.submissionFor",
   "attempts.publication",
   "attempts.forCommit",
+  "attempts.forVerification",
+  "reconciliation.due",
 ];
 
 const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
@@ -1163,6 +1186,42 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
         action: "attempt.verification",
         target: `attempt:${attempt.id}`,
         metadata: { result: "verified", from: "PR_OPENED" },
+      },
+    ];
+  },
+  "attempts.expire": async () => {
+    const attempt = await a.system.attempts.create({
+      failureId: a.failure.id,
+      targetSha: a.failure.headSha,
+      failingCheck: "test",
+    });
+    await a.system.attempts.expire(attempt.id, new Date(Date.now() + 60 * 60_000));
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.expired",
+        target: `attempt:${attempt.id}`,
+        metadata: { from: "DISPATCHED", reason: "the healer never started" },
+      },
+    ];
+  },
+  "attempts.settleFailure": async () => {
+    const attempt = await a.system.attempts.create({
+      failureId: a.failure.id,
+      targetSha: a.failure.headSha,
+      failingCheck: "test",
+    });
+    await db.healAttempt.update({ where: { id: attempt.id }, data: { status: "GAVE_UP" } });
+    await db.pipelineFailure.update({ where: { id: a.failure.id }, data: { status: "HEALING" } });
+    await a.system.attempts.settleFailure(attempt.id);
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "failure.settled",
+        target: `failure:${a.failure.id}`,
+        metadata: { status: "NEEDS_HUMAN", attemptId: attempt.id },
       },
     ];
   },

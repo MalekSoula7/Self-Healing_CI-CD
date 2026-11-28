@@ -61,6 +61,18 @@ export async function enqueuePublish(queue: SubmissionsQueue, job: ValidationJob
   });
 }
 
+const PENDING_STATES = new Set(["waiting", "active", "delayed", "prioritized", "waiting-children"]);
+
+/** Whether an attempt's job is still going to run (or is running): the reconciler leaves it be. */
+export async function isSubmissionQueued(
+  queue: SubmissionsQueue,
+  name: "validate" | "publish",
+  attemptId: string,
+): Promise<boolean> {
+  const job = await queue.getJob(`${name}-${attemptId}`);
+  return job !== undefined && PENDING_STATES.has(await job.getState());
+}
+
 export async function processValidationJob(
   job: { id?: string | undefined; name: string; data: unknown },
   deps: SubmissionsDeps,

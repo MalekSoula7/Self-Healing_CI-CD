@@ -36,8 +36,42 @@ const OUTCOMES: Record<VerificationInput["result"], Outcome> = {
 /** A failure in one of these follows its newest attempt's verification. */
 const VERIFYING: FailureStatus[] = ["PR_OPENED", "VERIFIED", "UNVERIFIED", "NEEDS_HUMAN"];
 
+/** What verifying an attempt needs. */
+const VERIFIABLE = {
+  id: true,
+  status: true,
+  attemptNo: true,
+  branch: true,
+  commitSha: true,
+  prNumber: true,
+  prOpenedAt: true,
+  org: { select: { installationId: true, status: true } },
+  failure: {
+    select: {
+      id: true,
+      repo: {
+        select: {
+          id: true,
+          githubRepoId: true,
+          fullName: true,
+          enabled: true,
+          removedFromInstallationAt: true,
+        },
+      },
+      runs: { select: { workflowId: true, conclusion: true } },
+    },
+  },
+} as const;
+
 export function attemptVerification(db: Db, orgId: string, actor: Actor) {
   return {
+    /** The same, by the attempt's ID: for the reconciler (§2.2). Null when it isn't this org's. */
+    async forVerification(attemptId: string) {
+      const id = idSchema.safeParse(attemptId);
+      if (!id.success) return null;
+      return db.healAttempt.findFirst({ where: { id: id.data, orgId }, select: VERIFIABLE });
+    },
+
     /**
      * The attempt whose pull request carries this commit in this repository, with what verifying
      * it needs; null when PipeHeal didn't create the commit.
@@ -52,23 +86,7 @@ export function attemptVerification(db: Db, orgId: string, actor: Actor) {
           status: { in: WITH_PULL_REQUEST },
           failure: { repoId: repo.data },
         },
-        select: {
-          id: true,
-          status: true,
-          attemptNo: true,
-          branch: true,
-          commitSha: true,
-          prNumber: true,
-          prOpenedAt: true,
-          org: { select: { installationId: true, status: true } },
-          failure: {
-            select: {
-              id: true,
-              repo: { select: { id: true, githubRepoId: true, fullName: true } },
-              runs: { select: { workflowId: true, conclusion: true } },
-            },
-          },
-        },
+        select: VERIFIABLE,
         orderBy: { attemptNo: "desc" },
       });
     },

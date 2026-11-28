@@ -1028,6 +1028,29 @@ describe("pull requests", () => {
     expect(asked).toEqual(["octo-org:feature", "octo-org:other"]);
   });
 
+  it("finds the pull requests of a pipeheal/* branch in any state, never a fork's", async () => {
+    const asked: string[] = [];
+    mockServer.use(
+      http.get(`${REPO}/pulls`, ({ request }) => {
+        const query = new URL(request.url).searchParams;
+        asked.push(`${query.get("head") ?? ""} ${query.get("state") ?? ""}`);
+        const head = { ref: "pipeheal/abc-1", sha: SHA_B, repo: ownRepo };
+        return HttpResponse.json([
+          pull({ number: 31, state: "closed", head }),
+          pull({ number: 32, head: { ...head, repo: { id: 1, full_name: "someone/app" } } }),
+          pull({ number: 33, head: { ...head, ref: "pipeheal/abc-10" } }),
+        ]);
+      }),
+    );
+    const client = await repo();
+
+    await expect(client.findPullRequestsByHead("pipeheal/abc-1")).resolves.toMatchObject([
+      { number: 31, state: "closed" },
+    ]);
+    expect(asked).toEqual(["octo-org:pipeheal/abc-1 all"]);
+    await expect(client.findPullRequestsByHead("main")).rejects.toThrow(/pipeheal/);
+  });
+
   it("has no way to merge (PipeHeal never merges)", async () => {
     const client = await repo();
     expect(Object.keys(client).filter((key) => /merge/i.test(key))).toEqual([]);

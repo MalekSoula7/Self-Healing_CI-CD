@@ -8,6 +8,7 @@
 import { policyLayerSchema, type PolicyLayer } from "@pipeheal/policy";
 import { z } from "zod";
 import { attemptSteps } from "./attempt-steps";
+import { attemptRecovery } from "./reconciliation";
 import { attemptVerification } from "./verification";
 import { DISPATCH_TIMEOUT_MS } from "./runner-sessions";
 import { auditChanges, auditTarget, writeAudit, type Actor } from "./audit";
@@ -614,6 +615,7 @@ function buildSystemScope(ctx: ScopeContext) {
     attempts: {
       ...attemptSteps(db, orgId, actor),
       ...attemptVerification(db, orgId, actor),
+      ...attemptRecovery(db, orgId, actor),
 
       /**
        * Records a dispatched attempt on one of this org's failures (SPEC §2 step 7; the
