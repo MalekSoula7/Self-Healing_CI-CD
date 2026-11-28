@@ -8,6 +8,7 @@
 import { policyLayerSchema, type PolicyLayer } from "@pipeheal/policy";
 import { z } from "zod";
 import { attemptSteps } from "./attempt-steps";
+import { attemptVerification } from "./verification";
 import { DISPATCH_TIMEOUT_MS } from "./runner-sessions";
 import { auditChanges, auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
@@ -612,6 +613,7 @@ function buildSystemScope(ctx: ScopeContext) {
     ...base,
     attempts: {
       ...attemptSteps(db, orgId, actor),
+      ...attemptVerification(db, orgId, actor),
 
       /**
        * Records a dispatched attempt on one of this org's failures (SPEC §2 step 7; the
@@ -980,6 +982,7 @@ function buildSystemScope(ctx: ScopeContext) {
               prNumber: data.number,
               prUrl: data.url,
               draft: data.draft,
+              prOpenedAt: new Date(),
             },
           });
           if (count !== 1) throw new ConflictError("the attempt isn't publishing");

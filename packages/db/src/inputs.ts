@@ -428,6 +428,14 @@ export const pullRequestRecordSchema = z.strictObject({
 });
 export type PullRequestRecord = z.infer<typeof pullRequestRecordSchema>;
 
+/** CI's answer about an attempt's pull request (P5.3). */
+export const verificationSchema = z.strictObject({
+  result: z.enum(["verified", "failed", "unverified"]),
+  /** PipeHeal's own words, shown on the dashboard. */
+  reason: z.string().trim().min(1).max(300).optional(),
+});
+export type VerificationInput = z.input<typeof verificationSchema>;
+
 /** A dispatch that didn't produce a healer run the attempt can be bound to. */
 export const dispatchFailureSchema = z.strictObject({
   reason: z.string().trim().min(1).max(300),

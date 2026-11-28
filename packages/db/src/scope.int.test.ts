@@ -422,6 +422,27 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
       NotFoundError,
     );
   },
+  "attempts.forCommit": async () => {
+    const { status, commitSha, updatedAt } = await db.healAttempt.findUniqueOrThrow({
+      where: { id: bAttemptId },
+    });
+    await db.healAttempt.update({
+      where: { id: bAttemptId },
+      data: { commitSha: "e".repeat(40), status: "PR_OPENED" },
+    });
+    await expect(b.system.attempts.forCommit(b.repo.id, "e".repeat(40))).resolves.not.toBeNull();
+    await expect(a.system.attempts.forCommit(b.repo.id, "e".repeat(40))).resolves.toBeNull();
+    // As it was, so the snapshot around this case compares only what the helper did.
+    await db.healAttempt.update({
+      where: { id: bAttemptId },
+      data: { status, commitSha, updatedAt },
+    });
+  },
+  "attempts.recordVerification": async () => {
+    await expect(
+      a.system.attempts.recordVerification(bAttemptId, { result: "verified" }),
+    ).rejects.toThrow(NotFoundError);
+  },
   "attempts.history": async () => {
     await expect(a.system.attempts.history(bAttemptId)).resolves.toEqual([]);
   },
@@ -725,6 +746,7 @@ const readOnlyHelpers = [
   "attempts.brief",
   "attempts.submissionFor",
   "attempts.publication",
+  "attempts.forCommit",
 ];
 
 const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
@@ -1120,6 +1142,27 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
         action: "attempt.publish_failed",
         target: `attempt:${attempt.id}`,
         metadata: { reason: "GitHub refused the commit" },
+      },
+    ];
+  },
+  "attempts.recordVerification": async () => {
+    const attempt = await validated();
+    await a.system.attempts.claimPublish(attempt.id, "pipeheal/abc-1");
+    await a.system.attempts.recordPullRequest(attempt.id, {
+      number: 7,
+      url: "https://github.com/x/y/pull/7",
+      draft: false,
+    });
+    await a.system.attempts.recordVerification(attempt.id, { result: "verified" });
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${attempt.id}` },
+      { actorType: "SYSTEM", action: "attempt.publishing", target: `attempt:${attempt.id}` },
+      { actorType: "SYSTEM", action: "attempt.pr_opened", target: `attempt:${attempt.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.verification",
+        target: `attempt:${attempt.id}`,
+        metadata: { result: "verified", from: "PR_OPENED" },
       },
     ];
   },

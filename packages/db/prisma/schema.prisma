@@ -525,6 +525,12 @@ enum AttemptStatus {
   PUBLISHING
   /// Its pull request is open; CI on it decides what's next (SPEC §9.1, P5.3).
   PR_OPENED
+  /// CI passed on PipeHeal's commit.
+  VERIFIED
+  /// CI failed on PipeHeal's commit.
+  CI_FAILED
+  /// CI never answered: nothing ran, it didn't finish in time, or someone else pushed.
+  UNVERIFIED
   /// The submission broke a rule, failed a check or a test, or couldn't be checked.
   REJECTED
   /// The failing check passed on the runner before any change (SPEC §7.3).
@@ -570,6 +576,8 @@ model HealAttempt {
   prNumber         Int?
   prUrl            String?
   draft            Boolean?
+  /// When the pull request was recorded: the verification timeouts count from here (SPEC §2.2).
+  prOpenedAt       DateTime?
   /// Model turns taken (SPEC §7.3's iteration cap).
   iterations       Int             @default(0)
   /// Why the attempt ended, when it did: a stop condition or the model's own words, bounded.
@@ -585,6 +593,7 @@ model HealAttempt {
   @@unique([failureId, attemptNo])
   @@unique([orgId, id])
   @@index([orgId, createdAt])
+  @@index([orgId, commitSha])
 }
 
 enum AgentStepStatus {

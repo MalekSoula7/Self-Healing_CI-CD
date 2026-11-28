@@ -109,7 +109,7 @@ function name(text: string): string {
 }
 
 /** A link only to GitHub's own pages, or nothing. */
-function githubLink(label: string, url: string | null): string | null {
+export function githubLink(label: string, url: string | null): string | null {
   return url !== null && /^https:\/\/github\.com\/[^\s()<>]+$/.test(url)
     ? `[${label}](${url})`
     : null;

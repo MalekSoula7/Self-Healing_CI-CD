@@ -1,7 +1,8 @@
 // `workflow_run` completed (SPEC §2 steps 2 and 4, §2.1): filters the run, then attaches a failed
 // run to its commit's failure, records a re-run that passed, and closes the collection window
-// early once every watched run of the commit has completed. Checks that need no GitHub call run
-// first: most events (successful runs of commits that never failed) cost none.
+// early once every watched run of the commit has completed. A run on PipeHeal's own branch goes to
+// verification (./verify.ts) instead. Checks that need no GitHub call run first: most events
+// (successful runs of commits that never failed) cost none.
 import {
   forSystem,
   installations,
@@ -18,6 +19,7 @@ import {
   type WorkflowRunEvent,
 } from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
+import { verifyAttempt } from "./verify";
 import type { WebhookProcessorDeps } from "./webhooks";
 import { syncRepoWorkflows } from "./workflow-sync";
 
@@ -88,8 +90,6 @@ async function resolveTarget(
   if (run.fromFork) return "from a fork";
   // Triggers that run in the base repository's context can execute a fork's code anyway.
   if (!TRUSTED_RUN_EVENTS.has(run.event)) return `event ${run.event}`;
-  // Runs on PipeHeal's own branches belong to an attempt (P5.3), never to a new failure.
-  if (run.headBranch !== null && isHealBranch(run.headBranch)) return "PipeHeal branch";
   if (run.path === HEALER_WORKFLOW_PATH) return "the healer workflow";
 
   const org = await installations(deps.db, "webhook").findByInstallationId(event.installation.id);
@@ -118,6 +118,21 @@ export async function processWorkflowRunEvent(
     return;
   }
   const { orgId, system, repo } = target;
+  // Runs on PipeHeal's own branches belong to an attempt, never to a new failure (§9.1).
+  if (run.headBranch !== null && isHealBranch(run.headBranch)) {
+    // By the commit PipeHeal created, never by the branch name alone.
+    const attempt = await system.attempts.forCommit(repo.id, run.headSha);
+    if (attempt?.branch !== run.headBranch) {
+      ignore("PipeHeal branch, not PipeHeal's commit");
+      return;
+    }
+    if (deps.githubApp === null) {
+      log.warn("GitHub App isn't configured; skipping verification");
+      return;
+    }
+    await verifyAttempt(deps.githubApp, system, attempt, log);
+    return;
+  }
   const failed = run.conclusion !== null && FAILED.has(run.conclusion);
   const existing = failed ? null : await system.failures.findBySha(repo.id, run.headSha);
   // A run that passed or was cancelled only matters to a failure of the same commit.
