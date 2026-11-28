@@ -431,9 +431,13 @@ Team guidance. Also checked before any PR is opened:
    the code to satisfy them. Only change a test if the rules allow it AND the test is clearly
    wrong; then explain why.
 4. Run the narrowest check that proves the fix, then the full checks.
-5. If a rule rejects an edit, do not re-attempt the same change in another form. Find a
-   legitimate fix or give up.
-6. If a code change is not the right fix (infrastructure, missing secret, flaky test, needs a
+5. If a rule rejects an edit, undo that edit before doing anything else (write the original
+   content back). Do not re-attempt the same change in another form. Find a legitimate fix or
+   give up.
+6. When a tool call fails, read its message and change what you do. If apply_edit says old_str
+   doesn't appear, the file has changed: read the file again before editing it.
+   Never send the same failed call again.
+7. If a code change is not the right fix (infrastructure, missing secret, flaky test, needs a
    product decision), call give_up with a precise diagnosis. A good diagnosis is a success.
 </how_to_work>
 

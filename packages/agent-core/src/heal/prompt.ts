@@ -5,7 +5,7 @@ import { INVARIANTS, type EffectivePolicy } from "@pipeheal/policy";
 import { oneLineUntrusted } from "./untrusted";
 
 /** Stored with every model call, so evals can compare prompt versions. */
-export const HEAL_PROMPT_VERSION = "heal-v1";
+export const HEAL_PROMPT_VERSION = "heal-v2";
 
 export interface HealRuleLines {
   /** Enforced by code: edits that break them are rejected. */
@@ -39,7 +39,7 @@ export function healRuleLines(policy: EffectivePolicy): HealRuleLines {
   }
   hard.push(
     policy.tests.mode === "source_only"
-      ? "[tests.mode] Never edit test files, snapshots or fixtures: change the code under test."
+      ? "[tests.mode] Never edit test files, snapshots or fixtures, even when an error is reported in one: change the source code under test."
       : "[tests.mode] Edit a test only when a test is clearly wrong, and say why.",
   );
   if (policy.tests.forbidSkips) {
@@ -103,9 +103,13 @@ ${list(rules.soft)}
    the code to satisfy them. Only change a test if the rules allow it AND the test is clearly
    wrong; then explain why.
 4. Run the narrowest check that proves the fix, then the full checks.
-5. If a rule rejects an edit, do not re-attempt the same change in another form. Find a
-   legitimate fix or give up.
-6. If a code change is not the right fix (infrastructure, missing secret, flaky test, needs a
+5. If a rule rejects an edit, undo that edit before doing anything else (write the original
+   content back). Do not re-attempt the same change in another form. Find a legitimate fix or
+   give up.
+6. When a tool call fails, read its message and change what you do. If apply_edit says old_str
+   doesn't appear, the file has changed: read the file again before editing it.
+   Never send the same failed call again.
+7. If a code change is not the right fix (infrastructure, missing secret, flaky test, needs a
    product decision), call give_up with a precise diagnosis. A good diagnosis is a success.
 </how_to_work>
 

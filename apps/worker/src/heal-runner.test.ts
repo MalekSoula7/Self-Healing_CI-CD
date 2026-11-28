@@ -111,7 +111,7 @@ describe("healTurnRunner", () => {
       toolCalls: [{ tool: "read_file", path: "src/cart.ts" }],
       model: {
         model: "qwen3:14b",
-        promptVersion: "heal-v1",
+        promptVersion: "heal-v2",
         inputTokens: 500,
         outputTokens: 50,
         text: "The total sums counts.",

@@ -31,7 +31,7 @@ describe("healRuleLines", () => {
     }
     expect(hard).toEqual(
       expect.arrayContaining([
-        "[tests.mode] Never edit test files, snapshots or fixtures: change the code under test.",
+        "[tests.mode] Never edit test files, snapshots or fixtures, even when an error is reported in one: change the source code under test.",
         "[limits.maxFilesChanged] Change at most 5 files.",
         "[limits.maxLinesChanged] Change at most 150 lines in total.",
       ]),
@@ -129,7 +129,15 @@ describe("buildHealSystemPrompt", () => {
       expect(prompt).toContain(section);
     }
     expect(prompt).toContain("Finish with submit_fix");
-    expect(HEAL_PROMPT_VERSION).toBe("heal-v1");
+    expect(HEAL_PROMPT_VERSION).toBe("heal-v2");
+  });
+
+  it("says how to recover from a rejected or failed edit", () => {
+    const prompt = buildHealSystemPrompt({ hard: [], soft: [] });
+
+    expect(prompt).toContain("undo that edit before doing anything else");
+    expect(prompt).toContain("read the file again");
+    expect(prompt).toContain("Never send the same failed call again");
   });
 
   it("says so when there is no team guidance", () => {
