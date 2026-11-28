@@ -215,6 +215,54 @@ describe("readToolCalls", () => {
     });
   });
 
+  describe("an end written as text", () => {
+    const fix = '{"root_cause":"a","changes":"b","verification":"c","confidence":"high"}';
+
+    it("reads submit_fix written in the message text, as the call it names", () => {
+      expect(readToolCalls(undefined, `submit_fix\n${fix}`)).toEqual({
+        kind: "submit",
+        fix: { rootCause: "a", changes: "b", verification: "c", confidence: "high" },
+      });
+    });
+
+    it("reads give_up the same way", () => {
+      const give = '{"diagnosis":"d","category":"config","suggested_next_step":"e"}';
+
+      expect(readToolCalls([], `  give_up\n${give}  `)).toEqual({
+        kind: "give_up",
+        diagnosis: "d",
+        category: "config",
+        suggestedNextStep: "e",
+      });
+    });
+
+    it("takes a structured call over the text", () => {
+      expect(
+        readToolCalls([call("read_file", { path: "src/a.ts" })], `submit_fix\n${fix}`),
+      ).toEqual({
+        kind: "calls",
+        calls: [{ path: "src/a.ts", tool: "read_file" }],
+      });
+    });
+
+    it("validates it like a structured call: a malformed fix is invalid", () => {
+      expect(readToolCalls(undefined, 'submit_fix\n{"root_cause":"a"}')).toEqual({
+        kind: "invalid",
+        reason: "a malformed submit_fix",
+      });
+    });
+
+    it.each([
+      ["prose around the call", `Here is the fix. submit_fix\n${fix}`],
+      ["a tool other than the two ends", 'read_file\n{"path":"src/a.ts"}'],
+      ["broken JSON", "submit_fix\n{root_cause:"],
+      ["no JSON at all", "submit_fix"],
+      ["a JSON list", "submit_fix\n[1,2]"],
+    ])("reads nothing from %s", (_case, content) => {
+      expect(readToolCalls(undefined, content)).toEqual({ kind: "none" });
+    });
+  });
+
   it("finds no call in an empty or missing list", () => {
     expect(readToolCalls(undefined)).toEqual({ kind: "none" });
     expect(readToolCalls([])).toEqual({ kind: "none" });

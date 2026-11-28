@@ -230,8 +230,38 @@ function argumentsOf(raw: unknown): Record<string, unknown> | null {
     : null;
 }
 
-/** Reads Ollama's `message.tool_calls`. */
-export function readToolCalls(raw: unknown): ToolCallsRead {
+const ENDS_AS_TEXT = ["submit_fix", "give_up"] as const;
+
+/**
+ * An end written as text: the model's whole message is `submit_fix` (or `give_up`) and then its
+ * arguments as a JSON object. Some models do this instead of a tool call (seen with qwen3). It is
+ * read as that call, and validated the same way; anything else in the message reads as nothing.
+ */
+function endWrittenAsText(
+  content: string | undefined,
+): { name: string; args: Record<string, unknown> } | null {
+  if (content === undefined) return null;
+  const text = content.trim();
+  const name = ENDS_AS_TEXT.find((candidate) => text.startsWith(candidate));
+  if (name === undefined) return null;
+  const body = text.slice(name.length).trim();
+  if (!body.startsWith("{") || !body.endsWith("}")) return null;
+  const args = argumentsOf(body);
+  return args === null ? null : { name, args };
+}
+
+/**
+ * Reads Ollama's `message.tool_calls`, or, when it has none, an end the model wrote in its
+ * message `content` (see endWrittenAsText).
+ */
+export function readToolCalls(raw: unknown, content?: string): ToolCallsRead {
+  const structured = readStructuredCalls(raw);
+  if (structured.kind !== "none") return structured;
+  const written = endWrittenAsText(content);
+  return written === null ? { kind: "none" } : endOrCalls([written]);
+}
+
+function readStructuredCalls(raw: unknown): ToolCallsRead {
   if (raw === undefined || raw === null) return { kind: "none" };
   const list = z.array(rawCallSchema).max(LIMITS.toolCallsPerStep).safeParse(raw);
   if (!list.success) return { kind: "invalid", reason: "tool calls the protocol can't read" };
@@ -243,6 +273,10 @@ export function readToolCalls(raw: unknown): ToolCallsRead {
     if (args === null) return { kind: "invalid", reason: "tool arguments that aren't an object" };
     calls.push({ name: call.function.name, args });
   }
+  return endOrCalls(calls);
+}
+
+function endOrCalls(calls: { name: string; args: Record<string, unknown> }[]): ToolCallsRead {
   const ends = calls.filter((call) => call.name === "submit_fix" || call.name === "give_up");
   if (ends.length > 0) {
     const [end] = ends;

@@ -167,7 +167,7 @@ export function healTurnRunner(deps: HealRunnerDeps): TurnRunner {
           };
         }
         responses.push(response);
-        const read = readToolCalls(response.message.tool_calls);
+        const read = readToolCalls(response.message.tool_calls, response.message.content);
         const model = summary(responses, deps.model, Date.now() - started);
         // Counts only: the conversation stays out of the logs.
         deps.logger.info(
