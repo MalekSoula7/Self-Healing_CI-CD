@@ -46,7 +46,8 @@ When a failure can't or shouldn't be fixed by a code change (infrastructure, mis
 
 GitHub does not redeliver failed webhook deliveries on its own, and every waiting state can hang. The `maintenance` queue runs a periodic reconciler:
 - It lists failed deliveries with the App webhook deliveries API (`GET /app/hook/deliveries`) and redelivers them (`POST /app/hook/deliveries/{id}/attempts`). Delivery-ID idempotency makes this safe: a redelivery of an already processed delivery is acknowledged and dropped.
-- A delivery we accepted (2xx) but whose processing the worker gave up on never shows as failed at GitHub. Redelivering it (GitHub's "Redeliver" button, for now) reruns it: the webhook route retries its failed job with fresh attempts, or re-enqueues it if the job was pruned, and leaves a job still in progress alone (P1 checkpoint follow-up). Processors are idempotent. Finding these automatically (unprocessed `WebhookDelivery` rows with an `error`) belongs with the reconciler (P5.3).
+- A delivery we accepted (2xx) but whose processing the worker gave up on never shows as failed at GitHub. Redelivering it (GitHub's "Redeliver" button, for now) reruns it: the webhook route retries its failed job with fresh attempts, or re-enqueues it if the job was pruned, and leaves a job still in progress alone (P1 checkpoint follow-up). Processors are idempotent. The reconciler finds these automatically (unprocessed `WebhookDelivery` rows with an `error`, §2.6).
+- Automatic redelivery covers `workflow_run` only: processing it re-reads GitHub, so a late copy is harmless. Installation events change state in order, so they are redelivered by hand until their processors read the current state (§15).
 - It enforces a timeout on every non-terminal state. Defaults (tune later):
 
 | State | Timeout | Then |
@@ -55,6 +56,38 @@ GitHub does not redeliver failed webhook deliveries on its own, and every waitin
 | Attempt in the agent loop | session TTL (§5.4) | `FAILED` |
 | `PR_OPENED`, no selected workflow run started on the PR head | 30 min | `UNVERIFIED` + PR comment (the customer's CI doesn't run on this PR) |
 | `PR_OPENED`, runs started but not completed | 6 h | `UNVERIFIED` + PR comment |
+
+### 2.6 Verification and recovery, in code (P5.3)
+
+**Which runs count.** A `workflow_run` on a `pipeheal/*` branch is matched to its attempt by the commit PipeHeal created (and the branch must be that attempt's). The webhook only says "look again": the commit's runs are listed from GitHub, and only watched workflows, this repository's own code, trusted triggers and the attempt's branch count. The healer workflow never does.
+
+**The verdict (D22).**
+- Nothing is decided while a counted run is unfinished.
+- Any failed, timed-out or unstartable run is red.
+- Green needs proof: every workflow that failed originally succeeded in a `push` or `pull_request` run, and every job that failed originally succeeded there, its failed step included.
+- Otherwise it waits.
+
+**Recording.**
+- Green: the attempt and failure become `VERIFIED`.
+- Red: the attempt is `CI_FAILED`, the failure `NEEDS_HUMAN`, and the PR gets one comment naming the failed jobs, only for the first failure and only while it is open. The retry of §9.1 is not built yet (P5.3d).
+- The PR's head isn't PipeHeal's commit: `UNVERIFIED`, no verdict either way.
+- Answers are ordered by how far CI had got (the sum of the runs' attempts), so a slow job can't overwrite a newer answer.
+
+**The reconciler** runs every 5 minutes on the `maintenance` queue. Each item stands alone, and rate-limited installations are skipped.
+
+| What | After | Then |
+|---|---|---|
+| `DISPATCHED` with no session | 15 min | attempt and failure `FAILED` |
+| Session expired before the runner finished | at expiry | the same |
+| `VALIDATING` or `VALIDATED` with no queued job | 10 min | queue it again; after 2 h, give up if a job ran and left it there |
+| `PUBLISHING` | 15 min | record the PR that carries PipeHeal's commit, else `FAILED`; after 24 h without an answer, `FAILED` |
+| `PR_OPENED` | 10 min | verify (a webhook may be missed) |
+| `PR_OPENED`, nothing started, or finished without proof | 30 min | `UNVERIFIED` and a comment |
+| `PR_OPENED`, CI unfinished | 6 h | the same |
+| `HEALING` failure whose newest attempt ended | next sweep | `NEEDS_HUMAN`, `NOT_REPRODUCIBLE` or `FAILED` |
+| Flaky re-run with no report | 6 h | `SKIPPED` |
+
+**Redelivery** runs after the sweep: `workflow_run` events from the last 24 hours that never got a 2xx, or that the worker gave up on. At most 5 attempts per event, after gaps of 10 min, 30 min, 2 h and 6 h, and at most 50 per sweep.
 
 ### 2.5 The pull request, in code (P5.2)
 
@@ -746,6 +779,13 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 3 (resolved, D13):** org defaults are split from org guardrails (§8.1); every field has a merge rule (§8.4).
 - **Resolved (D14), was CHECKPOINT 3 from the P3.6 red team:** rules no stated rule covers, each cheap and statically checkable, to add or not: tautological assertions (`expect(true).toBe(true)`, `assert True`, tuple asserts); assertions inside `try/catch` or `except AssertionError`; unawaited `.resolves`/`.rejects`; retry settings (`jest.retryTimes`, `{ retry }`); mocking the module under test; in source, test-environment detection (`VITEST`, `"pytest" in sys.modules`), empty `catch {}`/`except: pass`, test-framework monkeypatching or pytest hooks, `as any`/`as unknown as`, warning filters; imports of packages no manifest declares. Decided in D14: the tricks above become rules, except mocking the module under test and undeclared imports (later, server side); packed lines count as several; doctests count as tests; edits under file-wide suppressions open a draft PR. Still open: checking that a lockfile only moves the bumped packages (Phase 4; the default `frozen` makes it rare).
 - **Phase 4 (from P3.6):** the server must refuse a path whose ancestor isn't a directory in the base tree (writing through a symlinked directory, or under an existing file); treat an empty JUnit baseline (the suite didn't compile) and a missing or zero-test report as "behavioral checks unavailable" or a failure; resolve protected configs' `extends` and local plugins.
+- **From P5.3a-c and their security review:**
+  - **Installation events (H1).** Make `installation` and `installation_repositories` processors apply GitHub's current state (`GET /app/installations/{id}`, never replace a newer installation ID, re-list before removing). Until then they aren't redelivered automatically, and the manual "Redeliver" button can still replay stale state.
+  - **A second pull request (M3).** Someone with push access could open one from PipeHeal's branch into a base with a weaker workflow, and its `pull_request` run counts as proof if the same job and step names pass. Tie proof to the recorded PR and base.
+  - **Starvation of the sweep (L3).** 100 open PRs with unfinished or erroring CI delay newer ones for up to 6-24 h. Order by a last-checked time.
+  - **A push before CI finishes (L5)** ends the attempt `UNVERIFIED` without a red comment. By design; consider one comment.
+  - **A step left `PENDING`** (P4.3) is only ended when its session expires. Add a shorter timeout if it shows up.
+  - The reconciler lists across organizations (IDs and times only) through `reconciliation(db).due`, the one such listing.
 - **From P5.2 and its security review:**
   - **Don't heal what can't take a PR.** Store `run.event` on `FailedRun` and skip tag pushes and `merge_group` runs at dispatch, so no heal is spent on them. Today `publish` refuses them, but only at the end (M1).
   - **The §2.2 reconciler (P5.3)** needs rows for VALIDATED (re-queue `publish`) and PUBLISHING (look up the branch and the PR on GitHub: record one that exists, otherwise `failPublish`). It also needs a `claimedAt`. A PR opened whose recording failed twice stays PUBLISHING until then (M3).
@@ -856,6 +896,7 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 | D11 | 2026-11-25 | Self-hosted open-weight models on Ollama replace the Anthropic API, for triage and healing, in development and production (§3, §4, §7.5, §12, §13). Default `qwen3:14b` for both. Supersedes D6. | Chosen by Malek: the application's host has a GPU (RTX 3060 12 GB), so no per-token cost and no third-party model provider. Trade-offs: one GPU serializes model calls, and a 14B model heals less than a frontier model (measured by the Phase 8 evals). |
 | D12 | 2026-11-25 | The per-attempt cost cap becomes a model-token cap: `limits.maxModelTokensPerAttempt`, default 300,000, plan maximum 2,000,000 (§8.2 INV-CAPS, §8.3) | Chosen by Malek. With self-hosted models (D11) a dollar cap never triggers; tokens are what an attempt spends on the GPU, and Ollama reports them per call. The wall-clock cap stays. |
 | D13 | 2026-11-25 | Org defaults and the repo dashboard override (an admin may loosen); `.pipeheal.yml`, `code` custom rules and org guardrails only tighten (§8.1, §8.4) | Chosen by Malek over "most restrictive wins everywhere", where the org defaults were a floor no repository could go below. Guardrails keep a ceiling; the repo file, which anyone who can push may edit, still can't loosen anything. |
+| D22 | 2026-11-28 | **Proposed, not decided:** a fix is `VERIFIED` only when no watched workflow failed on PipeHeal's commit and every originally failing job and step ran and passed there in a `push` or `pull_request` run. Otherwise it ends `UNVERIFIED` (§2.6) | §9.1 says "green" without defining it. A run can succeed with the failing job skipped, and a `push`-only workflow may not run on the PR at all: calling that verified would be false. The cost is more `UNVERIFIED` results. Malek's call. |
 | D21 | 2026-11-27 | **Proposed, not decided:** the soft-rule judge fails closed. A judge rule it couldn't judge rejects the submission like a violation: past the rule cap, a diff too large to read whole, no valid answer, the model unreachable, or the deadline (§8.7) | SPEC §8.7 says what a violation does, not what happens when the judge can't decide. Failing open would let an attacker skip team rules by padding the diff or flooding `.pipeheal.yml`. The cost is that a flaky model or a large fix blocks the PR. Malek's call. |
 | D20 | 2026-11-27 | **Proposed, not decided:** the healer job runs in a GitHub environment (`environment: pipeheal`), which the gateway requires as an OIDC claim; setup steps don't cache (§15) | P4.5 security review H1: code under test can mint default-branch OIDC tokens and write the default-branch cache from inside the healer job. Changes what customers set up, so it's Malek's call. |
 | D19 | 2026-11-27 | Until a dedicated action repo is published, healer workflows load heal-action from the monorepo at a pinned SHA: `uses: MalekSoula7/Self-Healing_CI-CD/packages/heal-action@<sha>`, with the bundled `dist/` committed (P4.5) | Chosen by Malek. No new repository needed yet; onboarding's generated YAML switches to `pipeheal/heal-action@v1` once it is published. |

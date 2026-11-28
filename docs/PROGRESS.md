@@ -1252,3 +1252,16 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
 - **Encoding pitfall (for future sessions):** text sent through tool inputs has its backslash escapes decoded (unicode escapes, and backslash-b becomes a backspace) before it reaches files or the shell. Write backslashes with chr(92) from Python, or build characters with `String.fromCodePoint`, and scan new files for control or hidden characters.
 - **Gate:** typecheck, lint, and `pnpm test` twice.
 
+
+## 2026-11-28 · P5.3 verification and recovery (a, b, c; the retry is still open)
+
+- **What it does** (SPEC §2.6, new):
+  - **P5.3a:** CI on PipeHeal's own commit ends the attempt VERIFIED, CI_FAILED (one PR comment, failure NEEDS_HUMAN) or UNVERIFIED.
+  - **P5.3b:** a five-minute reconciler: dead sessions, lost submission jobs, interrupted publishes, missed webhooks, silent CI, stuck failures, silent re-runs.
+  - **P5.3c:** redelivery of failed `workflow_run` webhooks with the App's JWT. Delivery IDs are read as text.
+  - Migrations `verification` and `verification_evidence`.
+- **Fixed on the way:** a serialization conflict raised at COMMIT (`DriverAdapterError`) wasn't retried by `claimDispatch`.
+- **Security review: no critical findings, two high.** Fixed: H1 (stale installation events replayed), H2 (verified with the failed job skipped), M1-M4, L1, L2, L4. L3, L5 and the rest of H1 and M3 are in SPEC §15.
+- **Proposed D22** (what counts as verified) awaits Malek.
+- **Not done:** P5.3d, the retry with the new failure as context on the same branch. The P5.3 box stays unticked until then.
+- **Gate:** typecheck, lint, format, 2,482 tests.
