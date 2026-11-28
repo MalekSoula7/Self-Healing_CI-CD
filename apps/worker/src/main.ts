@@ -25,6 +25,7 @@ import {
   scheduleReconciler,
 } from "./queues/maintenance";
 import { reconcile } from "./queues/reconcile";
+import { redeliverFailed } from "./queues/redeliver";
 import { createWebhooksQueue, createWebhooksWorker } from "./queues/webhooks";
 import { createRateLimitRedis, createRedis, pingRedis } from "./redis";
 import { createShutdown } from "./shutdown";
@@ -139,10 +140,11 @@ async function main(): Promise<void> {
     attempts: async (orgId) => (await forSystem(db, orgId, "gateway")).attempts,
     enqueueValidation: (job) => enqueueValidation(submissionsQueue, job),
   });
-  // The §2.2 reconciler: timeouts, lost jobs and missed webhooks.
-  const maintenanceWorker = createMaintenanceWorker(redis, logger, undefined, () =>
-    reconcile({ db, githubApp, pacing, submissions: submissionsQueue, logger }),
-  );
+  // The §2.2 reconciler: timeouts, lost jobs and missed webhooks, then failed deliveries.
+  const maintenanceWorker = createMaintenanceWorker(redis, logger, undefined, async () => {
+    await reconcile({ db, githubApp, pacing, submissions: submissionsQueue, logger });
+    await redeliverFailed({ db, githubApp, logger });
+  });
   const internal = buildInternalServer({ logger, checks: { redis: () => pingRedis(redis) } });
 
   const shutdown = createShutdown({

@@ -10,6 +10,7 @@ import {
   type GitHubClientOptions,
   type RateLimitState,
 } from "./client";
+import { webhookDeliveries } from "./deliveries";
 import { GuardError } from "./guards";
 import { repoClient, type RepoClient } from "./repo";
 
@@ -40,6 +41,9 @@ export function createGitHubApp(config: GitHubAppConfig) {
   const app = new App({ appId: config.appId, privateKey: config.privateKey, Octokit });
 
   return {
+    /** The App webhook's deliveries, for redelivering failed ones (SPEC §2.2). */
+    webhookDeliveries: webhookDeliveries(app.octokit),
+
     /** A client acting as one installation of the App. */
     async installation(installationId: bigint) {
       const octokit = await app.getInstallationOctokit(Number(installationId));

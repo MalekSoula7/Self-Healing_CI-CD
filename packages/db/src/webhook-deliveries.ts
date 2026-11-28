@@ -90,6 +90,23 @@ export async function installationDeliveryState(
   return latest.error === null ? "processing" : "failed";
 }
 
+/**
+ * Which of these deliveries we accepted but never processed, with an error on record: the worker
+ * gave up on them (or is still retrying), and GitHub shows them delivered (SPEC §2.2).
+ */
+export async function failedWebhookDeliveries(
+  db: Db,
+  deliveryIds: readonly string[],
+): Promise<Set<string>> {
+  const ids = deliveryIds.filter((id) => deliveryIdSchema.safeParse(id).success);
+  if (ids.length === 0) return new Set();
+  const rows = await db.webhookDelivery.findMany({
+    where: { deliveryId: { in: ids }, processedAt: null, error: { not: null } },
+    select: { deliveryId: true },
+  });
+  return new Set(rows.map((row) => row.deliveryId));
+}
+
 /** Records the latest processing failure. `error` must already be redacted (CLAUDE.md). */
 export async function markWebhookDeliveryFailed(
   db: Db,

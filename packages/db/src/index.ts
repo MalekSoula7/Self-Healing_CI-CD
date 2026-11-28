@@ -83,6 +83,7 @@ export { DEV_DATABASE_URL, databaseUrlSchema, tlsUnlessLoopback } from "./url";
 export { GITHUB_PROVIDER_ID, githubIdentity, type GitHubIdentity } from "./users";
 export {
   installationDeliveryState,
+  failedWebhookDeliveries,
   markWebhookDeliveryFailed,
   type InstallationDeliveryState,
   markWebhookDeliveryProcessed,
