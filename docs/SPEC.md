@@ -69,7 +69,7 @@ GitHub does not redeliver failed webhook deliveries on its own, and every waitin
 
 **Recording.**
 - Green: the attempt and failure become `VERIFIED`.
-- Red: the attempt is `CI_FAILED`, the failure `NEEDS_HUMAN`, and the PR gets one comment naming the failed jobs, only for the first failure and only while it is open. The retry of §9.1 is not built yet (P5.3d).
+- Red: the attempt is `CI_FAILED`, the failure `NEEDS_HUMAN`, and the PR gets one comment naming the failed jobs, only for the first failure and only while it is open. A retry starts first when one is allowed (below).
 - The PR's head isn't PipeHeal's commit: `UNVERIFIED`, no verdict either way.
 - Answers are ordered by how far CI had got (the sum of the runs' attempts), so a slow job can't overwrite a newer answer.
 
@@ -88,6 +88,14 @@ GitHub does not redeliver failed webhook deliveries on its own, and every waitin
 | Flaky re-run with no report | 6 h | `SKIPPED` |
 
 **Redelivery** runs after the sweep: `workflow_run` events from the last 24 hours that never got a 2xx, or that the worker gave up on. At most 5 attempts per event, after gaps of 10 min, 30 min, 2 h and 6 h, and at most 50 per sweep.
+
+**The retry (P5.3d).** After the first red answer, a second heal starts when `HEAL_DISPATCH` is on, attempts remain, and the new failure passes the same gates as a first dispatch (category from the new logs by heuristics only, branch and workflow scope, setup).
+- **Claim.** Same caps and one-attempt-per-repository rule. The attempt targets PipeHeal's commit, and the failure is `HEALING` again. A busy repository or a reached cap leaves it to a person.
+- **Brief.** The new failed jobs' redacted error windows, as untrusted data, with a note that an earlier fix is in the checkout.
+- **Validation.** All attempts' files together, over the commit the first one healed, against its test baseline and the same limits and judge. Refused: a retry that changes nothing, or that re-creates a file an earlier attempt deleted.
+- **Publish.** One more commit on the same branch, never forced, only while the branch and the open PR sit on the failed commit. Refused when the earlier fix passed meanwhile, or when this fix needs a draft and the PR is ready for review. A comment lists what was pushed.
+- **Verification.** What failed on PipeHeal's earlier commits must also run and pass.
+- **Ending without a commit** leaves the failure `NEEDS_HUMAN`, or `VERIFIED` if the earlier fix passed meanwhile.
 
 ### 2.5 The pull request, in code (P5.2)
 
@@ -162,7 +170,7 @@ A passing validation queues `publish` on the `submissions` queue.
    - the repository has no command for the failing check.
 
    The failing check comes from the category: lint, typecheck, test and build map to themselves, compile to typecheck (or build when there is no typecheck command), and dependency to install.
-3. **`HEAL_DISPATCH`** (worker env, default false) must be `true` for any healer run to start. The diagnosis above is recorded either way. Off until D20 is decided (P4.8 review H1).
+3. **`HEAL_DISPATCH`** (worker env, default false) must be `true` for any healer run to start. The diagnosis above is recorded either way. Off until D20 is built (P4.8 review H1).
 4. **Claims** (`attempts.claimDispatch`, one serializable transaction). The failure must still be TRIAGED, the org ACTIVE, the repository enabled and installed, and no re-run of ours pending. The caps (D18) come next:
    - no attempt in flight for the repository: dispatched within the 15-minute dispatch timeout, or with a session that hasn't expired. A crashed dispatch or an expired session can't hold a repository for good;
    - the failure under `maxAttemptsPerFailure`;
@@ -618,7 +626,7 @@ The judge, in code (P4.7; agent-core `judge/judge.ts`, worker `judge-model.ts`):
   - the diff is judged whole or not at all, with a pessimistic token estimate of at most 12,000, measured after neutralization;
   - a deadline;
   - an answer whose prompt may have overflowed the context (Ollama's own count) is refused.
-- **Fails closed (D21, proposed).** These rules count as unjudged:
+- **Fails closed (D21).** These rules count as unjudged:
   - a rule past the cap;
   - a rule whose diff is too large;
   - one where the model couldn't be reached or gave no valid answer;
@@ -783,6 +791,11 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 - **Phase 3 (resolved, D13):** org defaults are split from org guardrails (§8.1); every field has a merge rule (§8.4).
 - **Resolved (D14), was CHECKPOINT 3 from the P3.6 red team:** rules no stated rule covers, each cheap and statically checkable, to add or not: tautological assertions (`expect(true).toBe(true)`, `assert True`, tuple asserts); assertions inside `try/catch` or `except AssertionError`; unawaited `.resolves`/`.rejects`; retry settings (`jest.retryTimes`, `{ retry }`); mocking the module under test; in source, test-environment detection (`VITEST`, `"pytest" in sys.modules`), empty `catch {}`/`except: pass`, test-framework monkeypatching or pytest hooks, `as any`/`as unknown as`, warning filters; imports of packages no manifest declares. Decided in D14: the tricks above become rules, except mocking the module under test and undeclared imports (later, server side); packed lines count as several; doctests count as tests; edits under file-wide suppressions open a draft PR. Still open: checking that a lockfile only moves the bumped packages (Phase 4; the default `frozen` makes it rare).
 - **Phase 4 (from P3.6):** the server must refuse a path whose ancestor isn't a directory in the base tree (writing through a symlinked directory, or under an existing file); treat an empty JUnit baseline (the suite didn't compile) and a missing or zero-test report as "behavioral checks unavailable" or a failure; resolve protected configs' `extends` and local plugins.
+- **From P5.3d and its security review:**
+  - **A ready PR and a draft-needing retry** is refused. Converting the PR to a draft (GraphQL) would let it through safely.
+  - **A rewind during the push** is re-checked just before the ref update, which narrows the window but doesn't close it. GraphQL `createCommitOnBranch` with `expectedHeadOid` would.
+  - **No second comment** says that a retry ended without a commit: the first one says a person is needed if none appears.
+  - **Retry categories** come from the heuristics only, so an unclear new failure isn't retried.
 - **From P5.3a-c and their security review:**
   - **Installation events (H1).** Make `installation` and `installation_repositories` processors apply GitHub's current state (`GET /app/installations/{id}`, never replace a newer installation ID, re-list before removing). Until then they aren't redelivered automatically, and the manual "Redeliver" button can still replay stale state.
   - **A second pull request (M3).** Someone with push access could open one from PipeHeal's branch into a base with a weaker workflow, and its `pull_request` run counts as proof if the same job and step names pass. Tie proof to the recorded PR and base.
@@ -809,7 +822,7 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
   - **The validation policy** is the current effective policy. Record which version was used.
   - **A baseline with no reports.** When `junitGlob` is set but the baseline has no reports, it is only a draft. Consider refusing, or requiring at least one failing test when the failing check is `test` (M3 option).
 - **From P4.8 and the end-of-Phase-4 security review:**
-  - **D20 is now urgent (H1).** With `HEAL_DISPATCH=true`, every failing in-scope push runs branch code inside a default-branch job with no human involved. Decide D20 before turning it on for anything but a sandbox repository.
+  - **D20 is now urgent (H1).** With `HEAL_DISPATCH=true`, every failing in-scope push runs branch code inside a default-branch job with no human involved. D20 is decided (2026-11-28): build it before turning this on for anything but a sandbox repository.
   - **Stale `defaultBranch` (M4).** After a rename, the dispatch and the OIDC `ref` check use the stored `defaultBranch`, so the old branch's `pipeheal.yml` could be dispatched and accepted. Fix it in one of two ways:
     - update `defaultBranch` from every `workflow_run` payload (together with `fullName`, P4.3b M2);
     - or read the repository right before the dispatch.
@@ -836,7 +849,7 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
   - `createLocalAttempt` lives in `apps/worker` (for its database test), so the production worker's code includes it, unreachable from any route. Move it to a dev-only entry if that matters (review I1).
   - Local orgs use fixed positive fake GitHub IDs (990000000001...). Only the dev database guard keeps them off a real database. A `kind` column or a reserved slug would let the webhook path refuse to upsert onto one (review L2).
 - **From P4.5 and its security review:**
-  - **D20 (proposed, Malek to decide):** the healer job runs code from `target_sha`, which may be a branch's, in a job on the default branch. That code can read heal-action's own environment through `/proc/$PPID/environ` (or with the runner's passwordless sudo), which the scrubbed child environment can't prevent. So it can mint OIDC tokens with `sub = repo:<o>/<r>:ref:refs/heads/<default>` for any audience, and use `ACTIONS_RUNTIME_TOKEN` to write the default-branch cache scope. The proposal:
+  - **D20 (decided 2026-11-28, not built yet):** the healer job runs code from `target_sha`, which may be a branch's, in a job on the default branch. That code can read heal-action's own environment through `/proc/$PPID/environ` (or with the runner's passwordless sudo), which the scrubbed child environment can't prevent. So it can mint OIDC tokens with `sub = repo:<o>/<r>:ref:refs/heads/<default>` for any audience, and use `ACTIONS_RUNTIME_TOKEN` to write the default-branch cache scope. The proposal:
     - run the healer job in a GitHub environment (`environment: pipeheal`), so its `sub` names the environment and stops matching cloud trust policies written for the default branch;
     - have the gateway require the `environment` claim (§5.4);
     - generate setup steps with caching off;
@@ -900,9 +913,9 @@ Raised in the 2026-09-27 alignment, to decide in the phase named:
 | D11 | 2026-11-25 | Self-hosted open-weight models on Ollama replace the Anthropic API, for triage and healing, in development and production (§3, §4, §7.5, §12, §13). Default `qwen3:14b` for both. Supersedes D6. | Chosen by Malek: the application's host has a GPU (RTX 3060 12 GB), so no per-token cost and no third-party model provider. Trade-offs: one GPU serializes model calls, and a 14B model heals less than a frontier model (measured by the Phase 8 evals). |
 | D12 | 2026-11-25 | The per-attempt cost cap becomes a model-token cap: `limits.maxModelTokensPerAttempt`, default 300,000, plan maximum 2,000,000 (§8.2 INV-CAPS, §8.3) | Chosen by Malek. With self-hosted models (D11) a dollar cap never triggers; tokens are what an attempt spends on the GPU, and Ollama reports them per call. The wall-clock cap stays. |
 | D13 | 2026-11-25 | Org defaults and the repo dashboard override (an admin may loosen); `.pipeheal.yml`, `code` custom rules and org guardrails only tighten (§8.1, §8.4) | Chosen by Malek over "most restrictive wins everywhere", where the org defaults were a floor no repository could go below. Guardrails keep a ceiling; the repo file, which anyone who can push may edit, still can't loosen anything. |
-| D22 | 2026-11-28 | **Proposed, not decided:** a fix is `VERIFIED` only when no watched workflow failed on PipeHeal's commit and every originally failing job and step ran and passed there in a `push` or `pull_request` run. Otherwise it ends `UNVERIFIED` (§2.6) | §9.1 says "green" without defining it. A run can succeed with the failing job skipped, and a `push`-only workflow may not run on the PR at all: calling that verified would be false. The cost is more `UNVERIFIED` results. Malek's call. |
-| D21 | 2026-11-27 | **Proposed, not decided:** the soft-rule judge fails closed. A judge rule it couldn't judge rejects the submission like a violation: past the rule cap, a diff too large to read whole, no valid answer, the model unreachable, or the deadline (§8.7) | SPEC §8.7 says what a violation does, not what happens when the judge can't decide. Failing open would let an attacker skip team rules by padding the diff or flooding `.pipeheal.yml`. The cost is that a flaky model or a large fix blocks the PR. Malek's call. |
-| D20 | 2026-11-27 | **Proposed, not decided:** the healer job runs in a GitHub environment (`environment: pipeheal`), which the gateway requires as an OIDC claim; setup steps don't cache (§15) | P4.5 security review H1: code under test can mint default-branch OIDC tokens and write the default-branch cache from inside the healer job. Changes what customers set up, so it's Malek's call. |
+| D22 | 2026-11-28 | A fix is `VERIFIED` only when no watched workflow failed on PipeHeal's commit and every originally failing job and step ran and passed there in a `push` or `pull_request` run. Otherwise it ends `UNVERIFIED` (§2.6) | §9.1 says "green" without defining it. A run can succeed with the failing job skipped, and a `push`-only workflow may not run on the PR at all: calling that verified would be false. The cost is more `UNVERIFIED` results. Proposed by Claude, confirmed by Malek (2026-11-28). |
+| D21 | 2026-11-27 | The soft-rule judge fails closed. A judge rule it couldn't judge rejects the submission like a violation: past the rule cap, a diff too large to read whole, no valid answer, the model unreachable, or the deadline (§8.7) | SPEC §8.7 says what a violation does, not what happens when the judge can't decide. Failing open would let an attacker skip team rules by padding the diff or flooding `.pipeheal.yml`. The cost is that a flaky model or a large fix blocks the PR. Proposed by Claude, confirmed by Malek (2026-11-28). |
+| D20 | 2026-11-27 | The healer job runs in a GitHub environment (`environment: pipeheal`), which the gateway requires as an OIDC claim; setup steps don't cache (§15) | P4.5 security review H1: code under test can mint default-branch OIDC tokens and write the default-branch cache from inside the healer job. It changes what customers set up. Proposed by Claude, confirmed by Malek (2026-11-28). |
 | D19 | 2026-11-27 | Until a dedicated action repo is published, healer workflows load heal-action from the monorepo at a pinned SHA: `uses: MalekSoula7/Self-Healing_CI-CD/packages/heal-action@<sha>`, with the bundled `dist/` committed (P4.5) | Chosen by Malek. No new repository needed yet; onboarding's generated YAML switches to `pipeheal/heal-action@v1` once it is published. |
 | D18 | 2026-11-27 | "Within budget" for the dispatcher (P4.8) means attempt caps: the policy's `maxAttemptsPerFailure`, at most 20 heal attempts per org per day (default, configurable later), and one running attempt per repository. `monthlyBudgetUsd` stays unused until paid models exist | Chosen by Malek. Models are self-hosted (D11), so there is no per-token cost to budget; the GPU's time is the scarce resource. |
 | D17 | 2026-11-27 | `HEAL_MODEL` runs with a 16k-token context (`num_ctx` 16384) on the RTX 3060; the context assembler keeps each conversation under it by summarising old tool output (P4.4) | Chosen by Malek. Fits beside the ~9 GB of qwen3:14b Q4 weights without KV-cache quantization; 32k would be tight and slower, 8k too small for real fixes. |

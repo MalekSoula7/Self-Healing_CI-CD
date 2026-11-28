@@ -1265,3 +1265,15 @@ P3.4 lands in three commits: (1) foundation, invariants, paths and size; (2) tes
 - **Proposed D22** (what counts as verified) awaits Malek.
 - **Not done:** P5.3d, the retry with the new failure as context on the same branch. The P5.3 box stays unticked until then.
 - **Gate:** typecheck, lint, format, 2,482 tests.
+
+## 2026-11-28 · P5.3d retry after failed CI, and two healer fixes
+
+- **First real model runs** (`heal:local`, node type-error, `qwen3:14b` on a second PC): one run submitted a fix, one ended because the model wrote `submit_fix` as text, one hit the iteration cap after editing a test.
+  - Fixed: a `submit_fix` or `give_up` written as the whole message is read as that call.
+  - Prompt `heal-v2`: don't edit a test an error points at, undo a refused edit, re-read after a failed edit. Not yet confirmed on the model.
+  - Local mode can't validate a submission (its repository isn't on GitHub).
+- **P5.3d** (SPEC §2.6): retry with the new failure, combined validation, a second commit on the same PR.
+- **Security review: no critical or high findings.** All three medium (M1 scope gates, M2 draft rule, M3 proof) and five low findings fixed; the leftovers are in SPEC §15.
+- **D20, D21 and D22 confirmed by Malek.** D20 is not built, so `HEAL_DISPATCH` stays off.
+- **P5.3 ticked.** Everything is tested against a mocked GitHub only; P5.7 is the first real run.
+
