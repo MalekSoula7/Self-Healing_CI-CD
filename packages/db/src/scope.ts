@@ -11,6 +11,7 @@ import { attemptSteps } from "./attempt-steps";
 import { attemptRecovery } from "./reconciliation";
 import { attemptVerification } from "./verification";
 import { DISPATCH_TIMEOUT_MS } from "./runner-sessions";
+import { retrySerialization } from "./serialization";
 import { auditChanges, auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
 import { ConflictError, ForbiddenError, NotFoundError } from "./errors";
@@ -101,30 +102,6 @@ const ROLE_RANK: Record<Role, number> = { MEMBER: 0, ADMIN: 1, OWNER: 2 };
 
 /** How long an attempt being validated or published holds its repository (P5.2 review M4). */
 const SETTLING_TIMEOUT_MS = 2 * 60 * 60_000;
-
-/** Tries of a serializable transaction that Postgres refused with a serialization failure. */
-const SERIALIZATION_TRIES = 4;
-
-/**
- * Runs a serializable transaction again when Postgres refuses it (Prisma's P2034). Postgres's
- * serializable mode can refuse unrelated transactions that merely ran at the same time (P4.8
- * review L2): a retry sees the winner's writes and decides again (e.g. "busy"). After the last
- * try the error is thrown, and the job's own retries take over.
- */
-async function retrySerialization<T>(work: () => Promise<T>): Promise<T> {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await work();
-    } catch (error) {
-      const conflict =
-        error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
-      if (!conflict || attempt >= SERIALIZATION_TRIES) throw error;
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 20 * attempt + Math.floor(Math.random() * 30));
-      });
-    }
-  }
-}
 
 export function hasRole(role: Role, minimum: Role): boolean {
   return ROLE_RANK[role] >= ROLE_RANK[minimum];
