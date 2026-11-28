@@ -35,6 +35,8 @@ export {
   MAX_POLICY_FILE_ERRORS,
   policyFileRecordSchema,
   recentChangesRecordSchema,
+  retryFeedbackSchema,
+  type RetryClaimInput,
   fixSummarySchema,
   submissionValidationSchema,
   testInventoryRecordSchema,

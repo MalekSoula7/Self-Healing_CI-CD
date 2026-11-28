@@ -736,3 +736,16 @@ describe("repo-file custom rules (P4.4 security review H2)", () => {
     expect([...lines.hard, ...lines.soft].some((line) => line.includes("CR-9"))).toBe(false);
   });
 });
+
+describe("a retry's brief (P5.3d)", () => {
+  const briefOf = (brief: HealBrief) =>
+    buildHealMessages({ systemPrompt: "S", brief, history: [START], tokenBudget: 12_000 })
+      .messages[1]?.content ?? "";
+
+  it("says the earlier fix is in the checkout and still fails CI", () => {
+    expect(briefOf({ ...BRIEF, previousFix: true })).toContain(
+      "A previous fix is already committed in this checkout, but CI still failed.",
+    );
+    expect(briefOf(BRIEF)).not.toContain("previous fix");
+  });
+});

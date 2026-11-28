@@ -130,7 +130,7 @@ export async function processWorkflowRunEvent(
       log.warn("GitHub App isn't configured; skipping verification");
       return;
     }
-    await verifyAttempt(deps.githubApp, system, attempt, log);
+    await verifyAttempt(deps.githubApp, system, attempt, log, deps.dispatchEnabled);
     return;
   }
   const failed = run.conclusion !== null && FAILED.has(run.conclusion);

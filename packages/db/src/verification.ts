@@ -41,6 +41,7 @@ const VERIFIABLE = {
   id: true,
   status: true,
   attemptNo: true,
+  failingCheck: true,
   branch: true,
   commitSha: true,
   prNumber: true,

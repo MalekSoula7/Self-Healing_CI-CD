@@ -46,7 +46,12 @@ export function unverifiedComment(reason: string): string {
   ].join("\n");
 }
 
-export function ciFailedComment(commitSha: string, jobs: readonly FailedCiJob[]): string {
+export function ciFailedComment(
+  commitSha: string,
+  jobs: readonly FailedCiJob[],
+  /** A second attempt started (§9.1). */
+  retrying = false,
+): string {
   const lines = jobs.slice(0, MAX_JOBS).map((job) => {
     const where = [
       job.workflowName,
@@ -65,6 +70,8 @@ export function ciFailedComment(commitSha: string, jobs: readonly FailedCiJob[])
     ...lines,
     ...(more > 0 ? [`- …and ${String(more)} more`] : []),
     "",
-    "Someone needs to take it from here. PipeHeal never merges.",
+    retrying
+      ? "PipeHeal is trying once more, and may push a second commit to this branch. If none appears, someone needs to take it from here. PipeHeal never merges."
+      : "Someone needs to take it from here. PipeHeal never merges.",
   ].join("\n");
 }

@@ -88,3 +88,18 @@ describe("loadHealInputs", () => {
     await expect(loadHealInputs(db, closed.orgId, other.attemptId)).resolves.toBeNull();
   });
 });
+
+describe("loadHealInputs for a retry (P5.3d)", () => {
+  it("briefs with what CI said about the earlier fix, not the original logs", async () => {
+    const { orgId, attemptId } = await attempt({ open: true });
+    const feedback = [{ name: "lint", failedStep: "Lint", summary: "unused", errorWindow: "boom" }];
+    await db.healAttempt.update({
+      where: { id: attemptId },
+      data: { retryOfId: attemptId, feedback },
+    });
+
+    const inputs = await loadHealInputs(db, orgId, attemptId);
+
+    expect(inputs?.brief).toMatchObject({ previousFix: true, jobs: feedback });
+  });
+});

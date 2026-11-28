@@ -20,6 +20,13 @@ describe("ciFailedComment", () => {
     expect(body).toContain("PipeHeal never merges.");
   });
 
+  it("says PipeHeal tries once more when a retry started", () => {
+    const body = ciFailedComment(sha, [job], true);
+
+    expect(body).toContain("PipeHeal is trying once more");
+    expect(body).not.toContain("Someone needs to take it from here.");
+  });
+
   it("shows repository names literally: no mentions, links, HTML or skip-CI markers", () => {
     const body = ciFailedComment(sha, [
       {

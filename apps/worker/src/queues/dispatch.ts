@@ -9,7 +9,7 @@
 // - The dispatch call is never retried: not knowing whether GitHub started a run, the attempt
 //   fails rather than risk two healer runs. No run ID back: the attempt fails too (no runner
 //   could open its session).
-import { forSystem, type Db } from "@pipeheal/db";
+import { forSystem, type Db, type SystemScope } from "@pipeheal/db";
 import { GitHubApiError, GuardError, type GitHubApp } from "@pipeheal/github";
 import { effectivePolicy } from "@pipeheal/policy";
 import type { Logger } from "@pipeheal/shared/logger";
@@ -94,13 +94,26 @@ export async function dispatchFailure(
     log.info({ reason: claim.reason }, "failure not dispatched");
     return "capped";
   }
-  const { attempt } = claim;
+  return startHealerRun(githubApp, system, repo, target.installationId, claim.attempt, log);
+}
 
+/**
+ * Dispatches the healer for a claimed attempt, never retried: not knowing whether GitHub started a
+ * run, the attempt fails rather than risk two (see the module's header).
+ */
+export async function startHealerRun(
+  githubApp: GitHubApp,
+  system: SystemScope,
+  repo: { fullName: string; defaultBranch: string },
+  installationId: bigint,
+  attempt: { id: string; attemptNo: number; targetSha: string },
+  log: Logger,
+): Promise<"dispatched" | "failed"> {
   let runId: bigint | null;
   try {
     // Inside the try: a token that can't be minted fails the attempt too, rather than leaving it
     // DISPATCHED with no run (P4.8 review M1).
-    const client = (await githubApp.installation(target.installationId)).repo(repo.fullName);
+    const client = (await githubApp.installation(installationId)).repo(repo.fullName);
     ({ runId } = await client.dispatchWorkflow(HEALER_WORKFLOW_PATH, repo.defaultBranch, {
       job_id: attempt.id,
       target_sha: attempt.targetSha,

@@ -1,7 +1,7 @@
 // Verification (SPEC §9.1, P5.3a): what CI says about the commit PipeHeal created. The runs are
 // read from GitHub (a webhook only says "look again"), and only these count: watched workflows,
 // this repository's own code, on PipeHeal's branch. Green is VERIFIED; red leaves the failure to a
-// person, with one comment on the PR. A branch someone else pushed to is never called verified or
+// person, with one comment on the PR, after starting a retry while one is left. A branch someone else pushed to is never called verified or
 // failed. Nothing here writes code, and nothing merges.
 import type { SystemScope } from "@pipeheal/db";
 import {
@@ -15,6 +15,7 @@ import {
 import type { Logger } from "@pipeheal/shared/logger";
 import { ciVerdict, isProof, jobsProven, type RanAgain } from "../ci-verdict";
 import { ciFailedComment, type FailedCiJob } from "../pr/comments";
+import { startRetry } from "./retry";
 
 export type Verifiable = NonNullable<Awaited<ReturnType<SystemScope["attempts"]["forCommit"]>>>;
 
@@ -72,6 +73,8 @@ export async function verifyAttempt(
   system: SystemScope,
   attempt: Verifiable,
   log: Logger,
+  /** HEAL_DISPATCH: without it a red run never starts a retry. */
+  dispatchEnabled = false,
 ): Promise<VerifyOutcome> {
   const { branch, commitSha, prNumber } = attempt;
   if (branch === null || commitSha === null || prNumber === null) return "skipped";
@@ -139,9 +142,20 @@ export async function verifyAttempt(
   if (!firstFailure) return "recorded";
   log.info({ attemptId: attempt.id, pr: prNumber }, "CI failed on the fix: needs a person");
   if (pull.state !== "open") return "recorded";
+  // Once, after the first failure was recorded: a second attempt while the failure has one left.
+  let retrying = false;
+  try {
+    const retry = { githubApp, dispatchEnabled };
+    retrying = await startRetry(retry, system, attempt, verdict.failed, log);
+  } catch (error) {
+    log.warn(
+      { attemptId: attempt.id, error: error instanceof Error ? error.name : "unknown" },
+      "couldn't start a retry",
+    );
+  }
   // After the record, so it is posted at most once; a failure to post is only logged.
   try {
-    await client.comment(prNumber, ciFailedComment(commitSha, jobs));
+    await client.comment(prNumber, ciFailedComment(commitSha, jobs, retrying));
   } catch (error) {
     log.warn(
       { attemptId: attempt.id, error: error instanceof Error ? error.name : "unknown" },

@@ -43,6 +43,8 @@ export interface ReconcileDeps {
   pacing: InstallationPacing;
   submissions: SubmissionsQueue;
   logger: Logger;
+  /** HEAL_DISPATCH: a red verification starts a retry only when true. */
+  dispatchEnabled?: boolean;
   now?: () => Date;
   /** The overdue work, from the database; tests narrow it to their own rows. */
   due?: (now: Date) => ReturnType<Reconciliation["due"]>;
@@ -229,7 +231,7 @@ async function checkVerification(
   let outcome: VerifyOutcome | "paused";
   try {
     outcome = await github(deps, attempt.org.installationId, () =>
-      verifyAttempt(app, system, attempt, log),
+      verifyAttempt(app, system, attempt, log, deps.dispatchEnabled),
     );
   } catch (error) {
     if (age < RECONCILE_TIMEOUTS_MS.github) throw error;

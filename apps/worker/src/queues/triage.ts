@@ -56,7 +56,7 @@ function storedClassification(job: {
 }
 
 /** The job's log, or null when GitHub no longer has it (logs expire; a job can be deleted). */
-async function fetchLog(
+export async function fetchLog(
   repoClient: ReadOnlyRepoClient,
   githubJobId: bigint,
 ): Promise<JobLog | null> {

@@ -16,7 +16,7 @@ import {
   type HealBrief,
   type TimelineEvent,
 } from "@pipeheal/agent-core";
-import { forSystem, recentChangesRecordSchema, type Db } from "@pipeheal/db";
+import { forSystem, recentChangesRecordSchema, retryFeedbackSchema, type Db } from "@pipeheal/db";
 import { effectivePolicy, type EffectivePolicy } from "@pipeheal/policy";
 import type { Logger } from "@pipeheal/shared/logger";
 import { LIMITS, attemptCommandsSchema, toolCallSchema } from "@pipeheal/shared/protocol";
@@ -244,6 +244,9 @@ export async function loadHealInputs(
   const commands = attemptCommandsSchema.safeParse(repo.commands);
   const recent = recentChangesRecordSchema.safeParse(failure.recentChanges);
   const policy = effectivePolicy(await system.policies.layers(repo.id)).policy;
+  // A retry works from what CI said about the earlier fix, not from the original logs.
+  const feedback =
+    attempt.retryOfId === null ? null : retryFeedbackSchema.safeParse(attempt.feedback);
   return {
     startedAt: attempt.sessionOpenedAt,
     policy,
@@ -256,7 +259,13 @@ export async function loadHealInputs(
         summary: failure.summary,
         headBranch: failure.headBranch,
       },
-      jobs: failure.runs.flatMap((run) => run.jobs),
+      jobs:
+        feedback === null
+          ? failure.runs.flatMap((run) => run.jobs)
+          : feedback.success
+            ? feedback.data
+            : [],
+      ...(feedback === null ? {} : { previousFix: true }),
       recentChanges:
         recent.success && recent.data.base !== null
           ? renderRecentChanges(recent.data.changes)

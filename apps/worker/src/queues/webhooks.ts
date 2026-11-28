@@ -43,6 +43,8 @@ export interface WebhookProcessorDeps {
   failureJobs: FailureJobs;
   /** Per-installation GitHub quota: jobs of a rate-limited installation wait (P2.1). */
   pacing: InstallationPacing;
+  /** HEAL_DISPATCH: a red verification starts a retry only when true. */
+  dispatchEnabled?: boolean;
 }
 
 // Every event we process carries the installation it's for.

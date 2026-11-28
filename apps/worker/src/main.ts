@@ -84,6 +84,7 @@ async function main(): Promise<void> {
     logger,
     failureJobs: jobs,
     pacing,
+    dispatchEnabled: env.HEAL_DISPATCH,
   });
 
   const rateLimitRedis = createRateLimitRedis(env.REDIS_URL, logger);
@@ -142,7 +143,14 @@ async function main(): Promise<void> {
   });
   // The §2.2 reconciler: timeouts, lost jobs and missed webhooks, then failed deliveries.
   const maintenanceWorker = createMaintenanceWorker(redis, logger, undefined, async () => {
-    await reconcile({ db, githubApp, pacing, submissions: submissionsQueue, logger });
+    await reconcile({
+      db,
+      githubApp,
+      pacing,
+      submissions: submissionsQueue,
+      logger,
+      dispatchEnabled: env.HEAL_DISPATCH,
+    });
     await redeliverFailed({ db, githubApp, logger });
   });
   const internal = buildInternalServer({ logger, checks: { redis: () => pingRedis(redis) } });

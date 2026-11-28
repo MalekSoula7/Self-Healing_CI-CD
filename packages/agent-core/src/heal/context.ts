@@ -30,6 +30,8 @@ export interface HealBrief {
   }[];
   /** `renderRecentChanges` output, or null when unknown. */
   recentChanges: string | null;
+  /** A retry: the checkout holds an earlier fix, and `jobs` are what CI said about it. */
+  previousFix?: boolean;
 }
 
 /** An AgentEvent as stored: its payload is whatever was written, read with care. */
@@ -115,6 +117,11 @@ function briefMessage(
   ];
   if (failure.headBranch !== null) lines.push(`Failing branch: ${line(failure.headBranch)}`);
   if (failure.category !== null) lines.push(`Triage category: ${line(failure.category)}`);
+  if (brief.previousFix === true) {
+    lines.push(
+      "A previous fix is already committed in this checkout, but CI still failed. The CI logs below are from that run: fix what is still broken.",
+    );
+  }
   const parts = [lines.join("\n")];
   if (failure.summary !== null) {
     parts.push(wrap("triage_summary", {}, head(failure.summary, BRIEF_SHARES.triageSummary)));

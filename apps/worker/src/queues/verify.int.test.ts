@@ -17,6 +17,7 @@ const github = setupServer();
 const logger = createLogger({ level: "silent", service: "test" });
 const githubId = () => BigInt(randomInt(1, 2 ** 47));
 const sha = () => randomUUID().replaceAll("-", "").padEnd(40, "0");
+const STORAGE = "https://productionresults.blob.core.windows.net";
 const { privateKey } = generateKeyPairSync("rsa", {
   modulusLength: 2048,
   privateKeyEncoding: { type: "pkcs1", format: "pem" },
@@ -163,11 +164,15 @@ function mockGitHub(
     refuseJobs?: boolean;
     /** The conclusion of the originally failed job, when not the run's own. */
     job?: string;
+    /** The failed job's log, and whether GitHub accepts the healer dispatch. */
+    log?: string;
+    refuseDispatch?: boolean;
   },
 ) {
   const api = `https://api.github.com/repos/${f.fullName}`;
   const comments: string[] = [];
   const listed: string[] = [];
+  const dispatched: unknown[] = [];
   const repoRef = { id: Number(f.githubRepoId), full_name: f.fullName };
   const pull = {
     number: 42,
@@ -226,6 +231,21 @@ function mockGitHub(
       });
     }),
     http.get(`${api}/pulls/42`, () => HttpResponse.json(pull)),
+    http.get(
+      `${api}/actions/jobs/7001/logs`,
+      () =>
+        new HttpResponse(null, {
+          status: 302,
+          headers: { location: `${STORAGE}/log.txt?sig=x` },
+        }),
+    ),
+    http.get(`${STORAGE}/log.txt`, () => new HttpResponse(options.log ?? "boom")),
+    http.post(`${api}/actions/workflows/pipeheal.yml/dispatches`, async ({ request }) => {
+      dispatched.push(await request.json());
+      return options.refuseDispatch === true
+        ? HttpResponse.json({ message: "no workflow" }, { status: 404 })
+        : HttpResponse.json({ workflow_run_id: 555 });
+    }),
     http.post(`${api}/issues/42/comments`, async ({ request }) => {
       if (options.refuseComment === true) {
         return HttpResponse.json({ message: "Forbidden" }, { status: 403 });
@@ -234,7 +254,7 @@ function mockGitHub(
       return HttpResponse.json({ id: 1, html_url: "https://github.com/x" }, { status: 201 });
     }),
   );
-  return { comments, listed };
+  return { comments, listed, dispatched };
 }
 
 async function state(f: Fixture) {
@@ -426,5 +446,108 @@ describe("workflow_run on PipeHeal's branch (P5.3a)", () => {
     await processWorkflowRunEvent(deps(), event(f), logger);
 
     await expect(state(f)).resolves.toEqual(UNCHANGED);
+  });
+});
+
+describe("the retry after red CI (P5.3d)", () => {
+  const token = `ghp_${"a1B2".repeat(9)}`;
+  const lintLog = [
+    "> app@1.0.0 lint",
+    "> eslint .",
+    "",
+    "/home/runner/work/app/app/src/a.ts",
+    "  1:7  error  'x' is assigned a value but never used  @typescript-eslint/no-unused-vars",
+    "",
+    "1 problem (1 error, 0 warnings)",
+    `token=${token}`,
+    "##[error]Process completed with exit code 1.",
+  ].join("\n");
+
+  async function red() {
+    const f = await opened();
+    await db.repository.update({
+      where: { id: f.repoId },
+      data: { commands: { lint: ["pnpm", "lint"], test: ["pnpm", "test"] } },
+    });
+    return f;
+  }
+  const attempts = (f: Fixture) =>
+    db.healAttempt.findMany({ where: { failureId: f.failureId }, orderBy: { attemptNo: "asc" } });
+  const run = (f: Fixture, mock: Parameters<typeof mockGitHub>[1], enabled = true) => {
+    const github_ = mockGitHub(f, mock);
+    return processWorkflowRunEvent(
+      { ...deps(), dispatchEnabled: enabled },
+      event(f, { conclusion: "failure" }),
+      logger,
+    ).then(() => github_);
+  };
+
+  it("dispatches a second attempt on PipeHeal's commit with the redacted new failure", async () => {
+    const f = await red();
+
+    const { comments, dispatched } = await run(f, {
+      runs: [runJson(f, { conclusion: "failure" })],
+      log: lintLog,
+    });
+
+    const [first, second] = await attempts(f);
+    expect(first?.status).toBe("CI_FAILED");
+    expect(second).toMatchObject({
+      attemptNo: 2,
+      status: "DISPATCHED",
+      targetSha: f.commitSha,
+      retryOfId: first?.id,
+      failingCheck: "lint",
+      dispatchRunId: 555n,
+    });
+    const feedback = JSON.stringify(second?.feedback);
+    expect(feedback).toContain("no-unused-vars");
+    expect(feedback).not.toContain(token);
+    expect(dispatched).toMatchObject([{ inputs: { job_id: second?.id, target_sha: f.commitSha } }]);
+    await expect(
+      db.pipelineFailure.findUniqueOrThrow({ where: { id: f.failureId } }),
+    ).resolves.toMatchObject({ status: "HEALING" });
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toContain("PipeHeal is trying once more");
+  });
+
+  it("leaves it to a person when dispatching is off (HEAL_DISPATCH)", async () => {
+    const f = await red();
+
+    const { comments, dispatched } = await run(
+      f,
+      { runs: [runJson(f, { conclusion: "failure" })] },
+      false,
+    );
+
+    expect(await attempts(f)).toHaveLength(1);
+    expect(dispatched).toEqual([]);
+    expect(comments[0]).toContain("Someone needs to take it from here.");
+  });
+
+  it("leaves it to a person at the attempt cap", async () => {
+    const f = await red();
+    await f.system.policies.save("REPO", f.repoId, { limits: { maxAttemptsPerFailure: 1 } });
+
+    const { dispatched } = await run(f, { runs: [runJson(f, { conclusion: "failure" })] });
+
+    expect(await attempts(f)).toHaveLength(1);
+    expect(dispatched).toEqual([]);
+  });
+
+  it("leaves it to a person when GitHub refuses the dispatch", async () => {
+    const f = await red();
+
+    const { comments } = await run(f, {
+      runs: [runJson(f, { conclusion: "failure" })],
+      refuseDispatch: true,
+    });
+
+    const [, second] = await attempts(f);
+    expect(second?.status).toBe("FAILED");
+    await expect(
+      db.pipelineFailure.findUniqueOrThrow({ where: { id: f.failureId } }),
+    ).resolves.toMatchObject({ status: "NEEDS_HUMAN" });
+    expect(comments[0]).toContain("Someone needs to take it from here.");
   });
 });
