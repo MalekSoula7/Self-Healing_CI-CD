@@ -21,12 +21,7 @@ import type { Logger } from "@pipeheal/shared/logger";
 import { pauseIfRateLimited, type InstallationPacing } from "../pacing";
 import { unverifiedComment } from "../pr/comments";
 import { recordUnpublishable } from "./publish";
-import {
-  enqueuePublish,
-  enqueueValidation,
-  isSubmissionQueued,
-  type SubmissionsQueue,
-} from "./submissions";
+import { requeueSubmission, submissionJobState, type SubmissionsQueue } from "./submissions";
 import { recordUncheckable } from "./validate";
 import { verifyAttempt, type Verifiable, type VerifyOutcome } from "./verify";
 
@@ -96,10 +91,13 @@ export async function reconcile(deps: ReconcileDeps): Promise<void> {
 
   await each("submission", due.submissions, async (_system, item) => {
     const name = item.status === "VALIDATING" ? "validate" : "publish";
-    if (await isSubmissionQueued(deps.submissions, name, item.attemptId)) return;
+    const state = await submissionJobState(deps.submissions, name, item.attemptId);
+    if (state === "pending") return;
     const job = { orgId: item.orgId, attemptId: item.attemptId };
-    if (age(item) < RECONCILE_TIMEOUTS_MS.submission) {
-      await (name === "validate" ? enqueueValidation : enqueuePublish)(deps.submissions, job);
+    // A lost job is always queued again. One that ran and left the attempt where it was is tried
+    // until the timeout, then given up on.
+    if (state === "none" || age(item) < RECONCILE_TIMEOUTS_MS.submission) {
+      await requeueSubmission(deps.submissions, name, job);
       return;
     }
     await (name === "validate" ? recordUncheckable : recordUnpublishable)(deps.db, job);
@@ -172,10 +170,14 @@ async function finishPublish(
         .findPullRequestsByHead(branch),
     );
     if (pulls === "paused") return;
-    // The one PipeHeal opens: from its branch into the failing branch.
-    const pull = pulls.find((candidate) => candidate.baseRef === found.failure.headBranch);
+    // The one PipeHeal opens: its commit, from its branch into the failing branch.
+    const ours = pulls.filter(
+      (candidate) =>
+        candidate.baseRef === found.failure.headBranch && candidate.headSha === commitSha,
+    );
+    const pull = ours.find((candidate) => candidate.state === "open") ?? ours[0];
     if (pull === undefined) {
-      await fail("publishing was interrupted before the pull request was opened");
+      await fail("no pull request with PipeHeal's commit was found");
       return;
     }
     await system.attempts.recordPullRequest(item.attemptId, {

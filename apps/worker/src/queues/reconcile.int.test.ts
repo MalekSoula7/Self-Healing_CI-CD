@@ -6,9 +6,10 @@ import { forSystem, installations, reconciliation } from "@pipeheal/db";
 import { createTestDb } from "@pipeheal/db/testing";
 import { createGitHubApp } from "@pipeheal/github";
 import { createLogger } from "@pipeheal/shared/logger";
+import { Worker } from "bullmq";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { createRedis } from "../redis";
 import { reconcile, type ReconcileDeps } from "./reconcile";
@@ -18,7 +19,8 @@ const db = createTestDb();
 const github = setupServer();
 const logger = createLogger({ level: "silent", service: "test" });
 const redis = createRedis(process.env.REDIS_URL ?? "redis://localhost:6379", logger);
-const queue = createSubmissionsQueue(redis, `test-${randomUUID()}`);
+const prefix = `test-${randomUUID()}`;
+const queue = createSubmissionsQueue(redis, prefix);
 const githubId = () => BigInt(randomInt(1, 2 ** 47));
 const sha = () => randomUUID().replaceAll("-", "").padEnd(40, "0");
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000);
@@ -141,18 +143,21 @@ function deps(f: Fixture, overrides: Partial<ReconcileDeps> = {}): ReconcileDeps
 
 function mockGitHub(
   f: Fixture,
-  options: { runs?: Record<string, unknown>[]; pulls?: "open" | "none" | "other-base" } = {},
+  options: {
+    runs?: Record<string, unknown>[];
+    pulls?: "open" | "none" | "other-base" | "other-head";
+  } = {},
 ) {
   const api = `https://api.github.com/repos/${f.fullName}`;
   const comments: string[] = [];
   const repoRef = { id: Number(f.githubRepoId), full_name: f.fullName };
-  const pull = (base: string) => ({
+  const pull = (base: string, head = f.commitSha) => ({
     number: 42,
     html_url: `https://github.com/${f.fullName}/pull/42`,
     state: "open",
     draft: true,
     merged: false,
-    head: { ref: f.branch, sha: f.commitSha, repo: repoRef },
+    head: { ref: f.branch, sha: head, repo: repoRef },
     base: { ref: base, repo: repoRef },
   });
   github.use(
@@ -181,10 +186,34 @@ function mockGitHub(
     ),
     http.get(`${api}/pulls`, () =>
       HttpResponse.json(
-        options.pulls === "none" ? [] : [pull(options.pulls === "other-base" ? "release" : "main")],
+        options.pulls === "none"
+          ? []
+          : [
+              pull(
+                options.pulls === "other-base" ? "release" : "main",
+                options.pulls === "other-head" ? sha() : f.commitSha,
+              ),
+            ],
       ),
     ),
     http.get(`${api}/pulls/42`, () => HttpResponse.json(pull("main"))),
+    http.get(`${api}/actions/runs/:runId/attempts/:attempt/jobs`, ({ params }) =>
+      HttpResponse.json({
+        total_count: 1,
+        jobs: [
+          {
+            id: 7001,
+            run_id: Number(params.runId),
+            run_attempt: 1,
+            name: "check",
+            status: "completed",
+            conclusion: "success",
+            html_url: null,
+            steps: [{ name: "Test", number: 1, conclusion: "success" }],
+          },
+        ],
+      }),
+    ),
     http.post(`${api}/issues/42/comments`, async ({ request }) => {
       comments.push(z.object({ body: z.string() }).parse(await request.json()).body);
       return HttpResponse.json({ id: 1, html_url: "https://github.com/x" }, { status: 201 });
@@ -203,6 +232,16 @@ async function opened(f: Fixture, minutes: number) {
     prNumber: 42,
     prOpenedAt: ago(minutes),
   });
+}
+
+/** A job that ran and left its attempt where it was. */
+async function finishedJob(name: string, attemptId: string) {
+  const job = await queue.add(name, {}, { jobId: `${name}-${attemptId}` });
+  const worker = new Worker(queue.name, () => Promise.resolve(), { connection: redis, prefix });
+  await vi.waitFor(async () => {
+    expect(await job.getState()).toBe("completed");
+  });
+  await worker.close();
 }
 
 describe("reconcile: attempts with a runner", () => {
@@ -256,24 +295,51 @@ describe("reconcile: lost jobs", () => {
   it.each([
     ["VALIDATING", "REJECTED"],
     ["VALIDATED", "FAILED"],
-  ] as const)("gives up on a %s attempt after 2 hours", async (status, ended) => {
+  ] as const)(
+    "gives up on a %s attempt whose job left it there for 2 hours",
+    async (status, ended) => {
+      const f = await attempt();
+      // What the runner uploaded: a VALIDATING attempt always has it.
+      await db.attemptSubmission.create({
+        data: {
+          orgId: f.org.id,
+          attemptId: f.attemptId,
+          requestHash: "e".repeat(64),
+          files: [],
+          checks: [],
+          afterTests: { available: false, reason: "no report" },
+        },
+      });
+      await f.set({ status, updatedAt: ago(2 * 60 + 1) });
+      await finishedJob(status === "VALIDATING" ? "validate" : "publish", f.attemptId);
+
+      await reconcile(deps(f));
+
+      await expect(f.state()).resolves.toMatchObject({ attempt: ended, failure: "FAILED" });
+    },
+  );
+});
+
+describe("reconcile: finished and lost jobs", () => {
+  it("queues a lost job again however long it has waited", async () => {
     const f = await attempt();
-    // What the runner uploaded: a VALIDATING attempt always has it.
-    await db.attemptSubmission.create({
-      data: {
-        orgId: f.org.id,
-        attemptId: f.attemptId,
-        requestHash: "e".repeat(64),
-        files: [],
-        checks: [],
-        afterTests: { available: false, reason: "no report" },
-      },
-    });
-    await f.set({ status, updatedAt: ago(2 * 60 + 1) });
+    await f.set({ status: "VALIDATED", updatedAt: ago(5 * 60) });
 
     await reconcile(deps(f));
 
-    await expect(f.state()).resolves.toMatchObject({ attempt: ended, failure: "FAILED" });
+    await expect(queue.getJob(`publish-${f.attemptId}`)).resolves.toBeDefined();
+    await expect(f.state()).resolves.toMatchObject({ attempt: "VALIDATED" });
+  });
+
+  it("replaces a finished job within the timeout", async () => {
+    const f = await attempt();
+    await f.set({ status: "VALIDATED", updatedAt: ago(11) });
+    await finishedJob("publish", f.attemptId);
+
+    await reconcile(deps(f));
+
+    const job = await queue.getJob(`publish-${f.attemptId}`);
+    await expect(job?.getState()).resolves.not.toBe("completed");
   });
 });
 
@@ -295,7 +361,7 @@ describe("reconcile: interrupted publishing", () => {
     });
   });
 
-  it.each(["none", "other-base"] as const)(
+  it.each(["none", "other-base", "other-head"] as const)(
     "fails without its own pull request (%s)",
     async (pulls) => {
       const f = await attempt();
@@ -306,7 +372,7 @@ describe("reconcile: interrupted publishing", () => {
 
       await expect(f.state()).resolves.toMatchObject({
         attempt: "FAILED",
-        reason: "publishing was interrupted before the pull request was opened",
+        reason: "no pull request with PipeHeal's commit was found",
       });
     },
   );

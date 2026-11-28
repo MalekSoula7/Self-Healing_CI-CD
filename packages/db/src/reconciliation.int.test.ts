@@ -125,6 +125,28 @@ describe("reconciliation.due", () => {
   });
 });
 
+describe("reconciliation.due: re-runs", () => {
+  it("never lists a re-run that reported, so it can't crowd out a silent one", async () => {
+    const reported = await dispatched();
+    const silent = await dispatched();
+    for (const [f, runAttempt, updatedAt] of [
+      [reported, 2, ago(9 * 60)],
+      [silent, 1, ago(7 * 60)],
+    ] as const) {
+      await db.failedRun.updateMany({
+        where: { failureId: f.failure.id },
+        data: { rerunByUs: true, rerunFromAttempt: 1, runAttempt, updatedAt },
+      });
+      await db.pipelineFailure.update({ where: { id: f.failure.id }, data: { status: "TRIAGED" } });
+    }
+
+    const due = await reconciliation(db).due(new Date(), ALL);
+
+    expect(due.reruns.map((row) => row.failureId)).not.toContain(reported.failure.id);
+    expect(due.reruns).toContainEqual({ orgId: silent.org.id, failureId: silent.failure.id });
+  });
+});
+
 describe("attempts.expire", () => {
   it("fails a dispatch whose healer never started, and its failure", async () => {
     const f = await dispatched();

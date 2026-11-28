@@ -4,9 +4,16 @@
 // person, with one comment on the PR. A branch someone else pushed to is never called verified or
 // failed. Nothing here writes code, and nothing merges.
 import type { SystemScope } from "@pipeheal/db";
-import { HEALER_WORKFLOW_PATH, TRUSTED_RUN_EVENTS, type GitHubApp } from "@pipeheal/github";
+import {
+  GitHubApiError,
+  HEALER_WORKFLOW_PATH,
+  TRUSTED_RUN_EVENTS,
+  type GitHubApp,
+  type ReadOnlyRepoClient,
+  type WorkflowRun,
+} from "@pipeheal/github";
 import type { Logger } from "@pipeheal/shared/logger";
-import { ciVerdict } from "../ci-verdict";
+import { ciVerdict, isProof, jobsProven, type RanAgain } from "../ci-verdict";
 import { ciFailedComment, type FailedCiJob } from "../pr/comments";
 
 export type Verifiable = NonNullable<Awaited<ReturnType<SystemScope["attempts"]["forCommit"]>>>;
@@ -16,6 +23,49 @@ export type VerifyOutcome = "recorded" | "skipped" | `waiting-for-${"start" | "f
 
 /** Failed runs whose jobs are listed for the comment. */
 const MAX_RUNS_DETAILED = 5;
+/** Passing runs whose jobs are checked for proof. */
+const MAX_PROOF_RUNS = 10;
+
+/** The jobs of the passing runs of the workflows that failed originally. */
+async function jobsThatRanAgain(
+  reader: ReadOnlyRepoClient,
+  runs: readonly WorkflowRun[],
+  required: ReadonlySet<bigint>,
+): Promise<RanAgain[]> {
+  const proving = runs.filter((run) => isProof(run) && required.has(run.workflowId));
+  const ran: RanAgain[] = [];
+  for (const run of proving.slice(0, MAX_PROOF_RUNS)) {
+    for (const job of await reader.listJobs(run.id, run.runAttempt)) {
+      ran.push({ ...job, workflowId: run.workflowId });
+    }
+  }
+  return ran;
+}
+
+/**
+ * What the comment lists. A listing GitHub refuses leaves the run without its jobs: the verdict
+ * matters more than the detail. A rate limit is thrown, so the installation pauses.
+ */
+async function failedJobsOf(
+  reader: ReadOnlyRepoClient,
+  runs: readonly WorkflowRun[],
+): Promise<FailedCiJob[]> {
+  const jobs: FailedCiJob[] = [];
+  for (const run of runs.slice(0, MAX_RUNS_DETAILED)) {
+    const from = { workflowName: run.name ?? run.path, runUrl: run.htmlUrl };
+    let failed: Awaited<ReturnType<ReadOnlyRepoClient["listFailedJobs"]>> = [];
+    try {
+      failed = await reader.listFailedJobs(run.id, run.runAttempt);
+    } catch (error) {
+      if (!(error instanceof GitHubApiError) || error.retryAt !== null) throw error;
+    }
+    if (failed.length === 0) jobs.push({ ...from, jobName: null, failedStep: null });
+    for (const job of failed) {
+      jobs.push({ ...from, jobName: job.name, failedStep: job.failedStep });
+    }
+  }
+  return jobs;
+}
 
 export async function verifyAttempt(
   githubApp: GitHubApp,
@@ -42,11 +92,20 @@ export async function verifyAttempt(
       run.path !== HEALER_WORKFLOW_PATH &&
       watched.has(run.workflowId),
   );
-  const required = new Set(
-    originalRuns.filter((run) => run.conclusion !== "success").map((run) => run.workflowId),
-  );
+  const failedRuns = originalRuns.filter((run) => run.conclusion !== "success");
+  const required = new Set(failedRuns.map((run) => run.workflowId));
   const verdict = ciVerdict(runs, required);
   if (verdict.kind === "pending") return `waiting-for-${verdict.waitingFor}`;
+  if (verdict.kind === "green") {
+    const originally = failedRuns.flatMap((run) =>
+      run.jobs.map((job) => ({ ...job, workflowId: run.workflowId })),
+    );
+    if (!jobsProven(originally, await jobsThatRanAgain(reader, runs, required))) {
+      return "waiting-for-proof";
+    }
+  }
+  // Later listings only add runs and attempts: a higher sum is newer evidence.
+  const seen = runs.reduce((sum, run) => sum + run.runAttempt, 0);
 
   const client = (await githubApp.installation(installationId)).repo(repo.fullName);
   const pull = await client.getPullRequest(prNumber);
@@ -56,6 +115,7 @@ export async function verifyAttempt(
     await system.attempts.recordVerification(attempt.id, {
       result: "unverified",
       reason: "someone else pushed to the pull request's branch",
+      seen,
     });
     log.info({ attemptId: attempt.id }, "not verified: the branch moved");
     return "recorded";
@@ -63,26 +123,20 @@ export async function verifyAttempt(
   if (verdict.kind === "green") {
     const { changed } = await system.attempts.recordVerification(attempt.id, {
       result: "verified",
+      seen,
     });
     if (changed) log.info({ attemptId: attempt.id, pr: prNumber }, "fix verified by CI");
     return "recorded";
   }
 
   // Read before recording: an error here retries the job with nothing recorded.
-  const jobs: FailedCiJob[] = [];
-  for (const run of verdict.failed.slice(0, MAX_RUNS_DETAILED)) {
-    const from = { workflowName: run.name ?? run.path, runUrl: run.htmlUrl };
-    const failed = await reader.listFailedJobs(run.id, run.runAttempt);
-    if (failed.length === 0) jobs.push({ ...from, jobName: null, failedStep: null });
-    for (const job of failed) {
-      jobs.push({ ...from, jobName: job.name, failedStep: job.failedStep });
-    }
-  }
-  const { changed } = await system.attempts.recordVerification(attempt.id, {
+  const jobs = await failedJobsOf(reader, verdict.failed);
+  const { firstFailure } = await system.attempts.recordVerification(attempt.id, {
     result: "failed",
     reason: "CI failed on PipeHeal's commit",
+    seen,
   });
-  if (!changed) return "recorded";
+  if (!firstFailure) return "recorded";
   log.info({ attemptId: attempt.id, pr: prNumber }, "CI failed on the fix: needs a person");
   if (pull.state !== "open") return "recorded";
   // After the record, so it is posted at most once; a failure to post is only logged.

@@ -578,6 +578,11 @@ model HealAttempt {
   draft            Boolean?
   /// When the pull request was recorded: the verification timeouts count from here (SPEC §2.2).
   prOpenedAt       DateTime?
+  /// How far CI had got when its answer was recorded (the sum of the runs' attempts, which only
+  /// grows): an answer from older evidence is refused.
+  ciSeen           Int             @default(0)
+  /// When CI first failed on the fix: the PR is told once.
+  ciFailedAt       DateTime?
   /// Model turns taken (SPEC §7.3's iteration cap).
   iterations       Int             @default(0)
   /// Why the attempt ended, when it did: a stop condition or the model's own words, bounded.

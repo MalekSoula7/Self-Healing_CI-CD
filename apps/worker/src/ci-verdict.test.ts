@@ -1,13 +1,14 @@
 // What CI says about PipeHeal's commit (SPEC §9.1, P5.3a): green only when nothing watched failed
 // and every workflow that failed originally ran on it and succeeded.
 import { describe, expect, it } from "vitest";
-import { ciVerdict, type CiRun } from "./ci-verdict";
+import { ciVerdict, jobsProven, type CiRun } from "./ci-verdict";
 
 const run = (workflowId: bigint, conclusion: string | null, status = "completed"): CiRun => ({
   id: workflowId * 100n,
   workflowId,
   status,
   conclusion,
+  event: "pull_request",
 });
 const required = new Set([1n]);
 
@@ -67,7 +68,52 @@ describe("ciVerdict", () => {
     });
   });
 
+  it.each(["workflow_dispatch", "schedule", "merge_group"])(
+    "takes no proof from a %s run, though its failure counts",
+    (event) => {
+      expect(ciVerdict([{ ...run(1n, "success"), event }], required)).toEqual(unproven);
+      const failing = { ...run(1n, "failure"), event };
+      expect(ciVerdict([run(1n, "success"), failing], required)).toEqual({
+        kind: "red",
+        failed: [failing],
+      });
+    },
+  );
+
   it("is never green with nothing required (fails closed)", () => {
     expect(ciVerdict([run(1n, "success")], new Set())).toEqual(unproven);
+  });
+});
+
+describe("jobsProven", () => {
+  const failedJob = { workflowId: 1n, name: "check", failedStep: "Test" };
+  const ran = (overrides: Partial<Parameters<typeof jobsProven>[1][number]> = {}) => ({
+    workflowId: 1n,
+    name: "check",
+    conclusion: "success",
+    succeededSteps: ["Set up job", "Test"],
+    ...overrides,
+  });
+
+  it("holds when the failed job ran again and its failed step passed", () => {
+    expect(jobsProven([failedJob], [ran()])).toBe(true);
+    const noStep = { ...failedJob, failedStep: null };
+    expect(jobsProven([noStep], [ran({ succeededSteps: [] })])).toBe(true);
+  });
+
+  it.each([
+    ["was skipped", { conclusion: "skipped" }],
+    ["didn't run (another job did)", { name: "lint" }],
+    ["ran in another workflow", { workflowId: 2n }],
+    ["skipped the step that failed", { succeededSteps: ["Set up job"] }],
+  ])("fails when the failed job %s", (_case, overrides) => {
+    expect(jobsProven([failedJob], [ran(overrides)])).toBe(false);
+  });
+
+  it("needs every originally failed job", () => {
+    const two = [failedJob, { workflowId: 1n, name: "lint", failedStep: null }];
+
+    expect(jobsProven(two, [ran()])).toBe(false);
+    expect(jobsProven(two, [ran(), ran({ name: "lint" })])).toBe(true);
   });
 });

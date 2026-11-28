@@ -107,7 +107,7 @@ describe("attempts.recordVerification", () => {
 
       await expect(
         fixture.system.attempts.recordVerification(fixture.attempt.id, { result, reason: "why" }),
-      ).resolves.toEqual({ changed: true });
+      ).resolves.toMatchObject({ changed: true });
 
       expect(await fixture.stored()).toMatchObject({ status, endReason: "why" });
       expect((await fixture.stored()).finishedAt).not.toBeNull();
@@ -121,7 +121,32 @@ describe("attempts.recordVerification", () => {
 
     await expect(
       system.attempts.recordVerification(attempt.id, { result: "failed" }),
-    ).resolves.toEqual({ changed: false });
+    ).resolves.toMatchObject({ changed: false });
+  });
+
+  it("names only the first failure, even after a passing re-run", async () => {
+    const { system, attempt } = await opened();
+    const record = (result: "verified" | "failed", seen: number) =>
+      system.attempts.recordVerification(attempt.id, { result, seen });
+
+    await expect(record("failed", 1)).resolves.toEqual({ changed: true, firstFailure: true });
+    await record("verified", 2);
+    await expect(record("failed", 3)).resolves.toEqual({ changed: true, firstFailure: false });
+  });
+
+  it("refuses an answer from older evidence than it already has", async () => {
+    const { system, attempt, failureStatus } = await opened();
+    const record = (result: "verified" | "failed", seen: number) =>
+      system.attempts.recordVerification(attempt.id, { result, seen });
+    await record("verified", 2);
+
+    // A slow job that listed the runs before the re-run passed.
+    await expect(record("failed", 1)).resolves.toMatchObject({ changed: false });
+    await expect(failureStatus()).resolves.toBe("VERIFIED");
+    // The same verdict from newer evidence raises the mark.
+    await record("verified", 4);
+    await expect(record("failed", 3)).resolves.toMatchObject({ changed: false });
+    await expect(record("failed", 5)).resolves.toMatchObject({ changed: true });
   });
 
   it("lets CI that reports late replace an earlier answer", async () => {
@@ -140,7 +165,7 @@ describe("attempts.recordVerification", () => {
 
     await expect(
       system.attempts.recordVerification(attempt.id, { result: "unverified" }),
-    ).resolves.toEqual({ changed: false });
+    ).resolves.toMatchObject({ changed: false });
     await expect(failureStatus()).resolves.toBe("VERIFIED");
   });
 
@@ -154,7 +179,7 @@ describe("attempts.recordVerification", () => {
 
     await expect(
       system.attempts.recordVerification(attempt.id, { result: "verified" }),
-    ).resolves.toEqual({ changed: true });
+    ).resolves.toMatchObject({ changed: true });
     await expect(failureStatus()).resolves.toBe("PR_OPENED");
   });
 
@@ -164,7 +189,7 @@ describe("attempts.recordVerification", () => {
 
     await expect(
       system.attempts.recordVerification(attempt.id, { result: "verified" }),
-    ).resolves.toEqual({ changed: false });
+    ).resolves.toMatchObject({ changed: false });
     await expect(
       system.attempts.recordVerification(attempt.id, { result: "merged" as "verified" }),
     ).rejects.toThrow();

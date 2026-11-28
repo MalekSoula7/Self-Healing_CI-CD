@@ -11,6 +11,8 @@ const deliverySchema = z.object({
   guid: z.string().regex(/^[0-9a-fA-F-]{1,100}$/),
   delivered_at: z.iso.datetime({ offset: true }),
   status_code: z.number().int(),
+  event: z.string().max(100),
+  redelivery: z.boolean(),
 });
 
 export interface WebhookDeliveryAttempt {
@@ -18,6 +20,9 @@ export interface WebhookDeliveryAttempt {
   id: string;
   /** The event's ID, shared by its redeliveries: our `X-GitHub-Delivery`. */
   guid: string;
+  event: string;
+  /** False for GitHub's first attempt at the event. */
+  redelivery: boolean;
   deliveredAt: Date;
   /** GitHub counts only a 2xx answer as delivered. */
   ok: boolean;
@@ -62,6 +67,8 @@ export function webhookDeliveries(octokit: Octokit) {
           attempts.push({
             id: delivery.id,
             guid: delivery.guid,
+            event: delivery.event,
+            redelivery: delivery.redelivery,
             deliveredAt,
             ok: delivery.status_code >= 200 && delivery.status_code < 300,
           });

@@ -18,7 +18,7 @@ const BIG = "9007199254740993001";
 
 const body = (id: string, guid: string, at: string, status: number) =>
   `{"id":${id},"guid":"${guid}","delivered_at":"${at}","status_code":${String(status)},` +
-  `"status":"said \\"id\\": 7","event":"workflow_run","repository_id":123}`;
+  `"status":"said \\"id\\": 7","event":"workflow_run","redelivery":false,"repository_id":123}`;
 const json = (rows: string[], link?: string) =>
   new HttpResponse(`[${rows.join(",")}]`, {
     headers: {
@@ -53,8 +53,22 @@ describe("webhook deliveries", () => {
     expect(listed).toEqual({
       complete: true,
       attempts: [
-        { id: BIG, guid: "aaaa-1", deliveredAt: new Date("2026-11-28T10:00:00Z"), ok: false },
-        { id: "12", guid: "bbbb-2", deliveredAt: new Date("2026-11-27T10:00:00Z"), ok: true },
+        {
+          id: BIG,
+          guid: "aaaa-1",
+          event: "workflow_run",
+          redelivery: false,
+          deliveredAt: new Date("2026-11-28T10:00:00Z"),
+          ok: false,
+        },
+        {
+          id: "12",
+          guid: "bbbb-2",
+          event: "workflow_run",
+          redelivery: false,
+          deliveredAt: new Date("2026-11-27T10:00:00Z"),
+          ok: true,
+        },
       ],
     });
     expect(asked).toEqual([null, "v1_2"]);

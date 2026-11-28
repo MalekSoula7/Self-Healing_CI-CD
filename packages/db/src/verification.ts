@@ -58,7 +58,13 @@ const VERIFIABLE = {
           removedFromInstallationAt: true,
         },
       },
-      runs: { select: { workflowId: true, conclusion: true } },
+      runs: {
+        select: {
+          workflowId: true,
+          conclusion: true,
+          jobs: { select: { name: true, failedStep: true } },
+        },
+      },
     },
   },
 } as const;
@@ -93,7 +99,8 @@ export function attemptVerification(db: Db, orgId: string, actor: Actor) {
 
     /**
      * Records CI's answer for an attempt's pull request. Compare-and-set: `changed` is true for
-     * the one call that moved the attempt, which is the one that may comment on the PR. The
+     * the one call that moved the attempt; `firstFailure` for the one that may tell the PR its
+     * fix failed. An answer from older evidence than the attempt has seen changes nothing. The
      * failure follows only its newest attempt.
      */
     async recordVerification(attemptId: string, input: VerificationInput) {
@@ -101,18 +108,31 @@ export function attemptVerification(db: Db, orgId: string, actor: Actor) {
       if (!id.success) throw new NotFoundError("attempt not found");
       const data = verificationSchema.parse(input);
       const outcome = OUTCOMES[data.result];
+      const { seen } = data;
+      const notOlder = seen === undefined ? {} : { ciSeen: { lte: seen } };
+      const mark = seen === undefined ? {} : { ciSeen: seen };
       return db.$transaction(async (tx) => {
         const attempt = await tx.healAttempt.findFirst({ where: { id: id.data, orgId } });
         if (attempt === null) throw new NotFoundError("attempt not found");
         const { count } = await tx.healAttempt.updateMany({
-          where: { id: attempt.id, orgId, status: { in: outcome.from } },
+          where: { id: attempt.id, orgId, status: { in: outcome.from }, ...notOlder },
           data: {
             status: outcome.attempt,
             endReason: data.reason ?? null,
             finishedAt: new Date(),
+            ...mark,
           },
         });
-        if (count === 0) return { changed: false };
+        if (count === 0) {
+          // The same answer from newer evidence still raises the mark.
+          if (seen !== undefined) {
+            await tx.healAttempt.updateMany({
+              where: { id: attempt.id, orgId, status: outcome.attempt, ciSeen: { lt: seen } },
+              data: mark,
+            });
+          }
+          return { changed: false, firstFailure: false };
+        }
         const newer = await tx.healAttempt.count({
           where: { orgId, failureId: attempt.failureId, attemptNo: { gt: attempt.attemptNo } },
         });
@@ -122,12 +142,20 @@ export function attemptVerification(db: Db, orgId: string, actor: Actor) {
             data: { status: outcome.failure },
           });
         }
+        let firstFailure = false;
+        if (data.result === "failed") {
+          const first = await tx.healAttempt.updateMany({
+            where: { id: attempt.id, orgId, ciFailedAt: null },
+            data: { ciFailedAt: new Date() },
+          });
+          firstFailure = first.count === 1;
+        }
         await writeAudit(tx, orgId, actor, {
           action: "attempt.verification",
           target: auditTarget("attempt", attempt.id),
           metadata: { result: data.result, from: attempt.status },
         });
-        return { changed: true };
+        return { changed: true, firstFailure };
       });
     },
   };

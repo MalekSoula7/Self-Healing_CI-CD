@@ -160,6 +160,9 @@ function mockGitHub(
     head?: string;
     state?: "open" | "closed";
     refuseComment?: boolean;
+    refuseJobs?: boolean;
+    /** The conclusion of the originally failed job, when not the run's own. */
+    job?: string;
   },
 ) {
   const api = `https://api.github.com/repos/${f.fullName}`;
@@ -200,8 +203,13 @@ function mockGitHub(
       listed.push(new URL(request.url).searchParams.get("head_sha") ?? "");
       return HttpResponse.json({ total_count: options.runs.length, workflow_runs: options.runs });
     }),
-    http.get(`${api}/actions/runs/:runId/attempts/:attempt/jobs`, ({ params }) =>
-      HttpResponse.json({
+    http.get(`${api}/actions/runs/:runId/attempts/:attempt/jobs`, ({ params }) => {
+      if (options.refuseJobs === true) {
+        return HttpResponse.json({ message: "Not Found" }, { status: 404 });
+      }
+      const run = options.runs.find((candidate) => candidate.id === Number(params.runId));
+      const conclusion = options.job ?? run?.conclusion ?? "success";
+      return HttpResponse.json({
         total_count: 1,
         jobs: [
           {
@@ -210,13 +218,13 @@ function mockGitHub(
             run_attempt: Number(params.attempt),
             name: "check",
             status: "completed",
-            conclusion: "failure",
+            conclusion,
             html_url: null,
-            steps: [{ name: "Test", number: 1, conclusion: "failure" }],
+            steps: [{ name: "Test", number: 1, conclusion }],
           },
         ],
-      }),
-    ),
+      });
+    }),
     http.get(`${api}/pulls/42`, () => HttpResponse.json(pull)),
     http.post(`${api}/issues/42/comments`, async ({ request }) => {
       if (options.refuseComment === true) {
@@ -321,6 +329,55 @@ describe("workflow_run on PipeHeal's branch (P5.3a)", () => {
     await processWorkflowRunEvent(deps(), event(f, run(f)), logger);
 
     await expect(state(f)).resolves.toEqual(UNCHANGED);
+  });
+
+  it("isn't verified when the job that failed was skipped in a passing run", async () => {
+    const f = await opened();
+    mockGitHub(f, { runs: [runJson(f)], job: "skipped" });
+
+    await processWorkflowRunEvent(deps(), event(f), logger);
+
+    await expect(state(f)).resolves.toEqual(UNCHANGED);
+  });
+
+  it("takes no proof from a manually dispatched run", async () => {
+    const f = await opened();
+    mockGitHub(f, { runs: [runJson(f, { event: "workflow_dispatch" })] });
+
+    await processWorkflowRunEvent(deps(), event(f), logger);
+
+    await expect(state(f)).resolves.toEqual(UNCHANGED);
+  });
+
+  it("comments on the first failure only, however the re-runs flip", async () => {
+    const f = await opened();
+    const run = runJson(f);
+    const comments: string[] = [];
+    for (const [attempt, conclusion] of [
+      [1, "failure"],
+      [2, "success"],
+      [3, "failure"],
+    ] as const) {
+      const mock = mockGitHub(f, { runs: [{ ...run, run_attempt: attempt, conclusion }] });
+      await processWorkflowRunEvent(deps(), event(f), logger);
+      comments.push(...mock.comments);
+    }
+
+    expect(comments).toHaveLength(1);
+    await expect(state(f)).resolves.toMatchObject({ attempt: "CI_FAILED" });
+  });
+
+  it("records a red run even when its jobs can't be listed", async () => {
+    const f = await opened();
+    const { comments } = mockGitHub(f, {
+      runs: [runJson(f, { conclusion: "failure" })],
+      refuseJobs: true,
+    });
+
+    await processWorkflowRunEvent(deps(), event(f), logger);
+
+    await expect(state(f)).resolves.toMatchObject({ attempt: "CI_FAILED" });
+    expect(comments[0]).toContain("`CI` / `(no failed job)`");
   });
 
   it("is UNVERIFIED, without a comment, when someone else pushed to the branch", async () => {

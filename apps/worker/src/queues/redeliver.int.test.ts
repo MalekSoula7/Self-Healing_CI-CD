@@ -46,6 +46,9 @@ interface Sent {
   guid: string;
   minutesAgo: number;
   status: number;
+  event?: string;
+  /** False for GitHub's first attempt at an event. */
+  redelivery?: boolean;
 }
 
 /** GitHub's delivery list (newest first) and its redelivery endpoint. */
@@ -60,6 +63,8 @@ function mockDeliveries(sent: Sent[], refuse: number[] = []) {
           guid: delivery.guid,
           delivered_at: new Date(Date.now() - delivery.minutesAgo * 60_000).toISOString(),
           status_code: delivery.status,
+          event: delivery.event ?? "workflow_run",
+          redelivery: delivery.redelivery ?? false,
         })),
       ),
     ),
@@ -118,6 +123,7 @@ describe("redeliverFailed", () => {
         // `first` is the latest attempt.
         minutesAgo: latest + index * 5,
         status: 502,
+        redelivery: index < count - 1,
       }));
     const redelivered = mockDeliveries([
       ...attempts(young, 10, 1, 5),
@@ -129,6 +135,31 @@ describe("redeliverFailed", () => {
     await redeliverFailed(deps());
 
     expect(redelivered).toEqual([30]);
+  });
+
+  it("never replays installation events: their order matters", async () => {
+    const redelivered = mockDeliveries(
+      ["installation", "installation_repositories", "pull_request"].map((event, index) => ({
+        id: index + 1,
+        guid: randomUUID(),
+        minutesAgo: 60,
+        status: 502,
+        event,
+      })),
+    );
+
+    await expect(redeliverFailed(deps())).resolves.toBe(0);
+    expect(redelivered).toEqual([]);
+  });
+
+  it("stops once the first attempt is out of view, so the cap holds", async () => {
+    const redelivered = mockDeliveries([
+      { id: 1, guid: randomUUID(), minutesAgo: 600, status: 502, redelivery: true },
+    ]);
+
+    await redeliverFailed(deps());
+
+    expect(redelivered).toEqual([]);
   });
 
   it("caps one sweep and carries on past a refused redelivery", async () => {

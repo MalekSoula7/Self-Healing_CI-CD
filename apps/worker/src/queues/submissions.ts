@@ -63,14 +63,26 @@ export async function enqueuePublish(queue: SubmissionsQueue, job: ValidationJob
 
 const PENDING_STATES = new Set(["waiting", "active", "delayed", "prioritized", "waiting-children"]);
 
-/** Whether an attempt's job is still going to run (or is running): the reconciler leaves it be. */
-export async function isSubmissionQueued(
+/** Where an attempt's job stands: still to run (or running), finished, or lost. */
+export async function submissionJobState(
   queue: SubmissionsQueue,
   name: "validate" | "publish",
   attemptId: string,
-): Promise<boolean> {
+): Promise<"pending" | "finished" | "none"> {
   const job = await queue.getJob(`${name}-${attemptId}`);
-  return job !== undefined && PENDING_STATES.has(await job.getState());
+  if (job === undefined) return "none";
+  return PENDING_STATES.has(await job.getState()) ? "pending" : "finished";
+}
+
+/** Queues a fresh job, replacing a finished one (its ID would make the new one a no-op). */
+export async function requeueSubmission(
+  queue: SubmissionsQueue,
+  name: "validate" | "publish",
+  job: ValidationJob,
+): Promise<void> {
+  const finished = await queue.getJob(`${name}-${job.attemptId}`);
+  await finished?.remove();
+  await (name === "validate" ? enqueueValidation : enqueuePublish)(queue, job);
 }
 
 export async function processValidationJob(

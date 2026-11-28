@@ -92,10 +92,12 @@ export function reconciliation(db: Db) {
         db.failedRun.findMany({
           where: {
             rerunByUs: true,
+            // Not reported yet. In the query, so reported ones never fill the page.
+            rerunFromAttempt: { equals: db.failedRun.fields.runAttempt },
             updatedAt: { lte: before(RECONCILE_AFTER_MS.rerun) },
             failure: { status: "TRIAGED" },
           },
-          select: { orgId: true, failureId: true, runAttempt: true, rerunFromAttempt: true },
+          select: { orgId: true, failureId: true },
           ...oldest,
         }),
       ]);
@@ -110,9 +112,7 @@ export function reconciliation(db: Db) {
         publishing: publishing.map(ref),
         opened: opened.map((row) => ({ ...ref(row), since: row.prOpenedAt ?? row.updatedAt })),
         unsettled: unsettled.map(ref),
-        reruns: reruns
-          .filter((run) => run.rerunFromAttempt === run.runAttempt)
-          .map((run) => ({ orgId: run.orgId, failureId: run.failureId })),
+        reruns,
       };
     },
   };

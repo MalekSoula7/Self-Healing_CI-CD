@@ -149,6 +149,10 @@ function toJob(job: z.output<typeof jobSchema>) {
     htmlUrl: job.html_url,
     /** The first failed step, if GitHub reports one. */
     failedStep: job.steps?.find((step) => step.conclusion === "failure")?.name ?? null,
+    /** The steps that ran and passed: a skipped step isn't one. */
+    succeededSteps: (job.steps ?? [])
+      .filter((step) => step.conclusion === "success")
+      .map((step) => step.name),
   };
 }
 

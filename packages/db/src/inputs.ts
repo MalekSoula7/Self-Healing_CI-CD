@@ -433,6 +433,8 @@ export const verificationSchema = z.strictObject({
   result: z.enum(["verified", "failed", "unverified"]),
   /** PipeHeal's own words, shown on the dashboard. */
   reason: z.string().trim().min(1).max(300).optional(),
+  /** The CI evidence the answer rests on (`HealAttempt.ciSeen`). */
+  seen: z.int().min(0).max(1_000_000).optional(),
 });
 export type VerificationInput = z.input<typeof verificationSchema>;
 
