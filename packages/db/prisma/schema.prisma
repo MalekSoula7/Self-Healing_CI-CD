@@ -583,6 +583,10 @@ model HealAttempt {
   ciSeen           Int             @default(0)
   /// When CI first failed on the fix: the PR is told once.
   ciFailedAt       DateTime?
+  /// The attempt whose red CI this one retries (SPEC §9.1): its commit is this one's target.
+  retryOfId        String?         @db.Uuid
+  /// What CI said about that commit: failed jobs with their redacted error windows.
+  feedback         Json?
   /// Model turns taken (SPEC §7.3's iteration cap).
   iterations       Int             @default(0)
   /// Why the attempt ended, when it did: a stop condition or the model's own words, bounded.

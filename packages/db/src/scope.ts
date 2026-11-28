@@ -9,8 +9,8 @@ import { policyLayerSchema, type PolicyLayer } from "@pipeheal/policy";
 import { z } from "zod";
 import { attemptSteps } from "./attempt-steps";
 import { attemptRecovery } from "./reconciliation";
+import { attemptRetries, endedFailureStatus, inFlightIn } from "./retries";
 import { attemptVerification } from "./verification";
-import { DISPATCH_TIMEOUT_MS } from "./runner-sessions";
 import { retrySerialization } from "./serialization";
 import { auditChanges, auditTarget, writeAudit, type Actor } from "./audit";
 import type { Db } from "./client";
@@ -99,9 +99,6 @@ const ORG_SUMMARY = {
 } as const;
 
 const ROLE_RANK: Record<Role, number> = { MEMBER: 0, ADMIN: 1, OWNER: 2 };
-
-/** How long an attempt being validated or published holds its repository (P5.2 review M4). */
-const SETTLING_TIMEOUT_MS = 2 * 60 * 60_000;
 
 export function hasRole(role: Role, minimum: Role): boolean {
   return ROLE_RANK[role] >= ROLE_RANK[minimum];
@@ -593,6 +590,7 @@ function buildSystemScope(ctx: ScopeContext) {
       ...attemptSteps(db, orgId, actor),
       ...attemptVerification(db, orgId, actor),
       ...attemptRecovery(db, orgId, actor),
+      ...attemptRetries(db, orgId, actor),
 
       /**
        * Records a dispatched attempt on one of this org's failures (SPEC §2 step 7; the
@@ -664,32 +662,8 @@ function buildSystemScope(ctx: ScopeContext) {
               ) {
                 return { outcome: "not_ready" as const, status: failure.status };
               }
-              // In flight: dispatched and still within the dispatch timeout, or with a session that
-              // hasn't expired. A dispatch that crashed or a session that ran out can't hold the
-              // repository forever before the §2.2 reconciler fails them (P4.8 review M2).
-              const now = Date.now();
               const inFlight = await tx.healAttempt.count({
-                where: {
-                  orgId,
-                  failure: { repoId: failure.repoId },
-                  OR: [
-                    {
-                      status: "DISPATCHED",
-                      sessionOpenedAt: null,
-                      dispatchedAt: { gt: new Date(now - DISPATCH_TIMEOUT_MS) },
-                    },
-                    {
-                      status: { in: ["DISPATCHED", "RUNNING", "AWAITING_SUBMISSION"] },
-                      sessionExpiresAt: { gt: new Date(now) },
-                    },
-                    // Being checked or published: a second fix for the repository would open a
-                    // second PR (P5.2 review M4). Bounded, so a stuck one can't block for good.
-                    {
-                      status: { in: ["VALIDATING", "VALIDATED", "PUBLISHING"] },
-                      updatedAt: { gt: new Date(now - SETTLING_TIMEOUT_MS) },
-                    },
-                  ],
-                },
+                where: inFlightIn(orgId, failure.repoId, Date.now()),
               });
               if (inFlight > 0) return { outcome: "busy" as const };
               const previous = await tx.healAttempt.count({
@@ -805,7 +779,7 @@ function buildSystemScope(ctx: ScopeContext) {
           if (!validation.passed) {
             await tx.pipelineFailure.update({
               where: { id: attempt.failureId },
-              data: { status: "FAILED" },
+              data: { status: endedFailureStatus(attempt, "FAILED") },
             });
           }
           await writeAudit(tx, orgId, actor, {
@@ -994,7 +968,7 @@ function buildSystemScope(ctx: ScopeContext) {
           if (count === 0) return;
           await tx.pipelineFailure.update({
             where: { id: attempt.failureId },
-            data: { status: "FAILED" },
+            data: { status: endedFailureStatus(attempt, "FAILED") },
           });
           await writeAudit(tx, orgId, actor, {
             action: "attempt.publish_failed",
@@ -1024,7 +998,7 @@ function buildSystemScope(ctx: ScopeContext) {
           await tx.pipelineFailure.update({
             where: { id: attempt.failureId },
             data: {
-              status: data.failureStatus,
+              status: endedFailureStatus(attempt, data.failureStatus),
               ...(data.failureStatus === "NEEDS_SETUP" ? { skipReason: data.reason } : {}),
             },
           });

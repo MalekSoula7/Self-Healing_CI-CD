@@ -7,6 +7,7 @@ import type { Db } from "./client";
 import { NotFoundError } from "./errors";
 import type { AttemptStatus, FailureStatus } from "./generated/prisma/enums";
 import { idSchema } from "./inputs";
+import { endedFailureStatus } from "./retries";
 import { DISPATCH_TIMEOUT_MS } from "./runner-sessions";
 
 const minutes = (count: number) => count * 60_000;
@@ -159,7 +160,7 @@ export function attemptRecovery(db: Db, orgId: string, actor: Actor) {
         if (newer === 0) {
           await tx.pipelineFailure.updateMany({
             where: { id: attempt.failureId, orgId, status: "HEALING" },
-            data: { status: "FAILED" },
+            data: { status: endedFailureStatus(attempt, "FAILED") },
           });
         }
         await writeAudit(tx, orgId, actor, {
@@ -180,8 +181,9 @@ export function attemptRecovery(db: Db, orgId: string, actor: Actor) {
       return db.$transaction(async (tx) => {
         const attempt = await tx.healAttempt.findFirst({ where: { id, orgId } });
         if (attempt === null) throw new NotFoundError("attempt not found");
-        const status = ENDED[attempt.status];
-        if (status === undefined) return false;
+        const ended = ENDED[attempt.status];
+        if (ended === undefined) return false;
+        const status = endedFailureStatus(attempt, ended);
         const newer = await tx.healAttempt.count({
           where: { orgId, failureId: attempt.failureId, attemptNo: { gt: attempt.attemptNo } },
         });

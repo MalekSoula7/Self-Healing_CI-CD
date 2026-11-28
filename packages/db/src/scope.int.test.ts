@@ -444,6 +444,20 @@ const crossOrgCases: Record<string, () => Promise<void>> = {
       a.system.attempts.recordVerification(bAttemptId, { result: "verified" }),
     ).rejects.toThrow(NotFoundError);
   },
+  "attempts.claimRetry": async () => {
+    await expect(
+      a.system.attempts.claimRetry({
+        previousAttemptId: bAttemptId,
+        failingCheck: "test",
+        feedback: [],
+        maxAttemptsPerFailure: 5,
+        maxAttemptsPerDay: 20,
+      }),
+    ).rejects.toThrow(NotFoundError);
+  },
+  "attempts.chain": async () => {
+    await expect(a.system.attempts.chain(bAttemptId)).resolves.toBeNull();
+  },
   "attempts.forVerification": async () => {
     await expect(a.system.attempts.forVerification(bAttemptId)).resolves.toBeNull();
   },
@@ -769,6 +783,7 @@ const readOnlyHelpers = [
   "attempts.publication",
   "attempts.forCommit",
   "attempts.forVerification",
+  "attempts.chain",
   "reconciliation.due",
 ];
 
@@ -1203,6 +1218,46 @@ const auditCases: Record<string, () => Promise<Record<string, unknown>[]>> = {
         action: "attempt.expired",
         target: `attempt:${attempt.id}`,
         metadata: { from: "DISPATCHED", reason: "the healer never started" },
+      },
+    ];
+  },
+  "attempts.claimRetry": async () => {
+    // Nothing else in flight, and the failure waiting for a person after red CI.
+    await db.healAttempt.updateMany({ where: { orgId: a.org.id }, data: { status: "FAILED" } });
+    const previous = await a.system.attempts.create({
+      failureId: a.failure.id,
+      targetSha: a.failure.headSha,
+      failingCheck: "test",
+    });
+    await db.healAttempt.update({
+      where: { id: previous.id },
+      data: {
+        status: "CI_FAILED",
+        branch: "pipeheal/abc-1",
+        commitSha: "f".repeat(40),
+        prNumber: 7,
+      },
+    });
+    await db.pipelineFailure.update({
+      where: { id: a.failure.id },
+      data: { status: "NEEDS_HUMAN" },
+    });
+    await db.repository.update({ where: { id: a.repo.id }, data: { enabled: true } });
+    const result = await a.system.attempts.claimRetry({
+      previousAttemptId: previous.id,
+      failingCheck: "test",
+      feedback: [],
+      maxAttemptsPerFailure: 100,
+      maxAttemptsPerDay: 10_000,
+    });
+    if (result.outcome !== "created") throw new Error(`test setup: ${result.outcome}`);
+    return [
+      { actorType: "SYSTEM", action: "attempt.dispatched", target: `attempt:${previous.id}` },
+      {
+        actorType: "SYSTEM",
+        action: "attempt.retried",
+        target: `attempt:${result.attempt.id}`,
+        metadata: { retryOf: previous.id },
       },
     ];
   },

@@ -462,6 +462,8 @@ export function attemptSteps(db: Db, orgId: string, actor: Actor) {
           status: true,
           targetSha: true,
           failingCheck: true,
+          retryOfId: true,
+          feedback: true,
           sessionOpenedAt: true,
           failure: {
             select: {

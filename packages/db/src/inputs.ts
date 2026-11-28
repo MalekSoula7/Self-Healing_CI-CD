@@ -428,6 +428,28 @@ export const pullRequestRecordSchema = z.strictObject({
 });
 export type PullRequestRecord = z.infer<typeof pullRequestRecordSchema>;
 
+/** What CI said about a fix: its failed jobs, redacted (agent-core), for the retry's brief. */
+export const retryFeedbackSchema = z
+  .array(
+    z.strictObject({
+      name: z.string().max(500),
+      failedStep: z.string().max(500).nullable(),
+      summary: z.string().max(2_000).nullable(),
+      errorWindow: z.string().max(200_000),
+    }),
+  )
+  .max(10);
+
+/** The claim on a retry after failed CI (P5.3d): the check to reproduce and the caps. */
+export const retryClaimSchema = z.strictObject({
+  previousAttemptId: z.uuid(),
+  failingCheck: z.enum(["install", "build", "lint", "typecheck", "test"]),
+  feedback: retryFeedbackSchema,
+  maxAttemptsPerFailure: z.int().min(1).max(100),
+  maxAttemptsPerDay: z.int().min(1).max(10_000),
+});
+export type RetryClaimInput = z.input<typeof retryClaimSchema>;
+
 /** CI's answer about an attempt's pull request (P5.3). */
 export const verificationSchema = z.strictObject({
   result: z.enum(["verified", "failed", "unverified"]),
